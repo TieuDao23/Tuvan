@@ -3,14 +3,19 @@
 
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <meta name="description" content="Suna Chat - Trợ lý AI thông minh hỗ trợ chat văn bản và hình ảnh">
+    <meta name="theme-color" content="#0d0b14">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title>Suna Chat</title>
     <link rel="icon" href="assets/logo.png" type="image/png">
-    <link
-        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&family=Noto+Sans:wght@300;400;500;600;700&display=swap"
-        rel="stylesheet">
+    <link rel="apple-touch-icon" href="assets/logo.png">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&family=Noto+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet">
+    <!-- KaTeX for math rendering -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
     <link rel="stylesheet" href="styles.css">
 </head>
 
@@ -56,9 +61,7 @@
                     <span class="material-icons-round">forum</span>
                     <span>Đoạn hội thoại</span>
                 </div>
-                <div id="chat-list" class="chat-list">
-                    <!-- Chat items will be rendered here -->
-                </div>
+                <div id="chat-list" class="chat-list"></div>
             </div>
 
             <!-- Sidebar Footer -->
@@ -73,6 +76,9 @@
                 </button>
             </div>
         </aside>
+
+        <!-- Mobile Sidebar Overlay -->
+        <div id="sidebar-overlay" class="sidebar-overlay"></div>
 
         <!-- Main Content -->
         <main class="main-content">
@@ -109,35 +115,19 @@
                     <h2 class="welcome-title">Xin chào! Mình là <span class="gradient-text">Suna</span></h2>
                     <p class="welcome-subtitle">Trợ lý AI thông minh - sẵn sàng hỗ trợ bạn mọi lúc</p>
                     <div class="welcome-features">
-                        <div class="feature-card">
-                            <span class="material-icons-round">chat</span>
-                            <span>Trò chuyện thông minh</span>
-                        </div>
-                        <div class="feature-card">
-                            <span class="material-icons-round">image</span>
-                            <span>Nhận diện hình ảnh</span>
-                        </div>
-                        <div class="feature-card">
-                            <span class="material-icons-round">description</span>
-                            <span>Trích xuất file</span>
-                        </div>
-                        <div class="feature-card">
-                            <span class="material-icons-round">psychology</span>
-                            <span>Tùy chỉnh tính cách</span>
-                        </div>
+                        <div class="feature-card"><span class="material-icons-round">chat</span><span>Trò chuyện thông minh</span></div>
+                        <div class="feature-card"><span class="material-icons-round">image</span><span>Nhận diện hình ảnh</span></div>
+                        <div class="feature-card"><span class="material-icons-round">description</span><span>Trích xuất file</span></div>
+                        <div class="feature-card"><span class="material-icons-round">psychology</span><span>Tùy chỉnh tính cách</span></div>
                     </div>
                 </div>
 
                 <!-- Messages Container -->
-                <div id="messages-container" class="messages-container" style="display:none;">
-                    <!-- Messages will be rendered here -->
-                </div>
+                <div id="messages-container" class="messages-container" style="display:none;"></div>
             </div>
 
             <!-- Image Preview Area -->
-            <div id="image-preview-area" class="image-preview-area" style="display:none;">
-                <!-- Previewed images before sending -->
-            </div>
+            <div id="image-preview-area" class="image-preview-area" style="display:none;"></div>
 
             <!-- Input Area -->
             <div class="input-area">
@@ -151,15 +141,13 @@
                         </button>
                     </div>
                     <div class="textarea-wrapper">
-                        <textarea id="message-input" class="message-input"
-                            placeholder="Nhập tin nhắn... (Ctrl+V để dán ảnh)" rows="1"></textarea>
+                        <textarea id="message-input" class="message-input" placeholder="Nhập tin nhắn... (Ctrl+V để dán ảnh)" rows="1"></textarea>
                     </div>
                     <button id="btn-send" class="btn-send" title="Gửi tin nhắn">
                         <span class="material-icons-round">send</span>
                     </button>
                 </div>
-                <input type="file" id="file-input" style="display:none"
-                    accept=".txt,.pdf,.doc,.docx,.csv,.json,.xml,.md,.html,.js,.py,.java,.cpp,.c,.cs,.rb,.php,.swift,.kt,.go,.rs,.ts,.jsx,.tsx,.yaml,.yml,.toml,.ini,.cfg,.log">
+                <input type="file" id="file-input" style="display:none" accept=".txt,.pdf,.doc,.docx,.csv,.json,.xml,.md,.html,.js,.py,.java,.cpp,.c,.cs,.rb,.php,.swift,.kt,.go,.rs,.ts,.jsx,.tsx,.yaml,.yml,.toml,.ini,.cfg,.log">
                 <input type="file" id="image-input" style="display:none" accept="image/*" multiple>
             </div>
         </main>
@@ -170,20 +158,15 @@
         <div class="modal settings-modal">
             <div class="modal-header">
                 <h2><span class="material-icons-round">settings</span> Cài đặt chung</h2>
-                <button class="btn-close-modal" data-close="settings-modal">
-                    <span class="material-icons-round">close</span>
-                </button>
+                <button class="btn-close-modal" data-close="settings-modal"><span class="material-icons-round">close</span></button>
             </div>
             <div class="modal-body">
-                <!-- User Profile -->
                 <div class="settings-section">
                     <h3><span class="material-icons-round">person</span> Hồ sơ người dùng</h3>
                     <div class="user-profile-row">
                         <div class="user-avatar-edit">
                             <img id="user-avatar-preview" src="" alt="Avatar" class="user-avatar-img">
-                            <button id="btn-change-avatar" class="btn-avatar-change" title="Đổi avatar">
-                                <span class="material-icons-round">photo_camera</span>
-                            </button>
+                            <button id="btn-change-avatar" class="btn-avatar-change" title="Đổi avatar"><span class="material-icons-round">photo_camera</span></button>
                             <input type="file" id="user-avatar-input" style="display:none" accept="image/*">
                         </div>
                         <div class="user-name-edit">
@@ -192,44 +175,27 @@
                         </div>
                     </div>
                 </div>
-
-                <!-- System Prompt -->
                 <div class="settings-section">
                     <h3><span class="material-icons-round">terminal</span> System Prompt chung</h3>
                     <p class="settings-desc">Prompt này sẽ được áp dụng cho tất cả đoạn chat</p>
-                    <textarea id="system-prompt" class="settings-textarea"
-                        placeholder="Ví dụ: Bạn là một trợ lý AI thông minh, luôn trả lời bằng tiếng Việt..."
-                        rows="5"></textarea>
+                    <textarea id="system-prompt" class="settings-textarea" placeholder="Ví dụ: Bạn là một trợ lý AI thông minh, luôn trả lời bằng tiếng Việt..." rows="5"></textarea>
                 </div>
-
-                <!-- User Purpose -->
                 <div class="settings-section">
                     <h3><span class="material-icons-round">target</span> Mục đích sử dụng</h3>
                     <p class="settings-desc">Mô tả mục đích của bạn để AI hỗ trợ tối ưu nhất</p>
-                    <textarea id="user-purpose" class="settings-textarea"
-                        placeholder="Ví dụ: Tôi là lập trình viên, cần hỗ trợ viết code và debug..."
-                        rows="4"></textarea>
+                    <textarea id="user-purpose" class="settings-textarea" placeholder="Ví dụ: Tôi là lập trình viên, cần hỗ trợ viết code và debug..." rows="4"></textarea>
                 </div>
-
-                <!-- Flash/Pro Model Config -->
                 <div class="settings-section">
                     <h3><span class="material-icons-round">bolt</span> Model cho chế độ Flash</h3>
                     <p class="settings-desc">Model dùng cho trả lời nhanh, tiết kiệm token</p>
-                    <select id="flash-model-select" class="settings-select">
-                        <option value="">-- Chọn model Flash --</option>
-                    </select>
+                    <select id="flash-model-select" class="settings-select"><option value="">-- Chọn model Flash --</option></select>
                 </div>
                 <div class="settings-section">
                     <h3><span class="material-icons-round">diamond</span> Model cho chế độ Pro</h3>
                     <p class="settings-desc">Model mạnh nhất, hiệu năng tối đa</p>
-                    <select id="pro-model-select" class="settings-select">
-                        <option value="">-- Chọn model Pro --</option>
-                    </select>
+                    <select id="pro-model-select" class="settings-select"><option value="">-- Chọn model Pro --</option></select>
                 </div>
-
-                <button id="btn-save-settings" class="btn-primary">
-                    <span class="material-icons-round">save</span> Lưu cài đặt
-                </button>
+                <button id="btn-save-settings" class="btn-primary"><span class="material-icons-round">save</span> Lưu cài đặt</button>
             </div>
         </div>
     </div>
@@ -239,12 +205,9 @@
         <div class="modal api-modal">
             <div class="modal-header">
                 <h2><span class="material-icons-round">api</span> Cấu hình API & Model</h2>
-                <button class="btn-close-modal" data-close="api-modal">
-                    <span class="material-icons-round">close</span>
-                </button>
+                <button class="btn-close-modal" data-close="api-modal"><span class="material-icons-round">close</span></button>
             </div>
             <div class="modal-body">
-                <!-- Primary Proxy -->
                 <div class="settings-section">
                     <h3><span class="material-icons-round">link</span> Proxy chính - Base URL</h3>
                     <input type="url" id="api-base-url" class="settings-input" placeholder="https://api.example.com/v1">
@@ -253,13 +216,9 @@
                     <h3><span class="material-icons-round">key</span> Proxy chính - API Key</h3>
                     <div class="api-key-wrapper">
                         <input type="password" id="api-key" class="settings-input" placeholder="sk-xxxxxxxxxxxxx">
-                        <button id="btn-toggle-key" class="btn-icon-sm" title="Hiện/Ẩn key">
-                            <span class="material-icons-round">visibility</span>
-                        </button>
+                        <button id="btn-toggle-key" class="btn-icon-sm" title="Hiện/Ẩn key"><span class="material-icons-round">visibility</span></button>
                     </div>
                 </div>
-
-                <!-- Secondary Proxy -->
                 <div class="proxy-divider"><span>Proxy phụ (tùy chọn)</span></div>
                 <div class="settings-section">
                     <h3><span class="material-icons-round">link</span> Proxy phụ - Base URL</h3>
@@ -269,36 +228,23 @@
                     <h3><span class="material-icons-round">key</span> Proxy phụ - API Key</h3>
                     <div class="api-key-wrapper">
                         <input type="password" id="api-key-2" class="settings-input" placeholder="sk-xxxxxxxxxxxxx">
-                        <button id="btn-toggle-key-2" class="btn-icon-sm" title="Hiện/Ẩn key">
-                            <span class="material-icons-round">visibility</span>
-                        </button>
+                        <button id="btn-toggle-key-2" class="btn-icon-sm" title="Hiện/Ẩn key"><span class="material-icons-round">visibility</span></button>
                     </div>
                 </div>
-
                 <div class="settings-section">
                     <h3><span class="material-icons-round">download</span> Lấy danh sách Model</h3>
                     <div class="fetch-btn-group">
-                        <button id="btn-fetch-proxy1" class="btn-secondary btn-fetch-item" title="Chỉ lấy từ proxy chính">
-                            <span class="material-icons-round">looks_one</span> Proxy chính
-                        </button>
-                        <button id="btn-fetch-proxy2" class="btn-secondary btn-fetch-item" title="Chỉ lấy từ proxy phụ">
-                            <span class="material-icons-round">looks_two</span> Proxy phụ
-                        </button>
-                        <button id="btn-fetch-models" class="btn-secondary btn-fetch-item btn-fetch-all" title="Lấy từ cả hai proxy">
-                            <span class="material-icons-round">merge</span> Cả hai
-                        </button>
+                        <button id="btn-fetch-proxy1" class="btn-secondary btn-fetch-item" title="Chỉ lấy từ proxy chính"><span class="material-icons-round">looks_one</span> Proxy chính</button>
+                        <button id="btn-fetch-proxy2" class="btn-secondary btn-fetch-item" title="Chỉ lấy từ proxy phụ"><span class="material-icons-round">looks_two</span> Proxy phụ</button>
+                        <button id="btn-fetch-models" class="btn-secondary btn-fetch-item btn-fetch-all" title="Lấy từ cả hai proxy"><span class="material-icons-round">merge</span> Cả hai</button>
                     </div>
                     <div id="fetch-status" class="fetch-status"></div>
                 </div>
                 <div class="settings-section">
                     <h3><span class="material-icons-round">smart_toy</span> Chọn Model hiện tại</h3>
-                    <select id="model-select" class="settings-select">
-                        <option value="">-- Lấy model trước --</option>
-                    </select>
+                    <select id="model-select" class="settings-select"><option value="">-- Lấy model trước --</option></select>
                 </div>
-                <button id="btn-save-api" class="btn-primary">
-                    <span class="material-icons-round">save</span> Lưu cấu hình
-                </button>
+                <button id="btn-save-api" class="btn-primary"><span class="material-icons-round">save</span> Lưu cấu hình</button>
             </div>
         </div>
     </div>
@@ -308,9 +254,7 @@
         <div class="modal personality-modal">
             <div class="modal-header">
                 <h2><span class="material-icons-round">psychology</span> Tính cách AI</h2>
-                <button class="btn-close-modal" data-close="personality-modal">
-                    <span class="material-icons-round">close</span>
-                </button>
+                <button class="btn-close-modal" data-close="personality-modal"><span class="material-icons-round">close</span></button>
             </div>
             <div class="modal-body">
                 <div class="settings-section">
@@ -329,46 +273,19 @@
                     <h3><span class="material-icons-round">palette</span> Tông màu tính cách</h3>
                     <p class="settings-desc">Chọn tông màu thể hiện tính cách AI</p>
                     <div class="color-theme-options" id="color-theme-options">
-                        <button class="color-theme-btn active" data-theme="aurora"
-                            style="--theme-preview: linear-gradient(135deg, #667eea, #764ba2)">
-                            <div class="color-preview"></div>
-                            <span>Aurora</span>
-                        </button>
-                        <button class="color-theme-btn" data-theme="sunset"
-                            style="--theme-preview: linear-gradient(135deg, #f093fb, #f5576c)">
-                            <div class="color-preview"></div>
-                            <span>Sunset</span>
-                        </button>
-                        <button class="color-theme-btn" data-theme="ocean"
-                            style="--theme-preview: linear-gradient(135deg, #4facfe, #00f2fe)">
-                            <div class="color-preview"></div>
-                            <span>Ocean</span>
-                        </button>
-                        <button class="color-theme-btn" data-theme="forest"
-                            style="--theme-preview: linear-gradient(135deg, #43e97b, #38f9d7)">
-                            <div class="color-preview"></div>
-                            <span>Forest</span>
-                        </button>
-                        <button class="color-theme-btn" data-theme="ember"
-                            style="--theme-preview: linear-gradient(135deg, #fa709a, #fee140)">
-                            <div class="color-preview"></div>
-                            <span>Ember</span>
-                        </button>
-                        <button class="color-theme-btn" data-theme="midnight"
-                            style="--theme-preview: linear-gradient(135deg, #a18cd1, #fbc2eb)">
-                            <div class="color-preview"></div>
-                            <span>Midnight</span>
-                        </button>
+                        <button class="color-theme-btn active" data-theme="aurora" style="--theme-preview: linear-gradient(135deg, #667eea, #764ba2)"><div class="color-preview"></div><span>Aurora</span></button>
+                        <button class="color-theme-btn" data-theme="sunset" style="--theme-preview: linear-gradient(135deg, #f093fb, #f5576c)"><div class="color-preview"></div><span>Sunset</span></button>
+                        <button class="color-theme-btn" data-theme="ocean" style="--theme-preview: linear-gradient(135deg, #4facfe, #00f2fe)"><div class="color-preview"></div><span>Ocean</span></button>
+                        <button class="color-theme-btn" data-theme="forest" style="--theme-preview: linear-gradient(135deg, #43e97b, #38f9d7)"><div class="color-preview"></div><span>Forest</span></button>
+                        <button class="color-theme-btn" data-theme="ember" style="--theme-preview: linear-gradient(135deg, #fa709a, #fee140)"><div class="color-preview"></div><span>Ember</span></button>
+                        <button class="color-theme-btn" data-theme="midnight" style="--theme-preview: linear-gradient(135deg, #a18cd1, #fbc2eb)"><div class="color-preview"></div><span>Midnight</span></button>
                     </div>
                 </div>
                 <div class="settings-section">
                     <h3><span class="material-icons-round">edit_note</span> Mô tả tính cách tùy chỉnh</h3>
-                    <textarea id="custom-personality" class="settings-textarea"
-                        placeholder="Ví dụ: Luôn sử dụng emoji, nói chuyện thân mật như bạn bè..." rows="4"></textarea>
+                    <textarea id="custom-personality" class="settings-textarea" placeholder="Ví dụ: Luôn sử dụng emoji, nói chuyện thân mật như bạn bè..." rows="4"></textarea>
                 </div>
-                <button id="btn-save-personality" class="btn-primary">
-                    <span class="material-icons-round">save</span> Lưu tính cách
-                </button>
+                <button id="btn-save-personality" class="btn-primary"><span class="material-icons-round">save</span> Lưu tính cách</button>
             </div>
         </div>
     </div>
@@ -378,9 +295,7 @@
         <div class="modal font-modal">
             <div class="modal-header">
                 <h2><span class="material-icons-round">text_fields</span> Cài đặt Font chữ</h2>
-                <button class="btn-close-modal" data-close="font-modal">
-                    <span class="material-icons-round">close</span>
-                </button>
+                <button class="btn-close-modal" data-close="font-modal"><span class="material-icons-round">close</span></button>
             </div>
             <div class="modal-body">
                 <div class="settings-section">
@@ -398,18 +313,13 @@
                 </div>
                 <div class="settings-section">
                     <h3>Cỡ chữ: <span id="font-size-value">15px</span></h3>
-                    <input type="range" id="font-size-range" class="settings-range" min="12" max="22" value="15"
-                        step="1">
+                    <input type="range" id="font-size-range" class="settings-range" min="12" max="22" value="15" step="1">
                 </div>
                 <div class="settings-section">
                     <h3>Xem trước</h3>
-                    <div id="font-preview" class="font-preview">
-                        Xin chào! Đây là đoạn văn bản xem trước font chữ. 🎉
-                    </div>
+                    <div id="font-preview" class="font-preview">Xin chào! Đây là đoạn văn bản xem trước font chữ. 🎉</div>
                 </div>
-                <button id="btn-save-font" class="btn-primary">
-                    <span class="material-icons-round">save</span> Áp dụng
-                </button>
+                <button id="btn-save-font" class="btn-primary"><span class="material-icons-round">save</span> Áp dụng</button>
             </div>
         </div>
     </div>
@@ -419,9 +329,7 @@
         <div class="modal delete-confirm-modal">
             <div class="modal-header">
                 <h2><span class="material-icons-round">warning</span> Xác nhận xóa</h2>
-                <button class="btn-close-modal" data-close="delete-confirm-modal">
-                    <span class="material-icons-round">close</span>
-                </button>
+                <button class="btn-close-modal" data-close="delete-confirm-modal"><span class="material-icons-round">close</span></button>
             </div>
             <div class="modal-body">
                 <p id="delete-confirm-text" style="color:var(--text-secondary);line-height:1.6;">Bạn có chắc muốn xóa đoạn chat này?</p>

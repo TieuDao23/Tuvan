@@ -12,13 +12,15 @@ const State = {
     customPersonality: '', fontFamily: "'Inter', sans-serif", fontSize: 15,
     userName: 'Bạn', userAvatar: ''
   },
-  pendingImages: []
+  pendingImages: [],
+  modelProxyMap: {} // maps model name to 'proxy1' or 'proxy2'
 };
 
 // ===== Helpers =====
 const $ = s => document.querySelector(s);
 const $$ = s => document.querySelectorAll(s);
 const genId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+const isMobile = () => window.innerWidth <= 768;
 
 function saveState() {
   localStorage.setItem('suna_chats', JSON.stringify(State.chats));
@@ -60,6 +62,7 @@ function createChat() {
   saveState();
   renderChatList();
   renderMessages();
+  if (isMobile()) closeSidebar();
   return chat;
 }
 
@@ -89,6 +92,7 @@ function switchChat(id) {
   saveState();
   renderChatList();
   renderMessages();
+  if (isMobile()) closeSidebar();
 }
 
 // ===== Render Chat List =====
@@ -154,7 +158,7 @@ function renderMessages() {
         <div class="message-avatar">
           ${isUser ? userAvatarHtml : '<img src="assets/avatar.png" alt="Suna">'}
         </div>
-        <div>
+        <div class="message-content">
           <div class="message-header">
             <span class="msg-name">${isUser ? escHtml(State.settings.userName) : '✨ Suna Chat'}</span>
             <span>${new Date(m.timestamp).toLocaleTimeString('vi-VN', {hour:'2-digit',minute:'2-digit'})}</span>
@@ -172,12 +176,71 @@ function renderMessages() {
 function formatMessage(text) {
   if (!text) return '';
   let html = escHtml(text);
-  // Code blocks
-  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>');
+
+  // Block math: $$...$$ (must come before inline math)
+  html = html.replace(/\$\$([\s\S]*?)\$\$/g, (_, math) => {
+    try {
+      if (typeof katex !== 'undefined') {
+        return '<div class="math-block">' + katex.renderToString(math.trim(), { displayMode: true, throwOnError: false }) + '</div>';
+      }
+    } catch(e) {}
+    return '<div class="math-block"><code>' + math.trim() + '</code></div>';
+  });
+
+  // Inline math: $...$
+  html = html.replace(/\$([^\$\n]+?)\$/g, (_, math) => {
+    try {
+      if (typeof katex !== 'undefined') {
+        return katex.renderToString(math.trim(), { displayMode: false, throwOnError: false });
+      }
+    } catch(e) {}
+    return '<code class="math-inline">' + math.trim() + '</code>';
+  });
+
+  // Code blocks with language
+  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
+    const label = lang ? `<div class="code-lang">${lang}</div>` : '';
+    return `<div class="code-block-wrapper">${label}<pre><code>${code}</code></pre></div>`;
+  });
+  // Inline code
   html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
-  // Bold, italic
+
+  // Headings (### h3, ## h2, # h1) — only at start of line
+  html = html.replace(/^### (.+)$/gm, '<h4 class="msg-heading">$1</h4>');
+  html = html.replace(/^## (.+)$/gm, '<h3 class="msg-heading">$1</h3>');
+  html = html.replace(/^# (.+)$/gm, '<h2 class="msg-heading">$1</h2>');
+
+  // Horizontal rule
+  html = html.replace(/^---$/gm, '<hr class="msg-hr">');
+
+  // Bold, italic, strikethrough
   html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+  html = html.replace(/~~(.+?)~~/g, '<del>$1</del>');
+
+  // Superscript ^text^ and subscript ~text~
+  html = html.replace(/\^([^\^]+)\^/g, '<sup>$1</sup>');
+  html = html.replace(/~([^~]+)~/g, '<sub>$1</sub>');
+
+  // Links [text](url)
+  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+
+  // Unordered lists (lines starting with - or *)
+  html = html.replace(/(?:^|\n)((?:[-*] .+\n?)+)/g, (match, listBlock) => {
+    const items = listBlock.trim().split('\n').map(line =>
+      '<li>' + line.replace(/^[-*] /, '') + '</li>'
+    ).join('');
+    return '<ul class="msg-list">' + items + '</ul>';
+  });
+
+  // Ordered lists (lines starting with 1. 2. etc)
+  html = html.replace(/(?:^|\n)((?:\d+\. .+\n?)+)/g, (match, listBlock) => {
+    const items = listBlock.trim().split('\n').map(line =>
+      '<li>' + line.replace(/^\d+\. /, '') + '</li>'
+    ).join('');
+    return '<ol class="msg-list">' + items + '</ol>';
+  });
+
   // Line breaks
   html = html.replace(/\n/g, '<br>');
   return html;
@@ -232,47 +295,63 @@ async function readTextFile(file) {
 }
 
 // ===== API =====
-async function fetchModels() {
+async function fetchModels(source = 'both') {
   const { baseUrl, apiKey, baseUrl2, apiKey2 } = State.settings;
-  if (!baseUrl || !apiKey) { toast('Vui lòng nhập Base URL và API Key proxy chính', 'error'); return; }
   const status = $('#fetch-status');
   status.textContent = 'Đang lấy danh sách model...';
   status.className = 'fetch-status';
   let allModels = [];
   let sources = 0;
 
+  // Track which proxy each model belongs to
+  const newMap = {};
+
   // Fetch from primary proxy
-  try {
-    const url = baseUrl.replace(/\/+$/, '') + '/models';
-    const res = await fetch(url, { headers: { 'Authorization': `Bearer ${apiKey}` } });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    const models = (data.data || data.models || []).map(m => m.id || m.name || m).filter(Boolean);
-    allModels.push(...models);
-    sources++;
-  } catch (e) {
-    toast('Lỗi proxy chính: ' + e.message, 'error');
+  if (source === 'proxy1' || source === 'both') {
+    if (!baseUrl || !apiKey) {
+      toast('Vui lòng nhập Base URL và API Key proxy chính', 'error');
+    } else {
+      try {
+        const url = baseUrl.replace(/\/+$/, '') + '/models';
+        const res = await fetch(url, { headers: { 'Authorization': `Bearer ${apiKey}` } });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const models = (data.data || data.models || []).map(m => m.id || m.name || m).filter(Boolean);
+        models.forEach(m => { newMap[m] = 'proxy1'; });
+        allModels.push(...models);
+        sources++;
+      } catch (e) {
+        toast('Lỗi proxy chính: ' + e.message, 'error');
+      }
+    }
   }
 
   // Fetch from secondary proxy
-  if (baseUrl2 && apiKey2) {
-    try {
-      const url2 = baseUrl2.replace(/\/+$/, '') + '/models';
-      const res2 = await fetch(url2, { headers: { 'Authorization': `Bearer ${apiKey2}` } });
-      if (!res2.ok) throw new Error(`HTTP ${res2.status}`);
-      const data2 = await res2.json();
-      const models2 = (data2.data || data2.models || []).map(m => m.id || m.name || m).filter(Boolean);
-      allModels.push(...models2);
-      sources++;
-    } catch (e) {
-      toast('Lỗi proxy phụ: ' + e.message, 'error');
+  if (source === 'proxy2' || source === 'both') {
+    if (!baseUrl2 || !apiKey2) {
+      toast('Vui lòng nhập Base URL và API Key proxy phụ', 'error');
+    } else {
+      try {
+        const url2 = baseUrl2.replace(/\/+$/, '') + '/models';
+        const res2 = await fetch(url2, { headers: { 'Authorization': `Bearer ${apiKey2}` } });
+        if (!res2.ok) throw new Error(`HTTP ${res2.status}`);
+        const data2 = await res2.json();
+        const models2 = (data2.data || data2.models || []).map(m => m.id || m.name || m).filter(Boolean);
+        models2.forEach(m => { if (!newMap[m]) newMap[m] = 'proxy2'; });
+        allModels.push(...models2);
+        sources++;
+      } catch (e) {
+        toast('Lỗi proxy phụ: ' + e.message, 'error');
+      }
     }
   }
 
   // Deduplicate and sort
   State.models = [...new Set(allModels)].sort();
+  State.modelProxyMap = newMap;
   if (State.models.length) {
-    status.textContent = `✓ Tìm thấy ${State.models.length} model từ ${sources} proxy`;
+    const sourceLabel = source === 'proxy1' ? 'proxy chính' : source === 'proxy2' ? 'proxy phụ' : `${sources} proxy`;
+    status.textContent = `✓ Tìm thấy ${State.models.length} model từ ${sourceLabel}`;
     status.className = 'fetch-status success';
     populateModelSelects();
     toast(`Đã lấy ${State.models.length} model`, 'success');
@@ -297,6 +376,17 @@ function populateModelSelects() {
 
 function getActiveModel() {
   return State.mode === 'flash' ? (State.settings.flashModel || State.settings.currentModel) : (State.settings.proModel || State.settings.currentModel);
+}
+
+// Get the correct proxy URL and key for a model
+function getProxyForModel(model) {
+  const proxy = State.modelProxyMap[model];
+  const { baseUrl, apiKey, baseUrl2, apiKey2 } = State.settings;
+  if (proxy === 'proxy2' && baseUrl2 && apiKey2) {
+    return { url: baseUrl2.replace(/\/+$/, ''), key: apiKey2 };
+  }
+  // Default to proxy1
+  return { url: baseUrl.replace(/\/+$/, ''), key: apiKey };
 }
 
 function buildSystemPrompt() {
@@ -355,7 +445,7 @@ async function sendMessage() {
   typingEl.className = 'message assistant';
   typingEl.innerHTML = `
     <div class="message-avatar"><img src="assets/avatar.png" alt="Suna"></div>
-    <div>
+    <div class="message-content">
       <div class="message-header"><span class="msg-name">✨ Suna Chat</span></div>
       <div class="message-bubble"><div class="typing-indicator"><span></span><span></span><span></span><span class="typing-text">Đang suy nghĩ...</span></div></div>
     </div>`;
@@ -382,18 +472,35 @@ async function sendMessage() {
   }
 
   try {
-    const url = State.settings.baseUrl.replace(/\/+$/, '') + '/chat/completions';
+    const proxy = getProxyForModel(model);
+    const url = proxy.url + '/chat/completions';
     const body = { model, messages: apiMessages, stream: true };
 
-    const res = await fetch(url, {
+    let res = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${State.settings.apiKey}` },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${proxy.key}` },
       body: JSON.stringify(body)
     });
 
     if (!res.ok) {
-      const errData = await res.text();
-      throw new Error(`HTTP ${res.status}: ${errData.slice(0, 200)}`);
+      // Try fallback to alternate proxy
+      const { baseUrl, apiKey, baseUrl2, apiKey2 } = State.settings;
+      const altProxy = (proxy.url === baseUrl?.replace(/\/+$/, '')) && baseUrl2 && apiKey2
+        ? { url: baseUrl2.replace(/\/+$/, ''), key: apiKey2 }
+        : (baseUrl && apiKey ? { url: baseUrl.replace(/\/+$/, ''), key: apiKey } : null);
+
+      if (altProxy && altProxy.url !== proxy.url) {
+        console.log('Proxy fallback: retrying with alternate proxy...');
+        res = await fetch(altProxy.url + '/chat/completions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${altProxy.key}` },
+          body: JSON.stringify(body)
+        });
+      }
+      if (!res.ok) {
+        const errData = await res.text();
+        throw new Error(`HTTP ${res.status}: ${errData.slice(0, 200)}`);
+      }
     }
 
     // Stream response
@@ -406,7 +513,7 @@ async function sendMessage() {
     assistantEl.className = 'message assistant';
     assistantEl.innerHTML = `
       <div class="message-avatar"><img src="assets/avatar.png" alt="Suna"></div>
-      <div>
+      <div class="message-content">
         <div class="message-header"><span class="msg-name">✨ Suna Chat</span><span>${new Date().toLocaleTimeString('vi-VN', {hour:'2-digit',minute:'2-digit'})}</span></div>
         <div class="message-bubble"></div>
       </div>`;
@@ -473,7 +580,12 @@ function updateModelDisplay() {
 function initEvents() {
   // Sidebar toggle
   $('#btn-toggle-sidebar').addEventListener('click', () => {
-    $('.sidebar').classList.toggle('collapsed');
+    toggleSidebar();
+  });
+
+  // Sidebar overlay click (mobile)
+  $('#sidebar-overlay').addEventListener('click', () => {
+    closeSidebar();
   });
 
   // New chat
@@ -553,13 +665,24 @@ function initEvents() {
     });
   });
 
-  // API settings
-  $('#btn-fetch-models').addEventListener('click', () => {
+  // API settings - save proxy fields helper
+  function syncProxyFields() {
     State.settings.baseUrl = $('#api-base-url').value.trim();
     State.settings.apiKey = $('#api-key').value.trim();
     State.settings.baseUrl2 = $('#api-base-url-2').value.trim();
     State.settings.apiKey2 = $('#api-key-2').value.trim();
-    fetchModels();
+  }
+  $('#btn-fetch-proxy1').addEventListener('click', () => {
+    syncProxyFields();
+    fetchModels('proxy1');
+  });
+  $('#btn-fetch-proxy2').addEventListener('click', () => {
+    syncProxyFields();
+    fetchModels('proxy2');
+  });
+  $('#btn-fetch-models').addEventListener('click', () => {
+    syncProxyFields();
+    fetchModels('both');
   });
   $('#btn-toggle-key').addEventListener('click', () => {
     const el = $('#api-key');
@@ -700,6 +823,24 @@ function openModal(id) {
 
 function closeModal(id) { $(`#${id}`).style.display = 'none'; }
 
+// ===== Sidebar Helpers =====
+function toggleSidebar() {
+  const sidebar = $('.sidebar');
+  const overlay = $('#sidebar-overlay');
+  const isCollapsed = sidebar.classList.contains('collapsed');
+  if (isCollapsed) {
+    sidebar.classList.remove('collapsed');
+    if (isMobile()) overlay.classList.add('active');
+  } else {
+    closeSidebar();
+  }
+}
+
+function closeSidebar() {
+  $('.sidebar').classList.add('collapsed');
+  $('#sidebar-overlay').classList.remove('active');
+}
+
 // ===== Init =====
 function init() {
   loadState();
@@ -709,6 +850,20 @@ function init() {
   if (State.activeChatId) renderMessages();
   updateModelDisplay();
   initEvents();
+
+  // Start with sidebar collapsed on mobile
+  if (isMobile()) {
+    closeSidebar();
+  }
+
+  // Handle resize: adjust sidebar and overlay
+  window.addEventListener('resize', () => {
+    if (!isMobile()) {
+      $('#sidebar-overlay').classList.remove('active');
+      // Auto-expand sidebar on desktop
+      $('.sidebar').classList.remove('collapsed');
+    }
+  });
 }
 
 document.addEventListener('DOMContentLoaded', init);
