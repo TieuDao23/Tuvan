@@ -654,7 +654,7 @@ body {
 }
 
 .message-bubble p {
-  margin-bottom: 8px;
+  margin-bottom: 4px;
 }
 
 .message-bubble p:last-child {
@@ -666,7 +666,7 @@ body {
   padding: 12px;
   border-radius: var(--radius-sm);
   overflow-x: auto;
-  margin: 8px 0;
+  margin: 4px 0;
   font-family: 'JetBrains Mono', monospace;
   font-size: 0.85em;
 }
@@ -690,10 +690,9 @@ body {
   margin: 8px 0;
 }
 
-/* Code block with language label */
 .code-block-wrapper {
   position: relative;
-  margin: 8px 0;
+  margin: 4px 0;
 }
 
 .code-lang {
@@ -712,8 +711,8 @@ body {
 
 /* Math blocks */
 .math-block {
-  margin: 10px 0;
-  padding: 12px 16px;
+  margin: 6px 0;
+  padding: 8px 12px;
   background: rgba(0, 0, 0, 0.2);
   border-radius: var(--radius-sm);
   overflow-x: auto;
@@ -733,7 +732,7 @@ body {
 
 /* Headings in messages */
 .msg-heading {
-  margin: 12px 0 6px;
+  margin: 8px 0 4px;
   font-weight: 700;
   color: var(--text-primary);
   line-height: 1.4;
@@ -745,7 +744,7 @@ h4.msg-heading { font-size: 1em; color: var(--accent-1); }
 
 /* Lists in messages */
 .msg-list {
-  margin: 6px 0;
+  margin: 4px 0;
   padding-left: 20px;
 }
 
@@ -759,7 +758,7 @@ h4.msg-heading { font-size: 1em; color: var(--accent-1); }
   border: none;
   height: 1px;
   background: var(--border-color);
-  margin: 12px 0;
+  margin: 8px 0;
 }
 
 /* Links in messages */
@@ -2032,3 +2031,109 @@ h4.msg-heading { font-size: 1em; color: var(--accent-1); }
 .btn-danger:hover {
   box-shadow: 0 4px 15px rgba(231, 76, 60, 0.3);
   transform: translateY(-1px);
+}
+
+/* Message Actions */
+.message-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  justify-content: flex-start;
+}
+
+.message.user .message-actions {
+  justify-content: flex-end;
+}
+
+.message:hover .message-actions {
+  opacity: 1;
+}
+
+.action-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.action-btn:hover {
+  background: rgba(255,255,255,0.1);
+  color: var(--text-primary);
+}
+
+.action-btn.delete-btn:hover {
+  color: #ff6b6b;
+  background: rgba(255, 107, 107, 0.1);
+}
+
+.action-btn .material-icons-round {
+  font-size: 16px;
+}
+
+/* Edit Mode */
+.edit-mode {
+  width: 100%;
+}
+
+.edit-textarea {
+  width: 100%;
+  min-height: 80px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 0.95rem;
+  resize: vertical;
+  margin-bottom: 8px;
+}
+
+.edit-textarea:focus {
+  outline: none;
+  border-color: var(--accent-1);
+}
+
+.edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.btn-cancel, .btn-submit {
+  padding: 6px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  cursor: pointer;
+  border: none;
+  font-family: inherit;
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+.btn-cancel {
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.btn-cancel:hover {
+  background: rgba(255,255,255,0.05);
+  color: var(--text-primary);
+}
+
+.btn-submit {
+  background: var(--accent-gradient);
+  color: #fff;
+}
+
+.btn-submit:hover {
+  opacity: 0.9;
+}

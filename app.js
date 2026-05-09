@@ -143,16 +143,44 @@ function renderMessages() {
   welcome.style.display = 'none';
   container.style.display = 'flex';
 
-  container.innerHTML = chat.messages.map(m => {
+  container.innerHTML = chat.messages.map((m, idx) => {
     const isUser = m.role === 'user';
+    const userAvatarHtml = State.settings.userAvatar
+      ? `<img src="${State.settings.userAvatar}" alt="User">`
+      : '<span class="material-icons-round" style="font-size:18px;">person</span>';
+
+    if (State.editingIdx === idx) {
+      return `
+        <div class="message ${m.role}">
+          <div class="message-avatar">
+            ${isUser ? userAvatarHtml : '<img src="assets/avatar.png" alt="Suna">'}
+          </div>
+          <div class="message-content edit-mode">
+            <textarea id="edit-input-${idx}" class="edit-textarea">${m.content}</textarea>
+            <div class="edit-actions">
+              <button class="btn-cancel" onclick="cancelEdit()">Hủy</button>
+              <button class="btn-submit" onclick="submitEdit(${idx})">Lưu & Gửi</button>
+            </div>
+          </div>
+        </div>`;
+    }
+
     let content = '';
     if (m.images && m.images.length) {
       content += m.images.map(img => `<img src="${img}" alt="image">`).join('');
     }
     content += formatMessage(m.content);
-    const userAvatarHtml = State.settings.userAvatar
-      ? `<img src="${State.settings.userAvatar}" alt="User">`
-      : '<span class="material-icons-round" style="font-size:18px;">person</span>';
+    
+    const actionHtml = `
+      <div class="message-actions">
+        ${isUser 
+          ? `<button class="action-btn" onclick="editMessage(${idx})" title="Chỉnh sửa"><span class="material-icons-round">edit</span></button>` 
+          : `<button class="action-btn" onclick="reloadMessage(${idx})" title="Tải lại"><span class="material-icons-round">refresh</span></button>`
+        }
+        <button class="action-btn delete-btn" onclick="deleteMessage(${idx})" title="Xóa"><span class="material-icons-round">delete_outline</span></button>
+      </div>
+    `;
+
     return `
       <div class="message ${m.role}">
         <div class="message-avatar">
@@ -164,6 +192,7 @@ function renderMessages() {
             <span>${new Date(m.timestamp).toLocaleTimeString('vi-VN', {hour:'2-digit',minute:'2-digit'})}</span>
           </div>
           <div class="message-bubble">${content}</div>
+          ${actionHtml}
         </div>
       </div>`;
   }).join('');
@@ -177,8 +206,8 @@ function formatMessage(text) {
   if (!text) return '';
   let html = escHtml(text);
 
-  // Block math: $$...$$ (must come before inline math)
-  html = html.replace(/\$\$([\s\S]*?)\$\$/g, (_, math) => {
+  // Block math: $$...$$ or \[...\]
+  html = html.replace(/(?:\$\$|\\\[)([\s\S]*?)(?:\$\$|\\\])/g, (_, math) => {
     try {
       if (typeof katex !== 'undefined') {
         return '<div class="math-block">' + katex.renderToString(math.trim(), { displayMode: true, throwOnError: false }) + '</div>';
@@ -187,8 +216,8 @@ function formatMessage(text) {
     return '<div class="math-block"><code>' + math.trim() + '</code></div>';
   });
 
-  // Inline math: $...$
-  html = html.replace(/\$([^\$\n]+?)\$/g, (_, math) => {
+  // Inline math: $...$ or \(...\)
+  html = html.replace(/(?:\$|\\\()([^\$\n]+?)(?:\$|\\\))/g, (_, math) => {
     try {
       if (typeof katex !== 'undefined') {
         return katex.renderToString(math.trim(), { displayMode: false, throwOnError: false });
@@ -439,6 +468,17 @@ async function sendMessage() {
   renderChatList();
   saveState();
 
+  await generateAIResponse();
+}
+
+async function generateAIResponse() {
+  const model = getActiveModel();
+  if (!model) { toast('Vui lòng chọn model trước', 'error'); return; }
+  if (!State.settings.baseUrl || !State.settings.apiKey) { toast('Vui lòng cấu hình API', 'error'); return; }
+
+  let chat = getActiveChat();
+  if (!chat) return;
+
   // Show typing
   const container = $('#messages-container');
   const typingEl = document.createElement('div');
@@ -539,8 +579,11 @@ async function sendMessage() {
           if (delta) {
             assistantContent += delta;
             bubbleEl.innerHTML = formatMessage(assistantContent);
-            container.scrollTop = container.scrollHeight;
-            $('#chat-area').scrollTop = $('#chat-area').scrollHeight;
+            const chatArea = $('#chat-area');
+            const isNearBottom = chatArea.scrollHeight - chatArea.scrollTop - chatArea.clientHeight < 150;
+            if (isNearBottom) {
+              chatArea.scrollTop = chatArea.scrollHeight;
+            }
           }
         } catch(e) {}
       }
@@ -548,6 +591,7 @@ async function sendMessage() {
 
     chat.messages.push({ role: 'assistant', content: assistantContent, timestamp: Date.now() });
     saveState();
+    renderMessages();
 
   } catch(e) {
     typingEl.remove();
@@ -556,6 +600,49 @@ async function sendMessage() {
     renderMessages();
     toast('Gửi tin nhắn thất bại: ' + e.message, 'error');
   }
+}
+
+// ===== Message Actions =====
+window.editMessage = function(idx) {
+  State.editingIdx = idx;
+  renderMessages();
+}
+
+window.cancelEdit = function() {
+  State.editingIdx = null;
+  renderMessages();
+}
+
+window.submitEdit = async function(idx) {
+  const chat = getActiveChat();
+  const text = document.getElementById(`edit-input-${idx}`).value.trim();
+  if (!text) return;
+  
+  State.editingIdx = null;
+  chat.messages[idx].content = text;
+  // Truncate messages after this index
+  chat.messages = chat.messages.slice(0, idx + 1);
+  saveState();
+  renderMessages();
+  await generateAIResponse();
+}
+
+window.reloadMessage = async function(idx) {
+  const chat = getActiveChat();
+  if(!chat) return;
+  // Truncate from idx onwards (which is the AI message to reload)
+  chat.messages = chat.messages.slice(0, idx);
+  saveState();
+  renderMessages();
+  await generateAIResponse();
+}
+
+window.deleteMessage = function(idx) {
+  const chat = getActiveChat();
+  if(!chat) return;
+  chat.messages.splice(idx, 1);
+  saveState();
+  renderMessages();
 }
 
 // ===== Mode Toggle =====
