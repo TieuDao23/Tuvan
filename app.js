@@ -13,8 +13,21 @@ const State = {
     userName: 'Bạn', userAvatar: ''
   },
   pendingImages: [],
-  modelProxyMap: {} // maps model name to 'proxy1' or 'proxy2'
+  modelProxyMap: {}, // maps model name to 'proxy1' or 'proxy2'
+  isGenerating: false,
+  abortController: null
 };
+
+function updateSendButtonState() {
+  const btn = $('#btn-send');
+  if (State.isGenerating) {
+    btn.innerHTML = '<span class="material-icons-round">pause</span>';
+    btn.classList.add('is-generating');
+  } else {
+    btn.innerHTML = '<span class="material-icons-round">send</span>';
+    btn.classList.remove('is-generating');
+  }
+}
 
 // ===== Helpers =====
 const $ = s => document.querySelector(s);
@@ -36,7 +49,15 @@ function loadState() {
     if (c) State.chats = JSON.parse(c);
     if (s) Object.assign(State.settings, JSON.parse(s));
     if (m) State.mode = m;
+    if (m) State.mode = m;
   } catch(e) { console.error('Load state error:', e); }
+
+  if (State.chats.length === 0) {
+    State.chats.push({ id: genId(), title: 'Chat mới', messages: [], createdAt: Date.now() });
+  }
+  if (!State.activeChatId || !State.chats.find(c => c.id === State.activeChatId)) {
+    State.activeChatId = State.chats[0].id;
+  }
 }
 
 function toast(msg, type = 'info') {
@@ -75,8 +96,12 @@ function confirmDeleteChat(id) {
 
 function deleteChat(id) {
   State.chats = State.chats.filter(c => c.id !== id);
-  if (State.activeChatId === id) {
-    State.activeChatId = State.chats.length ? State.chats[0].id : null;
+  if (State.chats.length === 0) {
+    const chat = { id: genId(), title: 'Chat mới', messages: [], createdAt: Date.now() };
+    State.chats.push(chat);
+    State.activeChatId = chat.id;
+  } else if (State.activeChatId === id) {
+    State.activeChatId = State.chats[0].id;
   }
   saveState();
   renderChatList();
@@ -479,6 +504,10 @@ async function generateAIResponse() {
   let chat = getActiveChat();
   if (!chat) return;
 
+  State.isGenerating = true;
+  State.abortController = new AbortController();
+  updateSendButtonState();
+
   // Show typing
   const container = $('#messages-container');
   const typingEl = document.createElement('div');
@@ -511,6 +540,7 @@ async function generateAIResponse() {
     }
   }
 
+  let assistantContent = '';
   try {
     const proxy = getProxyForModel(model);
     const url = proxy.url + '/chat/completions';
@@ -519,7 +549,8 @@ async function generateAIResponse() {
     let res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${proxy.key}` },
-      body: JSON.stringify(body)
+      body: JSON.stringify(body),
+      signal: State.abortController.signal
     });
 
     if (!res.ok) {
@@ -534,7 +565,8 @@ async function generateAIResponse() {
         res = await fetch(altProxy.url + '/chat/completions', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${altProxy.key}` },
-          body: JSON.stringify(body)
+          body: JSON.stringify(body),
+          signal: State.abortController.signal
         });
       }
       if (!res.ok) {
@@ -546,7 +578,6 @@ async function generateAIResponse() {
     // Stream response
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
-    let assistantContent = '';
     typingEl.remove();
 
     const assistantEl = document.createElement('div');
@@ -594,11 +625,24 @@ async function generateAIResponse() {
     renderMessages();
 
   } catch(e) {
-    typingEl.remove();
-    chat.messages.push({ role: 'assistant', content: `⚠️ Lỗi: ${e.message}`, timestamp: Date.now() });
-    saveState();
-    renderMessages();
-    toast('Gửi tin nhắn thất bại: ' + e.message, 'error');
+    if (e.name === 'AbortError') {
+      if (typingEl.parentNode) typingEl.remove();
+      const finalContent = assistantContent + (assistantContent ? '\n\n' : '') + '*(Đã dừng)*';
+      chat.messages.push({ role: 'assistant', content: finalContent, timestamp: Date.now() });
+      saveState();
+      renderMessages();
+      toast('Đã dừng tạo phản hồi.', 'info');
+    } else {
+      if (typingEl.parentNode) typingEl.remove();
+      chat.messages.push({ role: 'assistant', content: `⚠️ Lỗi: ${e.message}`, timestamp: Date.now() });
+      saveState();
+      renderMessages();
+      toast('Gửi tin nhắn thất bại: ' + e.message, 'error');
+    }
+  } finally {
+    State.isGenerating = false;
+    State.abortController = null;
+    updateSendButtonState();
   }
 }
 
@@ -684,9 +728,18 @@ function initEvents() {
   });
 
   // Send message
-  $('#btn-send').addEventListener('click', sendMessage);
+  $('#btn-send').addEventListener('click', () => {
+    if (State.isGenerating) {
+      if (State.abortController) State.abortController.abort();
+    } else {
+      sendMessage();
+    }
+  });
   $('#message-input').addEventListener('keydown', e => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+    if (e.key === 'Enter' && !e.shiftKey) { 
+      e.preventDefault(); 
+      if (!State.isGenerating) sendMessage(); 
+    }
   });
 
   // Auto-resize textarea

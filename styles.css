@@ -997,6 +997,18 @@ h4.msg-heading { font-size: 1em; color: var(--accent-1); }
   box-shadow: 0 4px 15px var(--accent-glow);
 }
 
+.btn-send.is-generating {
+  background: transparent;
+  border: 1px solid #e74c3c;
+  color: #e74c3c;
+  box-shadow: none;
+}
+
+.btn-send.is-generating:hover {
+  background: rgba(231, 76, 60, 0.1);
+  transform: none;
+}
+
 .btn-send:disabled {
   opacity: 0.5;
   cursor: not-allowed;
