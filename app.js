@@ -35,20 +35,76 @@ const $$ = s => document.querySelectorAll(s);
 const genId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const isMobile = () => window.innerWidth <= 768;
 
-function saveState() {
-  localStorage.setItem('suna_chats', JSON.stringify(State.chats));
-  localStorage.setItem('suna_settings', JSON.stringify(State.settings));
-  localStorage.setItem('suna_mode', State.mode);
+// ===== IndexedDB Storage =====
+const DB_NAME = 'SunaChatDB';
+const STORE_NAME = 'suna_store';
+
+function initDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, 1);
+    req.onupgradeneeded = e => {
+      e.target.result.createObjectStore(STORE_NAME);
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
 }
 
-function loadState() {
+async function idbSet(key, val) {
   try {
-    const c = localStorage.getItem('suna_chats');
+    const db = await initDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, 'readwrite');
+      tx.objectStore(STORE_NAME).put(val, key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch(e) { console.error('IndexedDB write error:', e); }
+}
+
+async function idbGet(key) {
+  try {
+    const db = await initDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, 'readonly');
+      const req = tx.objectStore(STORE_NAME).get(key);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(tx.error);
+    });
+  } catch(e) { console.error('IndexedDB read error:', e); return null; }
+}
+
+function saveState() {
+  try {
+    localStorage.setItem('suna_settings', JSON.stringify(State.settings));
+    localStorage.setItem('suna_mode', State.mode);
+    idbSet('suna_chats', State.chats); // Fire and forget background save
+  } catch (e) {
+    if (e.name === 'QuotaExceededError' || e.code === 22) {
+      toast('Bộ nhớ settings đã đầy!', 'error');
+    } else {
+      console.error('Lỗi khi lưu trạng thái:', e);
+    }
+  }
+}
+
+async function loadState() {
+  try {
     const s = localStorage.getItem('suna_settings');
     const m = localStorage.getItem('suna_mode');
-    if (c) State.chats = JSON.parse(c);
+    
+    // Migrate old chats from localStorage if they exist
+    const oldChatsStr = localStorage.getItem('suna_chats');
+    if (oldChatsStr) {
+      State.chats = JSON.parse(oldChatsStr);
+      await idbSet('suna_chats', State.chats);
+      localStorage.removeItem('suna_chats'); // Free up localStorage limit
+    } else {
+      const c = await idbGet('suna_chats');
+      if (c) State.chats = c;
+    }
+
     if (s) Object.assign(State.settings, JSON.parse(s));
-    if (m) State.mode = m;
     if (m) State.mode = m;
   } catch(e) { console.error('Load state error:', e); }
 
@@ -1131,8 +1187,8 @@ function closeSidebar() {
 }
 
 // ===== Init =====
-function init() {
-  loadState();
+async function init() {
+  await loadState();
   applyTheme();
   setMode(State.mode);
   renderChatList();
