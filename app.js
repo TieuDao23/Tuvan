@@ -459,6 +459,10 @@ function buildSystemPrompt() {
   if (State.settings.customPersonality) parts.push(State.settings.customPersonality);
   if (State.mode === 'flash') parts.push('Hãy trả lời nhanh gọn, tối ưu tốc độ, tập trung vào ý chính.');
   else parts.push('Hãy trả lời chi tiết, chuyên sâu, phân tích kỹ lưỡng.');
+  
+  // Anti-hallucination for vision capabilities
+  parts.push('LƯU Ý QUAN TRỌNG: Bạn có khả năng nhìn thấy, đọc chữ (OCR) và phân tích cực kỳ chi tiết các hình ảnh được người dùng gửi lên. Hãy trực tiếp đọc và phân tích ảnh. TUYỆT ĐỐI KHÔNG được nói rằng bạn không thể xem ảnh, không có quyền truy cập file, hay yêu cầu người dùng mô tả lại ảnh.');
+  
   return parts.join('\n\n');
 }
 
@@ -842,6 +846,26 @@ function initEvents() {
     updateModelDisplay();
     closeModal('api-modal');
     toast('Đã lưu cấu hình API', 'success');
+  });
+  $('#btn-test-api').addEventListener('click', () => {
+    const testModel = $('#model-select').value;
+    if (!testModel) {
+      toast('Vui lòng chọn model để test', 'error');
+      return;
+    }
+    State.settings.baseUrl = $('#api-base-url').value.trim();
+    State.settings.apiKey = $('#api-key').value.trim();
+    State.settings.baseUrl2 = $('#api-base-url-2').value.trim();
+    State.settings.apiKey2 = $('#api-key-2').value.trim();
+    State.settings.currentModel = testModel;
+    saveState();
+    updateModelDisplay();
+    closeModal('api-modal');
+    
+    createChat();
+    $('#message-input').value = 'Test kết nối. Bạn có nhận được tin nhắn này không?';
+    sendMessage();
+    toast('Đang gửi tin nhắn test...', 'info');
   });
 
   // General settings
