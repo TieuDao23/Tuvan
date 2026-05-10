@@ -544,6 +544,7 @@ async function generateAIResponse() {
     }
   }
 
+  const startTime = Date.now();
   let assistantContent = '';
   try {
     const proxy = getProxyForModel(model);
@@ -577,6 +578,12 @@ async function generateAIResponse() {
         const errData = await res.text();
         throw new Error(`HTTP ${res.status}: ${errData.slice(0, 200)}`);
       }
+    }
+
+    // Enforce minimum thinking animation time for UX
+    const elapsed = Date.now() - startTime;
+    if (elapsed < 800) {
+      await new Promise(r => setTimeout(r, 800 - elapsed));
     }
 
     // Stream response
