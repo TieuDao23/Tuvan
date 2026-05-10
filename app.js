@@ -445,6 +445,10 @@ function getProxyForModel(model) {
 
 function buildSystemPrompt() {
   let parts = [];
+  const currentModel = getActiveModel();
+  if (currentModel) {
+    parts.push(`[THÔNG TIN HỆ THỐNG]: Tên model (phiên bản) hiện tại của bạn là "${currentModel}". Nếu người dùng hỏi bạn là ai, do ai tạo ra, hoặc đang dùng model nào, hãy tự xưng và xác nhận bạn chính là "${currentModel}". Đừng tự nhận là model khác.`);
+  }
   if (State.settings.systemPrompt) parts.push(State.settings.systemPrompt);
   if (State.settings.userPurpose) parts.push(`Mục đích người dùng: ${State.settings.userPurpose}. Hãy tập trung hỗ trợ tối đa theo hướng này.`);
   const toneMap = {
@@ -466,6 +470,32 @@ function buildSystemPrompt() {
   return parts.join('\n\n');
 }
 
+async function fetchLinkContext(text) {
+  const urlRegex = /(https?:\/\/[^\s]+)/g;
+  const urls = text.match(urlRegex);
+  if (!urls) return null;
+  
+  let linkContextText = '';
+  for (const link of urls) {
+    try {
+      const corsProxy = `https://api.allorigins.win/get?url=${encodeURIComponent(link)}`;
+      const res = await fetch(corsProxy);
+      if (res.ok) {
+        const data = await res.json();
+        const html = data.contents;
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        doc.querySelectorAll('script, style, nav, footer, iframe').forEach(el => el.remove());
+        let content = doc.body ? doc.body.textContent : '';
+        content = content.replace(/\s+/g, ' ').trim().slice(0, 6000); 
+        linkContextText += `\n--- Trích xuất từ ${link} ---\n${content}\n`;
+      }
+    } catch(e) {
+      console.error('Lỗi đọc link:', e);
+    }
+  }
+  return linkContextText;
+}
+
 async function sendMessage() {
   const input = $('#message-input');
   const text = input.value.trim();
@@ -480,8 +510,20 @@ async function sendMessage() {
   let chat = getActiveChat();
   if (!chat) chat = createChat();
 
+  State.isGenerating = true;
+  updateSendButtonState();
+
+  let linkContext = null;
+  const urlRegex = /(https?:\/\/[^\s]+)/g;
+  if (urlRegex.test(text)) {
+    toast('Đang đọc liên kết trực tuyến...', 'info');
+    linkContext = await fetchLinkContext(text);
+    if (linkContext) toast('Đã lấy xong nội dung link', 'success');
+  }
+
   // Add user message
   const userMsg = { role: 'user', content: text, images, timestamp: Date.now() };
+  if (linkContext) userMsg.linkContext = linkContext;
   chat.messages.push(userMsg);
 
   // Auto-title
@@ -532,15 +574,18 @@ async function generateAIResponse() {
   if (systemPrompt) apiMessages.push({ role: 'system', content: systemPrompt });
 
   for (const m of chat.messages) {
+    let finalContentText = m.content;
+    if (m.linkContext) finalContentText += `\n\n[Nội dung từ Web]:\n${m.linkContext}`;
+
     if (m.role === 'user' && m.images && m.images.length) {
       const contentParts = [];
-      if (m.content) contentParts.push({ type: 'text', text: m.content });
+      if (finalContentText) contentParts.push({ type: 'text', text: finalContentText });
       for (const img of m.images) {
         contentParts.push({ type: 'image_url', image_url: { url: img } });
       }
       apiMessages.push({ role: 'user', content: contentParts });
     } else {
-      apiMessages.push({ role: m.role, content: m.content });
+      apiMessages.push({ role: m.role, content: finalContentText });
     }
   }
 
@@ -551,14 +596,20 @@ async function generateAIResponse() {
     const url = proxy.url + '/chat/completions';
     const body = { model, messages: apiMessages, stream: true };
 
-    let res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${proxy.key}` },
-      body: JSON.stringify(body),
-      signal: State.abortController.signal
-    });
+    let res = null;
+    let fetchError = null;
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${proxy.key}` },
+        body: JSON.stringify(body),
+        signal: State.abortController.signal
+      });
+    } catch (err) {
+      fetchError = err;
+    }
 
-    if (!res.ok) {
+    if (!res || !res.ok) {
       // Try fallback to alternate proxy
       const { baseUrl, apiKey, baseUrl2, apiKey2 } = State.settings;
       const altProxy = (proxy.url === baseUrl?.replace(/\/+$/, '')) && baseUrl2 && apiKey2
@@ -567,16 +618,24 @@ async function generateAIResponse() {
 
       if (altProxy && altProxy.url !== proxy.url) {
         console.log('Proxy fallback: retrying with alternate proxy...');
-        res = await fetch(altProxy.url + '/chat/completions', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${altProxy.key}` },
-          body: JSON.stringify(body),
-          signal: State.abortController.signal
-        });
+        try {
+          res = await fetch(altProxy.url + '/chat/completions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${altProxy.key}` },
+            body: JSON.stringify(body),
+            signal: State.abortController.signal
+          });
+        } catch (err) {
+          if (!res && !fetchError) fetchError = err;
+        }
+      } else if (fetchError) {
+        throw fetchError;
       }
-      if (!res.ok) {
-        const errData = await res.text();
-        throw new Error(`HTTP ${res.status}: ${errData.slice(0, 200)}`);
+      
+      if (!res || !res.ok) {
+        if (fetchError && !res) throw fetchError;
+        const errData = res ? await res.text() : 'No response';
+        throw new Error(`HTTP ${res ? res.status : 'Error'}: ${errData.slice(0, 200)}`);
       }
     }
 
