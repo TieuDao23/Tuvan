@@ -198,6 +198,7 @@ function renderMessages() {
     
     const actionHtml = `
       <div class="message-actions">
+        <button class="action-btn" onclick="copyText(decodeURIComponent('${encodeURIComponent(m.content)}'))" title="Sao chép"><span class="material-icons-round">content_copy</span></button>
         ${isUser 
           ? `<button class="action-btn" onclick="editMessage(${idx})" title="Chỉnh sửa"><span class="material-icons-round">edit</span></button>` 
           : `<button class="action-btn" onclick="reloadMessage(${idx})" title="Tải lại"><span class="material-icons-round">refresh</span></button>`
@@ -254,7 +255,12 @@ function formatMessage(text) {
   // Code blocks with language
   html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
     const label = lang ? `<div class="code-lang">${lang}</div>` : '';
-    return `<div class="code-block-wrapper">${label}<pre><code>${code}</code></pre></div>`;
+    const safeCode = encodeURIComponent(code);
+    return `<div class="code-block-wrapper">
+              ${label}
+              <button class="btn-copy-code" onclick="copyText(decodeURIComponent('${safeCode}'))" title="Sao chép code"><span class="material-icons-round">content_copy</span></button>
+              <pre><code>${code}</code></pre>
+            </div>`;
   });
   // Inline code
   html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
@@ -759,6 +765,59 @@ window.deleteMessage = function(idx) {
   renderMessages();
 }
 
+window.copyText = function(text) {
+  navigator.clipboard.writeText(text).then(() => {
+    toast('Đã sao chép vào khay nhớ tạm', 'success');
+  }).catch(() => {
+    toast('Lỗi khi sao chép', 'error');
+  });
+};
+
+// ===== Particles Effect =====
+function initParticles() {
+  const container = document.createElement('div');
+  container.id = 'particles-container';
+  container.style.cssText = 'position: absolute; inset: 0; pointer-events: none; z-index: 0; overflow: hidden;';
+  $('#chat-area').appendChild(container);
+
+  setInterval(() => {
+    if (document.hidden) return; // skip if tab inactive
+    const p = document.createElement('div');
+    
+    // Choose particle based on theme
+    const theme = State.settings.theme;
+    let symbol = '❄️';
+    if (theme === 'sunset' || theme === 'ember') symbol = '🌸';
+    if (theme === 'forest') symbol = '🍃';
+    if (theme === 'aurora' || theme === 'midnight') symbol = '✨';
+
+    p.textContent = symbol;
+    
+    const size = 10 + Math.random() * 8;
+    const startX = Math.random() * 100;
+    const duration = 8 + Math.random() * 10; // slow fall
+    const delay = Math.random() * 2;
+    const maxOp = 0.15 + Math.random() * 0.2; // very subtle
+    
+    p.style.cssText = `
+      position: absolute;
+      top: -20px;
+      left: ${startX}%;
+      font-size: ${size}px;
+      opacity: 0;
+      animation: particleFall ${duration}s linear ${delay}s forwards;
+      filter: drop-shadow(0 0 4px var(--accent-1));
+      --max-opacity: ${maxOp};
+    `;
+    
+    container.appendChild(p);
+    
+    setTimeout(() => {
+      p.remove();
+    }, (duration + delay) * 1000);
+  }, 1500); // 1.5s interval -> lightweight
+}
+
 // ===== Mode Toggle =====
 function setMode(mode) {
   State.mode = mode;
@@ -1080,6 +1139,7 @@ function init() {
   if (State.activeChatId) renderMessages();
   updateModelDisplay();
   initEvents();
+  initParticles();
 
   // Start with sidebar collapsed on mobile
   if (isMobile()) {

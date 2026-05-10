@@ -2151,3 +2151,50 @@ h4.msg-heading { font-size: 1em; color: var(--accent-1); }
 .btn-submit:hover {
   opacity: 0.9;
 }
+/* ===== Copy Button & Particles ===== */
+.code-lang {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: auto;
+  border-radius: var(--radius-sm) 0 var(--radius-sm) 0;
+}
+
+.btn-copy-code {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition);
+  z-index: 5;
+  opacity: 0;
+}
+
+.code-block-wrapper:hover .btn-copy-code {
+  opacity: 1;
+}
+
+.btn-copy-code:hover {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+
+.btn-copy-code .material-icons-round {
+  font-size: 14px;
+}
+
+@keyframes particleFall {
+  0% { transform: translateY(0) rotate(0deg); opacity: 0; }
+  10% { opacity: var(--max-opacity, 0.3); }
+  80% { opacity: var(--max-opacity, 0.3); }
+  100% { transform: translateY(100vh) rotate(360deg); opacity: 0; }
+}
