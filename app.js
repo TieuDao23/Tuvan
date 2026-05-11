@@ -551,37 +551,47 @@ function compressImage(dataUrl, maxSize = 1024, quality = 0.7) {
   });
 }
 
+// Find a vision-capable model from user's fetched model list
+function findUserVisionModel() {
+  const patterns = ['gemini', 'gpt-4o', 'gpt-4-turbo', 'gpt-4.1', 'claude-3', 'claude-sonnet', 'claude-opus', 'llava', 'vision', 'qwen-vl', 'qwen2-vl', 'pixtral', 'internvl', 'glm-4v', 'yi-vision'];
+  for (const model of State.models) {
+    const lower = model.toLowerCase();
+    if (patterns.some(p => lower.includes(p))) return model;
+  }
+  return null;
+}
+
 function getVisionConfigs() {
   const configs = [];
-  // Priority 1: user's own proxies with the vision model
-  if (State.models.includes(VISION_MODEL)) {
-    const proxy = getProxyForModel(VISION_MODEL);
-    configs.push({ model: VISION_MODEL, baseUrl: proxy.url, apiKey: proxy.key });
-  }
-  // Priority 2: try user's proxy1 with the vision model (even if not in model list)
   const { baseUrl, apiKey, baseUrl2, apiKey2 } = State.settings;
+
+  // Priority 1: auto-detected vision model on user's OWN proxy (CORS-safe)
+  const userVisionModel = findUserVisionModel();
+  if (userVisionModel) {
+    const proxy = getProxyForModel(userVisionModel);
+    configs.push({ model: userVisionModel, baseUrl: proxy.url, apiKey: proxy.key });
+  }
+
+  // Priority 2: try VISION_MODEL on user's proxy1
   if (baseUrl && apiKey) {
     const url = baseUrl.replace(/\/+$/, '');
     if (!configs.some(c => c.baseUrl === url)) {
       configs.push({ model: VISION_MODEL, baseUrl: url, apiKey });
     }
   }
-  // Priority 3: try user's proxy2
+  // Priority 3: try VISION_MODEL on user's proxy2
   if (baseUrl2 && apiKey2) {
     const url2 = baseUrl2.replace(/\/+$/, '');
     if (!configs.some(c => c.baseUrl === url2)) {
       configs.push({ model: VISION_MODEL, baseUrl: url2, apiKey: apiKey2 });
     }
   }
-  // Priority 4: hardcoded fallback
-  if (!configs.some(c => c.baseUrl === VISION_FALLBACK_PROXY.baseUrl)) {
-    configs.push({ model: VISION_MODEL, baseUrl: VISION_FALLBACK_PROXY.baseUrl, apiKey: VISION_FALLBACK_PROXY.apiKey });
-  }
+  // Priority 4: hardcoded fallback (may fail CORS on some deployments)
+  configs.push({ model: VISION_MODEL, baseUrl: VISION_FALLBACK_PROXY.baseUrl, apiKey: VISION_FALLBACK_PROXY.apiKey });
   return configs;
 }
 
 async function describeImagesWithVision(images, userText) {
-  // Compress images first to avoid payload size issues
   const compressedImages = await Promise.all(images.map(img => compressImage(img)));
 
   const contentParts = [];
@@ -593,24 +603,13 @@ async function describeImagesWithVision(images, userText) {
     contentParts.push({ type: 'image_url', image_url: { url: img, detail: 'high' } });
   }
 
-  const requestBody = JSON.stringify({
-    model: VISION_MODEL,
-    messages: [
-      { role: 'system', content: 'Bạn là chuyên gia phân tích hình ảnh. Mô tả CỰC KỲ CHI TIẾT. Đọc hết chữ (OCR). Trích xuất code, bảng, biểu đồ nếu có.' },
-      { role: 'user', content: contentParts }
-    ],
-    stream: false,
-    max_tokens: 4096
-  });
-
-  // Try each vision config until one succeeds
   const configs = getVisionConfigs();
   let lastError = null;
 
   for (const config of configs) {
     try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 30000); // 30s timeout
+      const timeout = setTimeout(() => controller.abort(), 30000);
 
       const res = await fetch(config.baseUrl + '/chat/completions', {
         method: 'POST',
@@ -618,23 +617,31 @@ async function describeImagesWithVision(images, userText) {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${config.apiKey}`
         },
-        body: requestBody,
+        body: JSON.stringify({
+          model: config.model,
+          messages: [
+            { role: 'system', content: 'Bạn là chuyên gia phân tích hình ảnh. Mô tả CỰC KỲ CHI TIẾT. Đọc hết chữ (OCR). Trích xuất code, bảng, biểu đồ nếu có.' },
+            { role: 'user', content: contentParts }
+          ],
+          stream: false,
+          max_tokens: 4096
+        }),
         signal: controller.signal
       });
       clearTimeout(timeout);
 
       if (!res.ok) {
         lastError = new Error(`HTTP ${res.status}`);
-        continue; // try next config
+        continue;
       }
       const data = await res.json();
       const content = data.choices?.[0]?.message?.content;
-      if (content) return content;
-      lastError = new Error('Empty vision response');
+      if (content && content.length > 20) return content; // ensure meaningful response
+      lastError = new Error('Empty or too short vision response');
     } catch (err) {
       lastError = err;
-      console.warn(`Vision attempt failed (${config.baseUrl}):`, err.message);
-      continue; // try next config
+      console.warn(`Vision failed (${config.model}@${config.baseUrl}):`, err.message);
+      continue;
     }
   }
 
