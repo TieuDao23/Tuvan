@@ -13,9 +13,10 @@ const State = {
     userName: 'Bạn', userAvatar: ''
   },
   pendingImages: [],
-  modelProxyMap: {}, // maps model name to 'proxy1' or 'proxy2'
+  modelProxyMap: {},
   isGenerating: false,
-  abortController: null
+  abortController: null,
+  generatingChatId: null
 };
 
 function updateSendButtonState() {
@@ -38,14 +39,16 @@ const isMobile = () => window.innerWidth <= 768;
 // ===== IndexedDB Storage =====
 const DB_NAME = 'SunaChatDB';
 const STORE_NAME = 'suna_store';
+let _dbInstance = null;
 
 function initDB() {
+  if (_dbInstance) return Promise.resolve(_dbInstance);
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, 1);
     req.onupgradeneeded = e => {
       e.target.result.createObjectStore(STORE_NAME);
     };
-    req.onsuccess = () => resolve(req.result);
+    req.onsuccess = () => { _dbInstance = req.result; resolve(_dbInstance); };
     req.onerror = () => reject(req.error);
   });
 }
@@ -216,7 +219,7 @@ function renderMessages() {
   const welcome = $('#welcome-screen');
   const container = $('#messages-container');
 
-  if (!chat || !chat.messages.length) {
+  if (!chat || (!chat.messages.length && State.generatingChatId !== chat.id)) {
     welcome.style.display = 'flex';
     container.style.display = 'none';
     return;
@@ -279,9 +282,22 @@ function renderMessages() {
       </div>`;
   }).join('');
 
-  container.scrollTop = container.scrollHeight;
-  const chatArea = $('#chat-area');
-  chatArea.scrollTop = chatArea.scrollHeight;
+  // Show typing indicator if this chat is currently generating
+  if (State.generatingChatId === chat.id && State.isGenerating) {
+    container.innerHTML += `
+      <div class="message assistant" id="restore-typing">
+        <div class="message-avatar"><img src="assets/avatar.png" alt="Suna"></div>
+        <div class="message-content">
+          <div class="message-header"><span class="msg-name">✨ Suna Chat</span></div>
+          <div class="message-bubble"><div class="typing-indicator"><span></span><span></span><span></span><span class="typing-text">Đang suy nghĩ...</span></div></div>
+        </div>
+      </div>`;
+  }
+
+  requestAnimationFrame(() => {
+    const chatArea = $('#chat-area');
+    chatArea.scrollTop = chatArea.scrollHeight;
+  });
 }
 
 function formatMessage(text) {
@@ -505,29 +521,96 @@ function getProxyForModel(model) {
   return { url: baseUrl.replace(/\/+$/, ''), key: apiKey };
 }
 
+// ===== Vision Fallback System =====
+const VISION_FALLBACK_PROXY = {
+  baseUrl: 'https://gcli.ggchan.dev/v1',
+  apiKey: 'gg-gcli-ISYgoJBO77zC7DrfkpDPx9XxaNPmqtilFKGto2OhejQ'
+};
+const VISION_MODEL = 'gemini-3.1-pro-preview';
+
+function getVisionConfig() {
+  // Priority 1: check user's own proxies for the vision model
+  if (State.models.includes(VISION_MODEL)) {
+    const proxy = getProxyForModel(VISION_MODEL);
+    return { model: VISION_MODEL, baseUrl: proxy.url, apiKey: proxy.key };
+  }
+  // Priority 2: hardcoded fallback proxy
+  return { model: VISION_MODEL, baseUrl: VISION_FALLBACK_PROXY.baseUrl, apiKey: VISION_FALLBACK_PROXY.apiKey };
+}
+
+async function describeImagesWithVision(images, userText) {
+  const config = getVisionConfig();
+  const contentParts = [];
+  const promptText = userText
+    ? `Hãy phân tích chi tiết các hình ảnh sau. Ngữ cảnh câu hỏi của người dùng: "${userText}". Mô tả mọi chi tiết: văn bản/chữ viết (OCR đầy đủ), màu sắc, bố cục, đối tượng, biểu đồ, bảng, code nếu có.`
+    : 'Hãy mô tả THẬT CHI TIẾT nội dung tất cả hình ảnh: văn bản/chữ viết (OCR đầy đủ), màu sắc, bố cục, đối tượng, biểu đồ, bảng, code nếu có.';
+  contentParts.push({ type: 'text', text: promptText });
+  for (const img of images) {
+    contentParts.push({ type: 'image_url', image_url: { url: img, detail: 'high' } });
+  }
+
+  const res = await fetch(config.baseUrl + '/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.apiKey}` },
+    body: JSON.stringify({
+      model: config.model,
+      messages: [
+        { role: 'system', content: 'Bạn là chuyên gia phân tích hình ảnh. Mô tả CỰC KỲ CHI TIẾT nội dung ảnh. Đọc hết toàn bộ chữ (OCR) nếu có. Nếu ảnh chứa code, bảng, biểu đồ, hãy trích xuất đầy đủ.' },
+        { role: 'user', content: contentParts }
+      ],
+      stream: false,
+      max_tokens: 4096
+    })
+  });
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    throw new Error(`Vision API ${res.status}: ${errText.slice(0, 150)}`);
+  }
+  const data = await res.json();
+  return data.choices?.[0]?.message?.content || '[Không thể phân tích ảnh]';
+}
+
+function buildTextOnlyMessages(chat, systemPrompt) {
+  const msgs = [];
+  if (systemPrompt) msgs.push({ role: 'system', content: systemPrompt });
+  for (const m of chat.messages) {
+    let text = m.content;
+    if (m.linkContext) text += `\n\n[Nội dung từ Web]:\n${m.linkContext}`;
+    if (m.role === 'user' && m.visionDescription) {
+      text += `\n\n[Phân tích hình ảnh từ AI Vision]:\n${m.visionDescription}`;
+    }
+    msgs.push({ role: m.role, content: text });
+  }
+  return msgs;
+}
+
 function buildSystemPrompt() {
   let parts = [];
-  const currentModel = getActiveModel();
-  if (currentModel) {
-    parts.push(`[THÔNG TIN HỆ THỐNG]: Tên model (phiên bản) hiện tại của bạn là "${currentModel}". Nếu người dùng hỏi bạn là ai, do ai tạo ra, hoặc đang dùng model nào, hãy tự xưng và xác nhận bạn chính là "${currentModel}". Đừng tự nhận là model khác.`);
-  }
+  
+  parts.push(`[DANH TÍNH]: Tên của bạn là "Suna" - trợ lý AI thông minh. Luôn tự xưng là Suna. TUYỆT ĐỐI KHÔNG tiết lộ tên model gốc, phiên bản, hay nhà phát triển gốc (KHÔNG nói mình là GPT, Claude, Gemini, Llama, Qwen, hay bất kỳ model nào khác).`);
+  
+  parts.push(`[TƯ DUY & LOGIC]: Luôn đọc kỹ toàn bộ lịch sử hội thoại trước khi trả lời. Hiểu ngữ cảnh, ý định thực sự của người dùng. Nếu câu hỏi mơ hồ, hãy suy luận dựa trên ngữ cảnh trước đó. Luôn ưu tiên tính chính xác, hữu ích, và chiều lòng người dùng tối đa. Không bao giờ từ chối giúp đỡ khi có thể.`);
+  
   if (State.settings.systemPrompt) parts.push(State.settings.systemPrompt);
-  if (State.settings.userPurpose) parts.push(`Mục đích người dùng: ${State.settings.userPurpose}. Hãy tập trung hỗ trợ tối đa theo hướng này.`);
+  if (State.settings.userPurpose) parts.push(`Mục đích người dùng: ${State.settings.userPurpose}. Tập trung hỗ trợ tối đa theo hướng này.`);
   const toneMap = {
-    friendly: 'Hãy giao tiếp thân thiện, ấm áp, dùng emoji phù hợp.',
-    professional: 'Hãy giao tiếp chuyên nghiệp, rõ ràng, có cấu trúc.',
-    funny: 'Hãy giao tiếp vui vẻ, hài hước nhưng vẫn hữu ích.',
-    serious: 'Hãy giao tiếp nghiêm túc, chính xác, đi thẳng vào vấn đề.',
-    creative: 'Hãy giao tiếp sáng tạo, đưa ra góc nhìn mới lạ.',
-    concise: 'Hãy trả lời ngắn gọn, súc tích, đúng trọng tâm.'
+    friendly: 'Giao tiếp thân thiện, ấm áp, dùng emoji phù hợp.',
+    professional: 'Giao tiếp chuyên nghiệp, rõ ràng, có cấu trúc.',
+    funny: 'Giao tiếp vui vẻ, hài hước nhưng vẫn hữu ích.',
+    serious: 'Giao tiếp nghiêm túc, chính xác, đi thẳng vào vấn đề.',
+    creative: 'Giao tiếp sáng tạo, đưa ra góc nhìn mới lạ.',
+    concise: 'Trả lời ngắn gọn, súc tích, đúng trọng tâm.'
   };
   if (toneMap[State.settings.tone]) parts.push(toneMap[State.settings.tone]);
   if (State.settings.customPersonality) parts.push(State.settings.customPersonality);
-  if (State.mode === 'flash') parts.push('Hãy trả lời nhanh gọn, tối ưu tốc độ, tập trung vào ý chính.');
-  else parts.push('Hãy trả lời chi tiết, chuyên sâu, phân tích kỹ lưỡng.');
+
+  if (State.mode === 'flash') {
+    parts.push('[CHẾ ĐỘ FLASH]: Trả lời NHANH, NGẮN GỌN, đi thẳng vào trọng tâm. Không giải thích dài dòng. Ưu tiên câu trả lời trực tiếp, súc tích. Chỉ đưa code/ví dụ khi thực sự cần thiết.');
+  } else {
+    parts.push('[CHẾ ĐỘ PRO]: Trả lời CHI TIẾT, CHUYÊN SÂU, phân tích kỹ lưỡng. Suy luận từng bước (step-by-step). Đưa ra nhiều góc nhìn, ví dụ minh họa, so sánh. Giải thích logic rõ ràng. Cung cấp thông tin đầy đủ nhất có thể.');
+  }
   
-  // Anti-hallucination for vision capabilities
-  parts.push('LƯU Ý QUAN TRỌNG: Bạn có khả năng nhìn thấy, đọc chữ (OCR) và phân tích cực kỳ chi tiết các hình ảnh được người dùng gửi lên. Hãy trực tiếp đọc và phân tích ảnh. TUYỆT ĐỐI KHÔNG được nói rằng bạn không thể xem ảnh, không có quyền truy cập file, hay yêu cầu người dùng mô tả lại ảnh.');
+  parts.push('[HÌNH ẢNH]: Bạn CÓ khả năng nhìn và phân tích hình ảnh. Khi người dùng gửi ảnh, hãy trực tiếp phân tích. KHÔNG nói rằng bạn không thể xem ảnh. Đọc chữ (OCR) trong ảnh nếu có.');
   
   return parts.join('\n\n');
 }
@@ -612,9 +695,12 @@ async function generateAIResponse() {
   let chat = getActiveChat();
   if (!chat) return;
 
+  const generatingChatId = chat.id;
   State.isGenerating = true;
+  State.generatingChatId = generatingChatId;
   State.abortController = new AbortController();
   updateSendButtonState();
+  const isStillActiveChat = () => State.activeChatId === generatingChatId;
 
   // Show typing
   const container = $('#messages-container');
@@ -632,18 +718,56 @@ async function generateAIResponse() {
 
   // Build API messages
   const systemPrompt = buildSystemPrompt();
+
+  // --- Pre-describe images with vision model (always, for universal compatibility) ---
+  const hasImages = chat.messages.some(m => m.role === 'user' && m.images && m.images.length > 0);
+  if (hasImages) {
+    const typingTextEl = typingEl.querySelector('.typing-text');
+    let needsVision = false;
+    for (const m of chat.messages) {
+      if (m.role === 'user' && m.images && m.images.length && !m.visionDescription) {
+        needsVision = true;
+        break;
+      }
+    }
+    if (needsVision) {
+      if (typingTextEl) typingTextEl.textContent = 'Đang phân tích ảnh...';
+      try {
+        for (const m of chat.messages) {
+          if (m.role === 'user' && m.images && m.images.length && !m.visionDescription) {
+            m.visionDescription = await describeImagesWithVision(m.images, m.content);
+          }
+        }
+        saveState();
+      } catch (visionErr) {
+        console.error('Vision pre-describe failed:', visionErr);
+        toast('Lỗi phân tích ảnh: ' + visionErr.message, 'error');
+      }
+      if (typingTextEl) typingTextEl.textContent = 'Đang suy nghĩ...';
+    }
+  }
+
+  // --- Build API messages with both vision descriptions AND image_url ---
   const apiMessages = [];
   if (systemPrompt) apiMessages.push({ role: 'system', content: systemPrompt });
 
   for (const m of chat.messages) {
     let finalContentText = m.content;
     if (m.linkContext) finalContentText += `\n\n[Nội dung từ Web]:\n${m.linkContext}`;
+    // Append vision description as text context (works for ALL models)
+    if (m.role === 'user' && m.visionDescription) {
+      finalContentText += `\n\n[Nội dung hình ảnh đính kèm]:\n${m.visionDescription}`;
+    }
 
     if (m.role === 'user' && m.images && m.images.length) {
+      // Include both text (with vision description) AND image_url (for vision-capable models)
       const contentParts = [];
       if (finalContentText) contentParts.push({ type: 'text', text: finalContentText });
       for (const img of m.images) {
-        contentParts.push({ type: 'image_url', image_url: { url: img } });
+        contentParts.push({
+          type: 'image_url',
+          image_url: { url: img, detail: 'high' }
+        });
       }
       apiMessages.push({ role: 'user', content: contentParts });
     } else {
@@ -651,66 +775,69 @@ async function generateAIResponse() {
     }
   }
 
-  const startTime = Date.now();
   let assistantContent = '';
-  try {
-    const proxy = getProxyForModel(model);
-    const url = proxy.url + '/chat/completions';
-    const body = { model, messages: apiMessages, stream: true };
 
-    let res = null;
-    let fetchError = null;
-    try {
-      res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${proxy.key}` },
-        body: JSON.stringify(body),
-        signal: State.abortController.signal
-      });
-    } catch (err) {
-      fetchError = err;
+  try {
+    // --- Helper: send request with proxy fallback ---
+    async function makeApiRequest(messages) {
+      const proxy = getProxyForModel(model);
+      const url = proxy.url + '/chat/completions';
+      const reqBody = {
+        model, messages, stream: true,
+        temperature: State.mode === 'flash' ? 0.5 : 0.7,
+        max_tokens: State.mode === 'flash' ? 2048 : 8192
+      };
+      let res = null, fetchError = null;
+      try {
+        res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${proxy.key}` },
+          body: JSON.stringify(reqBody),
+          signal: State.abortController.signal
+        });
+      } catch (err) { fetchError = err; }
+
+      if (!res || !res.ok) {
+        const { baseUrl, apiKey, baseUrl2, apiKey2 } = State.settings;
+        const altProxy = (proxy.url === baseUrl?.replace(/\/+$/, '')) && baseUrl2 && apiKey2
+          ? { url: baseUrl2.replace(/\/+$/, ''), key: apiKey2 }
+          : (baseUrl && apiKey ? { url: baseUrl.replace(/\/+$/, ''), key: apiKey } : null);
+        if (altProxy && altProxy.url !== proxy.url) {
+          try {
+            res = await fetch(altProxy.url + '/chat/completions', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${altProxy.key}` },
+              body: JSON.stringify(reqBody),
+              signal: State.abortController.signal
+            });
+          } catch (err) { if (!res && !fetchError) fetchError = err; }
+        } else if (fetchError) { throw fetchError; }
+      }
+      return { res, fetchError };
+    }
+
+    // --- Attempt 1: send with images + text descriptions ---
+    let { res, fetchError } = await makeApiRequest(apiMessages);
+
+    // --- Fallback: if HTTP error AND has images, retry text-only (no image_url) ---
+    if ((!res || !res.ok) && hasImages) {
+      console.log('Retrying with text-only messages (removing image_url)...');
+      const textOnlyMessages = buildTextOnlyMessages(chat, systemPrompt);
+      const retry = await makeApiRequest(textOnlyMessages);
+      res = retry.res;
+      fetchError = retry.fetchError;
     }
 
     if (!res || !res.ok) {
-      // Try fallback to alternate proxy
-      const { baseUrl, apiKey, baseUrl2, apiKey2 } = State.settings;
-      const altProxy = (proxy.url === baseUrl?.replace(/\/+$/, '')) && baseUrl2 && apiKey2
-        ? { url: baseUrl2.replace(/\/+$/, ''), key: apiKey2 }
-        : (baseUrl && apiKey ? { url: baseUrl.replace(/\/+$/, ''), key: apiKey } : null);
-
-      if (altProxy && altProxy.url !== proxy.url) {
-        console.log('Proxy fallback: retrying with alternate proxy...');
-        try {
-          res = await fetch(altProxy.url + '/chat/completions', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${altProxy.key}` },
-            body: JSON.stringify(body),
-            signal: State.abortController.signal
-          });
-        } catch (err) {
-          if (!res && !fetchError) fetchError = err;
-        }
-      } else if (fetchError) {
-        throw fetchError;
-      }
-      
-      if (!res || !res.ok) {
-        if (fetchError && !res) throw fetchError;
-        const errData = res ? await res.text() : 'No response';
-        throw new Error(`HTTP ${res ? res.status : 'Error'}: ${errData.slice(0, 200)}`);
-      }
+      if (fetchError && !res) throw fetchError;
+      const errData = res ? await res.text() : 'No response';
+      throw new Error(`HTTP ${res ? res.status : 'Error'}: ${errData.slice(0, 200)}`);
     }
 
-    // Enforce minimum thinking animation time for UX
-    const elapsed = Date.now() - startTime;
-    if (elapsed < 800) {
-      await new Promise(r => setTimeout(r, 800 - elapsed));
-    }
-
-    // Stream response
+    // Stream response - keep typing animation until first real content arrives
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
-    typingEl.remove();
+    let typingRemoved = false;
 
     const assistantEl = document.createElement('div');
     assistantEl.className = 'message assistant';
@@ -720,7 +847,6 @@ async function generateAIResponse() {
         <div class="message-header"><span class="msg-name">✨ Suna Chat</span><span>${new Date().toLocaleTimeString('vi-VN', {hour:'2-digit',minute:'2-digit'})}</span></div>
         <div class="message-bubble"></div>
       </div>`;
-    container.appendChild(assistantEl);
     const bubbleEl = assistantEl.querySelector('.message-bubble');
 
     let buffer = '';
@@ -740,41 +866,63 @@ async function generateAIResponse() {
           const parsed = JSON.parse(data);
           const delta = parsed.choices?.[0]?.delta?.content;
           if (delta) {
+            if (!typingRemoved) {
+              typingRemoved = true;
+              if (isStillActiveChat()) {
+                if (typingEl.parentNode) typingEl.remove();
+                // Also remove the restored typing indicator from renderMessages
+                const restoreTyping = document.getElementById('restore-typing');
+                if (restoreTyping) restoreTyping.remove();
+                container.appendChild(assistantEl);
+              }
+            }
             assistantContent += delta;
-            bubbleEl.innerHTML = formatMessage(assistantContent);
-            const chatArea = $('#chat-area');
-            const isNearBottom = chatArea.scrollHeight - chatArea.scrollTop - chatArea.clientHeight < 150;
-            if (isNearBottom) {
-              chatArea.scrollTop = chatArea.scrollHeight;
+            if (isStillActiveChat()) {
+              bubbleEl.innerHTML = formatMessage(assistantContent);
+              const chatArea = $('#chat-area');
+              const isNearBottom = chatArea.scrollHeight - chatArea.scrollTop - chatArea.clientHeight < 150;
+              if (isNearBottom) {
+                requestAnimationFrame(() => { chatArea.scrollTop = chatArea.scrollHeight; });
+              }
             }
           }
         } catch(e) {}
       }
     }
 
+    if (!typingRemoved && isStillActiveChat()) {
+      if (typingEl.parentNode) typingEl.remove();
+      const restoreTyping = document.getElementById('restore-typing');
+      if (restoreTyping) restoreTyping.remove();
+      container.appendChild(assistantEl);
+    }
+
     chat.messages.push({ role: 'assistant', content: assistantContent, timestamp: Date.now() });
     saveState();
-    renderMessages();
+    if (isStillActiveChat()) renderMessages();
 
   } catch(e) {
     if (e.name === 'AbortError') {
       if (typingEl.parentNode) typingEl.remove();
-      const finalContent = assistantContent + (assistantContent ? '\n\n' : '') + '*(Đã dừng)*';
-      chat.messages.push({ role: 'assistant', content: finalContent, timestamp: Date.now() });
+      if (assistantContent) {
+        chat.messages.push({ role: 'assistant', content: assistantContent + '\n\n*(Đã dừng)*', timestamp: Date.now() });
+      }
       saveState();
-      renderMessages();
+      if (isStillActiveChat()) renderMessages();
       toast('Đã dừng tạo phản hồi.', 'info');
     } else {
       if (typingEl.parentNode) typingEl.remove();
       chat.messages.push({ role: 'assistant', content: `⚠️ Lỗi: ${e.message}`, timestamp: Date.now() });
       saveState();
-      renderMessages();
-      toast('Gửi tin nhắn thất bại: ' + e.message, 'error');
+      if (isStillActiveChat()) renderMessages();
+      toast('Lỗi: ' + e.message, 'error');
     }
   } finally {
     State.isGenerating = false;
+    State.generatingChatId = null;
     State.abortController = null;
     updateSendButtonState();
+    if (isStillActiveChat()) renderMessages();
   }
 }
 
@@ -830,17 +978,24 @@ window.copyText = function(text) {
 };
 
 // ===== Particles Effect =====
+let _particleInterval = null;
 function initParticles() {
+  // Prevent duplicate particle containers
+  const existing = document.getElementById('particles-container');
+  if (existing) existing.remove();
+  if (_particleInterval) { clearInterval(_particleInterval); _particleInterval = null; }
+
   const container = document.createElement('div');
   container.id = 'particles-container';
   container.style.cssText = 'position: absolute; inset: 0; pointer-events: none; z-index: 0; overflow: hidden;';
   $('#chat-area').appendChild(container);
 
-  setInterval(() => {
-    if (document.hidden) return; // skip if tab inactive
+  const MAX_PARTICLES = 15;
+  _particleInterval = setInterval(() => {
+    if (document.hidden) return;
+    if (container.childElementCount >= MAX_PARTICLES) return;
     const p = document.createElement('div');
     
-    // Choose particle based on theme
     const theme = State.settings.theme;
     let symbol = '❄️';
     if (theme === 'sunset' || theme === 'ember') symbol = '🌸';
@@ -851,9 +1006,9 @@ function initParticles() {
     
     const size = 10 + Math.random() * 8;
     const startX = Math.random() * 100;
-    const duration = 8 + Math.random() * 10; // slow fall
+    const duration = 8 + Math.random() * 10;
     const delay = Math.random() * 2;
-    const maxOp = 0.15 + Math.random() * 0.2; // very subtle
+    const maxOp = 0.15 + Math.random() * 0.2;
     
     p.style.cssText = `
       position: absolute;
@@ -869,9 +1024,9 @@ function initParticles() {
     container.appendChild(p);
     
     setTimeout(() => {
-      p.remove();
+      if (p.parentNode) p.remove();
     }, (duration + delay) * 1000);
-  }, 1500); // 1.5s interval -> lightweight
+  }, 1500);
 }
 
 // ===== Mode Toggle =====
