@@ -551,42 +551,57 @@ function compressImage(dataUrl, maxSize = 1024, quality = 0.7) {
   });
 }
 
-// Find a vision-capable model from user's fetched model list
-function findUserVisionModel() {
+// Find ALL vision-capable models from user's fetched model list
+function findUserVisionModels() {
   const patterns = ['gemini', 'gpt-4o', 'gpt-4-turbo', 'gpt-4.1', 'claude-3', 'claude-sonnet', 'claude-opus', 'llava', 'vision', 'qwen-vl', 'qwen2-vl', 'pixtral', 'internvl', 'glm-4v', 'yi-vision'];
+  const found = [];
   for (const model of State.models) {
     const lower = model.toLowerCase();
-    if (patterns.some(p => lower.includes(p))) return model;
+    if (patterns.some(p => lower.includes(p))) found.push(model);
   }
-  return null;
+  return found;
 }
+
+// Common vision models to brute-force try on user's proxy
+const COMMON_VISION_MODELS = [
+  'gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.5-flash-preview-05-20',
+  'gpt-4o-mini', 'gpt-4o', 'gpt-4.1-mini', 'gpt-4.1-nano',
+  'claude-3-haiku-20240307', 'claude-3.5-sonnet-20241022',
+  'qwen-vl-plus', 'glm-4v-flash'
+];
 
 function getVisionConfigs() {
   const configs = [];
   const { baseUrl, apiKey, baseUrl2, apiKey2 } = State.settings;
+  const url1 = baseUrl ? baseUrl.replace(/\/+$/, '') : '';
+  const url2 = baseUrl2 ? baseUrl2.replace(/\/+$/, '') : '';
 
-  // Priority 1: auto-detected vision model on user's OWN proxy (CORS-safe)
-  const userVisionModel = findUserVisionModel();
-  if (userVisionModel) {
-    const proxy = getProxyForModel(userVisionModel);
-    configs.push({ model: userVisionModel, baseUrl: proxy.url, apiKey: proxy.key });
+  // Priority 1: all detected vision models on user's proxies (CORS-safe, known to exist)
+  const userModels = findUserVisionModels();
+  for (const m of userModels) {
+    const proxy = getProxyForModel(m);
+    configs.push({ model: m, baseUrl: proxy.url, apiKey: proxy.key });
   }
 
-  // Priority 2: try VISION_MODEL on user's proxy1
-  if (baseUrl && apiKey) {
-    const url = baseUrl.replace(/\/+$/, '');
-    if (!configs.some(c => c.baseUrl === url)) {
-      configs.push({ model: VISION_MODEL, baseUrl: url, apiKey });
+  // Priority 2: brute-force common vision models on user's proxy1 (CORS-safe)
+  if (url1 && apiKey) {
+    for (const m of COMMON_VISION_MODELS) {
+      if (!configs.some(c => c.model === m && c.baseUrl === url1)) {
+        configs.push({ model: m, baseUrl: url1, apiKey });
+      }
     }
   }
-  // Priority 3: try VISION_MODEL on user's proxy2
-  if (baseUrl2 && apiKey2) {
-    const url2 = baseUrl2.replace(/\/+$/, '');
-    if (!configs.some(c => c.baseUrl === url2)) {
-      configs.push({ model: VISION_MODEL, baseUrl: url2, apiKey: apiKey2 });
+
+  // Priority 3: brute-force common vision models on user's proxy2
+  if (url2 && apiKey2) {
+    for (const m of COMMON_VISION_MODELS) {
+      if (!configs.some(c => c.model === m && c.baseUrl === url2)) {
+        configs.push({ model: m, baseUrl: url2, apiKey: apiKey2 });
+      }
     }
   }
-  // Priority 4: hardcoded fallback (may fail CORS on some deployments)
+
+  // Priority 4: hardcoded fallback (may fail CORS on web deployments)
   configs.push({ model: VISION_MODEL, baseUrl: VISION_FALLBACK_PROXY.baseUrl, apiKey: VISION_FALLBACK_PROXY.apiKey });
   return configs;
 }
