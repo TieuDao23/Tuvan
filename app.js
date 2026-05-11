@@ -601,9 +601,19 @@ function getVisionConfigs() {
     }
   }
 
-  // Priority 4: hardcoded fallback (may fail CORS on web deployments)
-  configs.push({ model: VISION_MODEL, baseUrl: VISION_FALLBACK_PROXY.baseUrl, apiKey: VISION_FALLBACK_PROXY.apiKey });
+  // Priority 4: hardcoded fallback WITH cors proxy for web
+  const isWeb = typeof location !== 'undefined' && location.protocol.startsWith('http');
+  if (isWeb) {
+    configs.push({ model: VISION_MODEL, baseUrl: VISION_FALLBACK_PROXY.baseUrl, apiKey: VISION_FALLBACK_PROXY.apiKey, corsWrap: true });
+  } else {
+    configs.push({ model: VISION_MODEL, baseUrl: VISION_FALLBACK_PROXY.baseUrl, apiKey: VISION_FALLBACK_PROXY.apiKey });
+  }
   return configs;
+}
+
+// CORS proxy wrapper for web deployments
+function corsProxyUrl(url) {
+  return 'https://corsproxy.io/?' + encodeURIComponent(url);
 }
 
 async function describeImagesWithVision(images, userText) {
@@ -626,7 +636,10 @@ async function describeImagesWithVision(images, userText) {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 30000);
 
-      const res = await fetch(config.baseUrl + '/chat/completions', {
+      const endpoint = config.baseUrl + '/chat/completions';
+      const fetchUrl = config.corsWrap ? corsProxyUrl(endpoint) : endpoint;
+
+      const res = await fetch(fetchUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
