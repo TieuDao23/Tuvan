@@ -521,15 +521,24 @@ function getProxyForModel(model) {
   return { url: baseUrl.replace(/\/+$/, ''), key: apiKey };
 }
 
-// ===== Vision Fallback System =====
-const VISION_FALLBACK_PROXY = {
-  baseUrl: 'https://gcli.ggchan.dev/v1',
-  apiKey: 'gg-gcli-ISYgoJBO77zC7DrfkpDPx9XxaNPmqtilFKGto2OhejQ'
-};
-const VISION_MODEL = 'gemini-3.1-pro-preview';
+// ===== Vision System =====
 
-// Compress image to reduce payload size (critical for web/mobile)
-function compressImage(dataUrl, maxSize = 1024, quality = 0.7) {
+// Patterns to detect vision-capable models by name
+const VISION_PATTERNS = [
+  'gemini', 'gpt-4o', 'gpt-4-turbo', 'gpt-4.1', 'claude-3', 'claude-sonnet',
+  'claude-opus', 'llava', 'vision', 'qwen-vl', 'qwen2-vl', 'pixtral',
+  'internvl', 'glm-4v', 'yi-vision'
+];
+
+// Check if a model is vision-capable by name pattern
+function isVisionCapableModel(modelName) {
+  if (!modelName) return false;
+  const lower = modelName.toLowerCase();
+  return VISION_PATTERNS.some(p => lower.includes(p));
+}
+
+// Compress image — smaller size = fewer CORS/timeout failures on web
+function compressImage(dataUrl, maxSize = 800, quality = 0.65) {
   return new Promise((resolve) => {
     const img = new Image();
     img.onload = () => {
@@ -542,104 +551,88 @@ function compressImage(dataUrl, maxSize = 1024, quality = 0.7) {
       const canvas = document.createElement('canvas');
       canvas.width = width;
       canvas.height = height;
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(img, 0, 0, width, height);
+      canvas.getContext('2d').drawImage(img, 0, 0, width, height);
       resolve(canvas.toDataURL('image/jpeg', quality));
     };
-    img.onerror = () => resolve(dataUrl); // fallback to original
+    img.onerror = () => resolve(dataUrl);
     img.src = dataUrl;
   });
 }
 
-// Find ALL vision-capable models from user's fetched model list
+// Vision models from user's already-fetched list (definitely exist on their proxy)
 function findUserVisionModels() {
-  const patterns = ['gemini', 'gpt-4o', 'gpt-4-turbo', 'gpt-4.1', 'claude-3', 'claude-sonnet', 'claude-opus', 'llava', 'vision', 'qwen-vl', 'qwen2-vl', 'pixtral', 'internvl', 'glm-4v', 'yi-vision'];
   const found = [];
-  for (const model of State.models) {
-    const lower = model.toLowerCase();
-    if (patterns.some(p => lower.includes(p))) found.push(model);
+  for (const m of State.models) {
+    if (isVisionCapableModel(m)) found.push(m);
   }
   return found;
 }
 
-// Common vision models to brute-force try on user's proxy
-const COMMON_VISION_MODELS = [
-  'gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.5-flash-preview-05-20',
-  'gpt-4o-mini', 'gpt-4o', 'gpt-4.1-mini', 'gpt-4.1-nano',
-  'claude-3-haiku-20240307', 'claude-3.5-sonnet-20241022',
-  'qwen-vl-plus', 'glm-4v-flash'
+// Small set of widely-available vision models to probe if user list is empty
+const TOP_VISION_MODELS = [
+  'gemini-2.0-flash', 'gemini-2.5-flash-preview-05-20',
+  'gpt-4o-mini', 'gpt-4o'
 ];
 
+// Build ordered list of {model, baseUrl, apiKey} to try for vision description.
+// NOTE: corsproxy.io is intentionally NOT used here — it drops large base64 POST
+// bodies silently, which is exactly what vision requests contain.
 function getVisionConfigs() {
   const configs = [];
   const { baseUrl, apiKey, baseUrl2, apiKey2 } = State.settings;
   const url1 = baseUrl ? baseUrl.replace(/\/+$/, '') : '';
   const url2 = baseUrl2 ? baseUrl2.replace(/\/+$/, '') : '';
 
-  // Priority 1: all detected vision models on user's proxies (CORS-safe, known to exist)
-  const userModels = findUserVisionModels();
-  for (const m of userModels) {
+  // Priority 1: vision models confirmed to exist on user's proxies
+  for (const m of findUserVisionModels()) {
     const proxy = getProxyForModel(m);
     configs.push({ model: m, baseUrl: proxy.url, apiKey: proxy.key });
   }
 
-  // Priority 2: brute-force common vision models on user's proxy1 (CORS-safe)
-  if (url1 && apiKey) {
-    for (const m of COMMON_VISION_MODELS) {
-      if (!configs.some(c => c.model === m && c.baseUrl === url1)) {
-        configs.push({ model: m, baseUrl: url1, apiKey });
-      }
+  // Priority 2: probe top common models on proxy1 (only if none found above)
+  if (configs.length === 0 && url1 && apiKey) {
+    for (const m of TOP_VISION_MODELS) {
+      configs.push({ model: m, baseUrl: url1, apiKey });
     }
   }
 
-  // Priority 3: brute-force common vision models on user's proxy2
+  // Priority 3: probe top common models on proxy2
   if (url2 && apiKey2) {
-    for (const m of COMMON_VISION_MODELS) {
+    for (const m of TOP_VISION_MODELS) {
       if (!configs.some(c => c.model === m && c.baseUrl === url2)) {
         configs.push({ model: m, baseUrl: url2, apiKey: apiKey2 });
       }
     }
   }
 
-  // Priority 4: hardcoded fallback WITH cors proxy for web
-  const isWeb = typeof location !== 'undefined' && location.protocol.startsWith('http');
-  if (isWeb) {
-    configs.push({ model: VISION_MODEL, baseUrl: VISION_FALLBACK_PROXY.baseUrl, apiKey: VISION_FALLBACK_PROXY.apiKey, corsWrap: true });
-  } else {
-    configs.push({ model: VISION_MODEL, baseUrl: VISION_FALLBACK_PROXY.baseUrl, apiKey: VISION_FALLBACK_PROXY.apiKey });
-  }
   return configs;
 }
 
-// CORS proxy wrapper for web deployments
-function corsProxyUrl(url) {
-  return 'https://corsproxy.io/?' + encodeURIComponent(url);
-}
-
+// Describe images using a vision model. Returns description string or null on failure.
+// Returns null (not throws) so callers can gracefully continue without vision.
 async function describeImagesWithVision(images, userText) {
   const compressedImages = await Promise.all(images.map(img => compressImage(img)));
 
-  const contentParts = [];
   const promptText = userText
     ? `Phân tích chi tiết hình ảnh. Ngữ cảnh: "${userText}". Mô tả: văn bản/chữ (OCR đầy đủ), màu sắc, bố cục, đối tượng, biểu đồ, bảng, code nếu có.`
     : 'Mô tả THẬT CHI TIẾT nội dung hình ảnh: văn bản/chữ (OCR đầy đủ), màu sắc, bố cục, đối tượng, biểu đồ, bảng, code nếu có.';
-  contentParts.push({ type: 'text', text: promptText });
+
+  const contentParts = [{ type: 'text', text: promptText }];
   for (const img of compressedImages) {
-    contentParts.push({ type: 'image_url', image_url: { url: img, detail: 'high' } });
+    // Omit 'detail' param — not all proxies/models accept it and it causes 400 errors
+    contentParts.push({ type: 'image_url', image_url: { url: img } });
   }
 
   const configs = getVisionConfigs();
-  let lastError = null;
+  if (configs.length === 0) return null;
 
   for (const config of configs) {
     try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 30000);
+      // 10s timeout per attempt (was 30s) — fail fast to try next config
+      const timeout = setTimeout(() => controller.abort(), 10000);
 
-      const endpoint = config.baseUrl + '/chat/completions';
-      const fetchUrl = config.corsWrap ? corsProxyUrl(endpoint) : endpoint;
-
-      const res = await fetch(fetchUrl, {
+      const res = await fetch(config.baseUrl + '/chat/completions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -652,28 +645,29 @@ async function describeImagesWithVision(images, userText) {
             { role: 'user', content: contentParts }
           ],
           stream: false,
-          max_tokens: 4096
+          max_tokens: 2048
         }),
         signal: controller.signal
       });
       clearTimeout(timeout);
 
       if (!res.ok) {
-        lastError = new Error(`HTTP ${res.status}`);
+        console.warn(`Vision HTTP ${res.status} (${config.model}@${config.baseUrl})`);
         continue;
       }
       const data = await res.json();
       const content = data.choices?.[0]?.message?.content;
-      if (content && content.length > 20) return content; // ensure meaningful response
-      lastError = new Error('Empty or too short vision response');
+      if (content && content.length > 20) {
+        console.log(`Vision success: ${config.model}@${config.baseUrl}`);
+        return content;
+      }
     } catch (err) {
-      lastError = err;
       console.warn(`Vision failed (${config.model}@${config.baseUrl}):`, err.message);
-      continue;
     }
   }
 
-  throw lastError || new Error('All vision configs failed');
+  console.warn('All vision configs failed — continuing without image description');
+  return null;
 }
 
 function buildTextOnlyMessages(chat, systemPrompt) {
@@ -825,9 +819,13 @@ async function generateAIResponse() {
   // Build API messages
   const systemPrompt = buildSystemPrompt();
 
-  // --- Pre-describe images with vision model (always, for universal compatibility) ---
+  // --- Determine if current model natively supports vision ---
+  const currentModelIsVision = isVisionCapableModel(model);
   const hasImages = chat.messages.some(m => m.role === 'user' && m.images && m.images.length > 0);
-  if (hasImages) {
+
+  // --- For non-vision models: pre-describe images with a vision model first ---
+  // For vision-capable models: skip this — we send image_url directly, no extra API call needed.
+  if (hasImages && !currentModelIsVision) {
     const typingTextEl = typingEl.querySelector('.typing-text');
     let needsVision = false;
     for (const m of chat.messages) {
@@ -838,45 +836,43 @@ async function generateAIResponse() {
     }
     if (needsVision) {
       if (typingTextEl) typingTextEl.textContent = 'Đang phân tích ảnh...';
-      try {
-        for (const m of chat.messages) {
-          if (m.role === 'user' && m.images && m.images.length && !m.visionDescription) {
-            m.visionDescription = await describeImagesWithVision(m.images, m.content);
+      for (const m of chat.messages) {
+        if (m.role === 'user' && m.images && m.images.length && !m.visionDescription) {
+          const desc = await describeImagesWithVision(m.images, m.content);
+          if (desc) {
+            m.visionDescription = desc;
+          } else {
+            // Mark attempted so we don't retry every turn; AI still knows an image was attached
+            m.visionDescription = '[Không thể phân tích ảnh tự động — người dùng đã gửi hình ảnh]';
           }
         }
-        saveState();
-      } catch (visionErr) {
-        console.error('Vision pre-describe failed:', visionErr);
-        toast('Lỗi phân tích ảnh: ' + visionErr.message, 'error');
       }
+      saveState();
       if (typingTextEl) typingTextEl.textContent = 'Đang suy nghĩ...';
     }
   }
 
-  // --- Build API messages with both vision descriptions AND image_url ---
+  // --- Build API messages ---
   const apiMessages = [];
   if (systemPrompt) apiMessages.push({ role: 'system', content: systemPrompt });
 
   for (const m of chat.messages) {
     let finalContentText = m.content;
     if (m.linkContext) finalContentText += `\n\n[Nội dung từ Web]:\n${m.linkContext}`;
-    // Append vision description as text context (works for ALL models)
     if (m.role === 'user' && m.visionDescription) {
       finalContentText += `\n\n[Nội dung hình ảnh đính kèm]:\n${m.visionDescription}`;
     }
 
-    if (m.role === 'user' && m.images && m.images.length) {
-      // Include both text (with vision description) AND image_url (for vision-capable models)
+    if (m.role === 'user' && m.images && m.images.length && currentModelIsVision) {
+      // Vision-capable model: send image_url parts directly (no detail param for max compat)
       const contentParts = [];
       if (finalContentText) contentParts.push({ type: 'text', text: finalContentText });
       for (const img of m.images) {
-        contentParts.push({
-          type: 'image_url',
-          image_url: { url: img, detail: 'high' }
-        });
+        contentParts.push({ type: 'image_url', image_url: { url: img } });
       }
       apiMessages.push({ role: 'user', content: contentParts });
     } else {
+      // Non-vision model OR no images: send plain text (vision description is embedded above)
       apiMessages.push({ role: m.role, content: finalContentText });
     }
   }
@@ -922,12 +918,12 @@ async function generateAIResponse() {
       return { res, fetchError };
     }
 
-    // --- Attempt 1: send with images + text descriptions ---
+    // --- Send request (for vision models: with image_url; for text models: text-only) ---
     let { res, fetchError } = await makeApiRequest(apiMessages);
 
-    // --- Fallback: if HTTP error AND has images, retry text-only (no image_url) ---
-    if ((!res || !res.ok) && hasImages) {
-      console.log('Retrying with text-only messages (removing image_url)...');
+    // --- Safety fallback: if vision model returns error, retry as text-only ---
+    if ((!res || !res.ok) && hasImages && currentModelIsVision) {
+      console.log('Vision model rejected image_url — retrying text-only...');
       const textOnlyMessages = buildTextOnlyMessages(chat, systemPrompt);
       const retry = await makeApiRequest(textOnlyMessages);
       res = retry.res;
