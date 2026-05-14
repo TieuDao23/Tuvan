@@ -17,6 +17,13 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
     <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
     <link rel="stylesheet" href="styles.css">
+    <!-- PDF.js for reading PDF files -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script>
+      if (typeof pdfjsLib !== 'undefined') {
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      }
+    </script>
 </head>
 
 <body>
@@ -147,7 +154,7 @@
                         <span class="material-icons-round">send</span>
                     </button>
                 </div>
-                <input type="file" id="file-input" style="display:none" accept=".txt,.pdf,.doc,.docx,.csv,.json,.xml,.md,.html,.js,.py,.java,.cpp,.c,.cs,.rb,.php,.swift,.kt,.go,.rs,.ts,.jsx,.tsx,.yaml,.yml,.toml,.ini,.cfg,.log">
+                <input type="file" id="file-input" style="display:none" accept="*/*">
                 <input type="file" id="image-input" style="display:none" accept="image/*" multiple>
             </div>
         </main>

@@ -13,6 +13,7 @@ const State = {
     userName: 'Bạn', userAvatar: ''
   },
   pendingImages: [],
+  pendingFiles: [],
   modelProxyMap: {},
   isGenerating: false,
   abortController: null,
@@ -250,8 +251,15 @@ function renderMessages() {
     }
 
     let content = '';
-    if (m.images && m.images.length) {
+        if (m.images && m.images.length) {
       content += m.images.map(img => `<img src="${img}" alt="image">`).join('');
+    }
+            if (m.files && m.files.length) {
+      content += '<div class="msg-files-container">' + m.files.map(f => {
+        const icon = getFileIcon(f.ext);
+        const sizeStr = f.size < 1024 ? f.size + 'B' : f.size < 1024 * 1024 ? (f.size / 1024).toFixed(1) + 'KB' : (f.size / (1024*1024)).toFixed(1) + 'MB';
+        return `<div class="msg-file-card"><div class="msg-file-icon">${icon}</div><div class="msg-file-info"><div class="msg-file-name">${escHtml(f.name)}</div><div class="msg-file-meta">${sizeStr} • ${f.lang || f.ext.toUpperCase() || 'FILE'}</div></div></div>`;
+      }).join('') + '</div>';
     }
     content += formatMessage(m.content);
     
@@ -386,8 +394,78 @@ function escHtml(s) {
 
 // ===== Image Handling =====
 function addPendingImage(dataUrl) {
+  if (State.pendingImages.length >= MAX_PENDING_IMAGES) {
+    toast('Tối đa ' + MAX_PENDING_IMAGES + ' ảnh cùng lúc', 'error');
+    return;
+  }
   State.pendingImages.push(dataUrl);
   renderPendingImages();
+}
+
+const MAX_PENDING_FILES = 5;
+
+// Universal file icon mapper
+function getFileIcon(ext) {
+  const iconMap = {
+    'py': '🐍', 'js': '📜', 'ts': '📘', 'jsx': '⚛️', 'tsx': '⚛️',
+    'html': '🌐', 'htm': '🌐', 'css': '🎨', 'json': '📋', 'xml': '📄', 'md': '📝',
+    'java': '☕', 'cpp': '⚙️', 'c': '⚙️', 'cs': '🔷', 'rb': '💎',
+    'php': '🐘', 'go': '🐹', 'rs': '🦀', 'swift': '🍎', 'kt': '🟣',
+    'sql': '🗄️', 'sh': '🖥️', 'bat': '🖥️', 'yaml': '📐', 'yml': '📐',
+    'csv': '📊', 'xls': '📊', 'xlsx': '📊',
+    'txt': '📄', 'log': '📋', 'ini': '⚙️', 'cfg': '⚙️', 'env': '🔒', 'toml': '📐',
+    'pdf': '📕', 'doc': '📘', 'docx': '📘', 'rtf': '📘',
+    'ppt': '📙', 'pptx': '📙', 'odt': '📘', 'ods': '📊', 'odp': '📙',
+    'zip': '📦', 'rar': '📦', '7z': '📦', 'tar': '📦', 'gz': '📦',
+    'mp3': '🎵', 'wav': '🎵', 'ogg': '🎵', 'flac': '🎵',
+    'mp4': '🎬', 'avi': '🎬', 'mkv': '🎬', 'mov': '🎬',
+    'png': '🖼️', 'jpg': '🖼️', 'jpeg': '🖼️', 'gif': '🖼️', 'svg': '🖼️', 'webp': '🖼️',
+    'epub': '📚', 'mobi': '📚'
+  };
+  return iconMap[ext] || '📄';
+}
+
+function addPendingFile(fileData) {
+  if (State.pendingFiles.length >= MAX_PENDING_FILES) {
+    toast('Tối đa ' + MAX_PENDING_FILES + ' file cùng lúc', 'error');
+    return;
+  }
+  State.pendingFiles.push(fileData);
+  renderPendingFiles();
+}
+
+function renderPendingFiles() {
+  let area = document.getElementById('file-preview-area');
+  if (!area) {
+    area = document.createElement('div');
+    area.id = 'file-preview-area';
+    area.className = 'file-preview-area';
+    const imagePreview = $('#image-preview-area');
+    imagePreview.parentNode.insertBefore(area, imagePreview);
+  }
+  if (!State.pendingFiles.length) { area.style.display = 'none'; return; }
+    area.style.display = 'flex';
+  area.innerHTML = State.pendingFiles.map((f, i) => {
+    const icon = getFileIcon(f.ext);
+    const sizeStr = f.size < 1024 ? f.size + 'B' : f.size < 1024 * 1024 ? (f.size / 1024).toFixed(1) + 'KB' : (f.size / (1024*1024)).toFixed(1) + 'MB';
+    return `
+      <div class="file-preview-card" data-idx="${i}">
+        <div class="file-card-icon">${icon}</div>
+        <div class="file-card-info">
+          <div class="file-card-name" title="${escHtml(f.name)}">${escHtml(f.name)}</div>
+          <div class="file-card-meta">${sizeStr} • ${f.lang || f.ext || 'file'}</div>
+        </div>
+        <button class="file-card-remove" data-idx="${i}" title="Hủy file">&times;</button>
+      </div>
+    `;
+  }).join('');
+  area.querySelectorAll('.file-card-remove').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      State.pendingFiles.splice(parseInt(btn.dataset.idx), 1);
+      renderPendingFiles();
+    });
+  });
 }
 
 function renderPendingImages() {
@@ -421,9 +499,152 @@ async function readTextFile(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result);
-    reader.onerror = reject;
+    reader.onerror = () => reject(new Error('Không thể đọc file: ' + file.name));
     reader.readAsText(file);
   });
+}
+
+// ===== File Validation & Processing =====
+const MAX_FILE_SIZE = 100 * 1024 * 1024;
+const MAX_IMAGE_SIZE = 100 * 1024 * 1024;
+const MAX_PENDING_IMAGES = 5;
+
+const TEXT_EXTENSIONS = new Set([
+  'txt','md','html','htm','css','js','jsx','ts','tsx','json','xml',
+  'yaml','yml','toml','ini','cfg','log','py','java','cpp','c','cs',
+  'rb','php','swift','kt','go','rs','sh','bat','sql','csv','env'
+]);
+
+function getFileExtension(filename) {
+  return (filename.split('.').pop() || '').toLowerCase();
+}
+
+function isTextFile(file) {
+  const ext = getFileExtension(file.name);
+  if (TEXT_EXTENSIONS.has(ext)) return true;
+  if (file.type && file.type.startsWith('text/')) return true;
+  if (file.type === 'application/json' || file.type === 'application/xml') return true;
+    return false;
+}
+
+function isBinaryDocFile(file) {
+  const ext = getFileExtension(file.name);
+  return ['pdf','doc','docx','xls','xlsx','ppt','pptx','odt','ods','odp','rtf','epub'].includes(ext);
+}
+
+function validateFile(file, maxSize) {
+  if (!file) return { valid: false, error: 'Không tìm thấy file' };
+  if (file.size === 0) return { valid: false, error: 'File "' + file.name + '" trống' };
+  if (file.size > maxSize) {
+    const maxMB = (maxSize / (1024*1024)).toFixed(0);
+    const fileMB = (file.size / (1024*1024)).toFixed(1);
+    return { valid: false, error: 'File "' + file.name + '" quá lớn (' + fileMB + 'MB). Giới hạn: ' + maxMB + 'MB' };
+  }
+  return { valid: true };
+}
+
+function validateImageFile(file) {
+  if (!file) return { valid: false, error: 'Không tìm thấy file ảnh' };
+  if (!file.type.startsWith('image/')) return { valid: false, error: '"' + file.name + '" không phải ảnh hợp lệ' };
+    return validateFile(file, MAX_IMAGE_SIZE);
+}
+
+// Read PDF file using PDF.js
+async function readPdfFile(file) {
+  if (typeof pdfjsLib === 'undefined') {
+    return '[PDF: ' + file.name + ' - Thư viện PDF.js chưa tải xong. Vui lòng thử lại.]';
+  }
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    const totalPages = pdf.numPages;
+    let fullText = '';
+    const maxPages = Math.min(totalPages, 100); // Giới hạn 100 trang
+    for (let i = 1; i <= maxPages; i++) {
+      const page = await pdf.getPage(i);
+      const textContent = await page.getTextContent();
+      const pageText = textContent.items.map(item => item.str).join(' ');
+      if (pageText.trim()) {
+        fullText += '--- Trang ' + i + ' ---\n' + pageText.trim() + '\n\n';
+      }
+    }
+    if (!fullText.trim()) {
+      return '[PDF: ' + file.name + ' (' + totalPages + ' trang) - PDF này chứa hình ảnh/scan, không có text trích xuất được. Hãy gửi dưới dạng ảnh để AI phân tích.]';
+    }
+    if (totalPages > maxPages) {
+      fullText += '\n... [Chỉ đọc ' + maxPages + '/' + totalPages + ' trang đầu]';
+    }
+    return fullText.trim();
+  } catch (e) {
+    console.error('PDF read error:', e);
+    return '[PDF: ' + file.name + ' - Lỗi đọc PDF: ' + (e.message || 'Không xác định') + ']';
+  }
+}
+
+// Read binary doc/docx (limited in browser)
+async function readBinaryDoc(file) {
+  const ext = getFileExtension(file.name);
+  if (ext === 'pdf') {
+    return await readPdfFile(file);
+  }
+  // For doc/docx: try to extract as XML/text (docx is actually a zip)
+  if (ext === 'docx') {
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const blob = new Blob([arrayBuffer]);
+      // docx contains word/document.xml - try basic extraction
+      const text = await new Response(blob).text();
+      // Extract text between XML tags
+      const cleaned = text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+      if (cleaned.length > 50 && !/[\x00-\x08]/.test(cleaned.substring(0, 500))) {
+        const MAX_CHARS = 50000;
+        if (cleaned.length > MAX_CHARS) {
+          return cleaned.substring(0, MAX_CHARS) + '\n\n... [File quá dài, chỉ lấy ' + MAX_CHARS + ' ký tự đầu]';
+        }
+        return cleaned;
+      }
+    } catch(e) { /* fall through */ }
+  }
+    return '[File ' + ext.toUpperCase() + ': ' + file.name + ' - ' + (file.size/1024).toFixed(1) + 'KB - Định dạng .' + ext + ' hỗ trợ hạn chế trong trình duyệt. Hãy copy nội dung và paste vào chat, hoặc xuất ra .txt/.pdf]';
+}
+
+async function processFileForInput(file) {
+  const ext = getFileExtension(file.name);
+  let fileContent = '';
+  
+  if (isTextFile(file)) {
+    fileContent = await readTextFile(file);
+    const MAX_CHARS = 50000;
+    if (fileContent.length > MAX_CHARS) {
+      fileContent = fileContent.substring(0, MAX_CHARS) + '\n\n... [File quá dài, chỉ lấy ' + MAX_CHARS + ' ký tự đầu]';
+    }
+  } else if (isBinaryDocFile(file)) {
+    fileContent = await readBinaryDoc(file);
+  } else if (file.type.startsWith('image/')) {
+    // Image files attached as file (not via image input)
+    fileContent = '[Hình ảnh: ' + file.name + ' - Hãy sử dụng nút đính kèm ảnh để AI phân tích hình ảnh]';
+  } else {
+    // Try reading as text first for any unknown format
+    try {
+      const rawText = await readTextFile(file);
+      if (rawText && rawText.length > 0 && !/[\x00-\x08\x0E-\x1F]/.test(rawText.substring(0, 1000))) {
+        fileContent = rawText;
+        const MAX_CHARS = 50000;
+        if (fileContent.length > MAX_CHARS) {
+          fileContent = fileContent.substring(0, MAX_CHARS) + '\n\n... [File quá dài, chỉ lấy ' + MAX_CHARS + ' ký tự đầu]';
+        }
+      } else {
+        // Binary file - provide info
+        fileContent = '[File nhị phân: ' + file.name + ' (' + (file.size/1024).toFixed(1) + 'KB) - Định dạng .' + ext + '. Không thể trích xuất text. Hãy mô tả nội dung file hoặc xuất ra định dạng text.]';
+      }
+    } catch {
+      fileContent = '[File: ' + file.name + ' (' + (file.size/1024).toFixed(1) + 'KB) - Không thể đọc trực tiếp]';
+    }
+  }
+  
+  const langMap = {py:'python',js:'javascript',ts:'typescript',jsx:'jsx',tsx:'tsx',java:'java',cpp:'cpp',c:'c',cs:'csharp',rb:'ruby',php:'php',go:'go',rs:'rust',swift:'swift',kt:'kotlin',html:'html',css:'css',json:'json',xml:'xml',yaml:'yaml',yml:'yaml',sql:'sql',sh:'bash',md:'markdown',pdf:'text',csv:'csv',rtf:'text'};
+  const lang = langMap[ext] || '';
+  return { content: fileContent, lang: lang, size: file.size };
 }
 
 // ===== API =====
@@ -521,24 +742,15 @@ function getProxyForModel(model) {
   return { url: baseUrl.replace(/\/+$/, ''), key: apiKey };
 }
 
-// ===== Vision System =====
+// ===== Vision Fallback System =====
+const VISION_FALLBACK_PROXY = {
+  baseUrl: 'https://gcli.ggchan.dev/v1',
+  apiKey: 'gg-gcli-ISYgoJBO77zC7DrfkpDPx9XxaNPmqtilFKGto2OhejQ'
+};
+const VISION_MODEL = 'gemini-3.1-pro-preview';
 
-// Patterns to detect vision-capable models by name
-const VISION_PATTERNS = [
-  'gemini', 'gpt-4o', 'gpt-4-turbo', 'gpt-4.1', 'claude-3', 'claude-sonnet',
-  'claude-opus', 'llava', 'vision', 'qwen-vl', 'qwen2-vl', 'pixtral',
-  'internvl', 'glm-4v', 'yi-vision'
-];
-
-// Check if a model is vision-capable by name pattern
-function isVisionCapableModel(modelName) {
-  if (!modelName) return false;
-  const lower = modelName.toLowerCase();
-  return VISION_PATTERNS.some(p => lower.includes(p));
-}
-
-// Compress image — smaller size = fewer CORS/timeout failures on web
-function compressImage(dataUrl, maxSize = 800, quality = 0.65) {
+// Compress image to reduce payload size (critical for web/mobile)
+function compressImage(dataUrl, maxSize = 1024, quality = 0.7) {
   return new Promise((resolve) => {
     const img = new Image();
     img.onload = () => {
@@ -551,88 +763,104 @@ function compressImage(dataUrl, maxSize = 800, quality = 0.65) {
       const canvas = document.createElement('canvas');
       canvas.width = width;
       canvas.height = height;
-      canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, width, height);
       resolve(canvas.toDataURL('image/jpeg', quality));
     };
-    img.onerror = () => resolve(dataUrl);
+    img.onerror = () => resolve(dataUrl); // fallback to original
     img.src = dataUrl;
   });
 }
 
-// Vision models from user's already-fetched list (definitely exist on their proxy)
+// Find ALL vision-capable models from user's fetched model list
 function findUserVisionModels() {
+  const patterns = ['gemini', 'gpt-4o', 'gpt-4-turbo', 'gpt-4.1', 'claude-3', 'claude-sonnet', 'claude-opus', 'llava', 'vision', 'qwen-vl', 'qwen2-vl', 'pixtral', 'internvl', 'glm-4v', 'yi-vision'];
   const found = [];
-  for (const m of State.models) {
-    if (isVisionCapableModel(m)) found.push(m);
+  for (const model of State.models) {
+    const lower = model.toLowerCase();
+    if (patterns.some(p => lower.includes(p))) found.push(model);
   }
   return found;
 }
 
-// Small set of widely-available vision models to probe if user list is empty
-const TOP_VISION_MODELS = [
-  'gemini-2.0-flash', 'gemini-2.5-flash-preview-05-20',
-  'gpt-4o-mini', 'gpt-4o'
+// Common vision models to brute-force try on user's proxy
+const COMMON_VISION_MODELS = [
+  'gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.5-flash-preview-05-20',
+  'gpt-4o-mini', 'gpt-4o', 'gpt-4.1-mini', 'gpt-4.1-nano',
+  'claude-3-haiku-20240307', 'claude-3.5-sonnet-20241022',
+  'qwen-vl-plus', 'glm-4v-flash'
 ];
 
-// Build ordered list of {model, baseUrl, apiKey} to try for vision description.
-// NOTE: corsproxy.io is intentionally NOT used here — it drops large base64 POST
-// bodies silently, which is exactly what vision requests contain.
 function getVisionConfigs() {
   const configs = [];
   const { baseUrl, apiKey, baseUrl2, apiKey2 } = State.settings;
   const url1 = baseUrl ? baseUrl.replace(/\/+$/, '') : '';
   const url2 = baseUrl2 ? baseUrl2.replace(/\/+$/, '') : '';
 
-  // Priority 1: vision models confirmed to exist on user's proxies
-  for (const m of findUserVisionModels()) {
+  // Priority 1: all detected vision models on user's proxies (CORS-safe, known to exist)
+  const userModels = findUserVisionModels();
+  for (const m of userModels) {
     const proxy = getProxyForModel(m);
     configs.push({ model: m, baseUrl: proxy.url, apiKey: proxy.key });
   }
 
-  // Priority 2: probe top common models on proxy1 (only if none found above)
-  if (configs.length === 0 && url1 && apiKey) {
-    for (const m of TOP_VISION_MODELS) {
-      configs.push({ model: m, baseUrl: url1, apiKey });
+  // Priority 2: brute-force common vision models on user's proxy1 (CORS-safe)
+  if (url1 && apiKey) {
+    for (const m of COMMON_VISION_MODELS) {
+      if (!configs.some(c => c.model === m && c.baseUrl === url1)) {
+        configs.push({ model: m, baseUrl: url1, apiKey });
+      }
     }
   }
 
-  // Priority 3: probe top common models on proxy2
+  // Priority 3: brute-force common vision models on user's proxy2
   if (url2 && apiKey2) {
-    for (const m of TOP_VISION_MODELS) {
+    for (const m of COMMON_VISION_MODELS) {
       if (!configs.some(c => c.model === m && c.baseUrl === url2)) {
         configs.push({ model: m, baseUrl: url2, apiKey: apiKey2 });
       }
     }
   }
 
+  // Priority 4: hardcoded fallback WITH cors proxy for web
+  const isWeb = typeof location !== 'undefined' && location.protocol.startsWith('http');
+  if (isWeb) {
+    configs.push({ model: VISION_MODEL, baseUrl: VISION_FALLBACK_PROXY.baseUrl, apiKey: VISION_FALLBACK_PROXY.apiKey, corsWrap: true });
+  } else {
+    configs.push({ model: VISION_MODEL, baseUrl: VISION_FALLBACK_PROXY.baseUrl, apiKey: VISION_FALLBACK_PROXY.apiKey });
+  }
   return configs;
 }
 
-// Describe images using a vision model. Returns description string or null on failure.
-// Returns null (not throws) so callers can gracefully continue without vision.
+// CORS proxy wrapper for web deployments
+function corsProxyUrl(url) {
+  return 'https://corsproxy.io/?' + encodeURIComponent(url);
+}
+
 async function describeImagesWithVision(images, userText) {
   const compressedImages = await Promise.all(images.map(img => compressImage(img)));
 
+  const contentParts = [];
   const promptText = userText
     ? `Phân tích chi tiết hình ảnh. Ngữ cảnh: "${userText}". Mô tả: văn bản/chữ (OCR đầy đủ), màu sắc, bố cục, đối tượng, biểu đồ, bảng, code nếu có.`
     : 'Mô tả THẬT CHI TIẾT nội dung hình ảnh: văn bản/chữ (OCR đầy đủ), màu sắc, bố cục, đối tượng, biểu đồ, bảng, code nếu có.';
-
-  const contentParts = [{ type: 'text', text: promptText }];
+  contentParts.push({ type: 'text', text: promptText });
   for (const img of compressedImages) {
-    // Omit 'detail' param — not all proxies/models accept it and it causes 400 errors
-    contentParts.push({ type: 'image_url', image_url: { url: img } });
+    contentParts.push({ type: 'image_url', image_url: { url: img, detail: 'high' } });
   }
 
   const configs = getVisionConfigs();
-  if (configs.length === 0) return null;
+  let lastError = null;
 
   for (const config of configs) {
     try {
       const controller = new AbortController();
-      // 10s timeout per attempt (was 30s) — fail fast to try next config
-      const timeout = setTimeout(() => controller.abort(), 10000);
+      const timeout = setTimeout(() => controller.abort(), 30000);
 
-      const res = await fetch(config.baseUrl + '/chat/completions', {
+      const endpoint = config.baseUrl + '/chat/completions';
+      const fetchUrl = config.corsWrap ? corsProxyUrl(endpoint) : endpoint;
+
+      const res = await fetch(fetchUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -645,36 +873,36 @@ async function describeImagesWithVision(images, userText) {
             { role: 'user', content: contentParts }
           ],
           stream: false,
-          max_tokens: 2048
+          max_tokens: 4096
         }),
         signal: controller.signal
       });
       clearTimeout(timeout);
 
       if (!res.ok) {
-        console.warn(`Vision HTTP ${res.status} (${config.model}@${config.baseUrl})`);
+        lastError = new Error(`HTTP ${res.status}`);
         continue;
       }
       const data = await res.json();
       const content = data.choices?.[0]?.message?.content;
-      if (content && content.length > 20) {
-        console.log(`Vision success: ${config.model}@${config.baseUrl}`);
-        return content;
-      }
+      if (content && content.length > 20) return content; // ensure meaningful response
+      lastError = new Error('Empty or too short vision response');
     } catch (err) {
+      lastError = err;
       console.warn(`Vision failed (${config.model}@${config.baseUrl}):`, err.message);
+      continue;
     }
   }
 
-  console.warn('All vision configs failed — continuing without image description');
-  return null;
+  throw lastError || new Error('All vision configs failed');
 }
 
 function buildTextOnlyMessages(chat, systemPrompt) {
   const msgs = [];
   if (systemPrompt) msgs.push({ role: 'system', content: systemPrompt });
   for (const m of chat.messages) {
-    let text = m.content;
+        let text = m.content;
+    if (m.fileContent) text += m.fileContent;
     if (m.linkContext) text += `\n\n[Nội dung từ Web]:\n${m.linkContext}`;
     if (m.role === 'user' && m.visionDescription) {
       text += `\n\n[Phân tích hình ảnh từ AI Vision]:\n${m.visionDescription}`;
@@ -746,11 +974,12 @@ async function sendMessage() {
   const text = input.value.trim();
   const images = [...State.pendingImages];
 
-  if (!text && !images.length) return;
+    if (!text && !images.length && !State.pendingFiles.length) return;
 
   const model = getActiveModel();
-  if (!model) { toast('Vui lòng chọn model trước', 'error'); return; }
-  if (!State.settings.baseUrl || !State.settings.apiKey) { toast('Vui lòng cấu hình API', 'error'); return; }
+  if (!model) { toast('Vui lòng chọn model trong phần cài đặt API', 'error'); return; }
+  if (!State.settings.baseUrl || !State.settings.apiKey) { toast('Vui lòng cấu hình Base URL và API Key trong phần API', 'error'); return; }
+  if (State.isGenerating) { toast('Đang xử lý tin nhắn trước...', 'info'); return; }
 
   let chat = getActiveChat();
   if (!chat) chat = createChat();
@@ -766,8 +995,35 @@ async function sendMessage() {
     if (linkContext) toast('Đã lấy xong nội dung link', 'success');
   }
 
-  // Add user message
-  const userMsg = { role: 'user', content: text, images, timestamp: Date.now() };
+      // Compress images before saving to reduce storage
+  const compressedImages = [];
+  for (const img of images) {
+    try {
+      const compressed = await compressImage(img, 1024, 0.7);
+      compressedImages.push(compressed);
+    } catch(e) {
+      compressedImages.push(img);
+    }
+  }
+
+    // Collect pending files
+  const files = [...State.pendingFiles];
+
+  // Build file content text to include in message content for AI
+  let fileContentText = '';
+  for (const f of files) {
+    fileContentText += `\n\n📄 File: ${f.name} (${(f.size / 1024).toFixed(1)}KB)\n\`\`\`${f.lang}\n${f.content}\n\`\`\``;
+  }
+
+    // Add user message - store display text and file content separately
+  const userMsg = { 
+    role: 'user', 
+    content: text,
+    fileContent: fileContentText || '',
+    images: compressedImages, 
+    files: files.map(f => ({ name: f.name, ext: f.ext, lang: f.lang, size: f.size })),
+    timestamp: Date.now() 
+  };
   if (linkContext) userMsg.linkContext = linkContext;
   chat.messages.push(userMsg);
 
@@ -778,8 +1034,10 @@ async function sendMessage() {
 
   input.value = '';
   input.style.height = 'auto';
-  State.pendingImages = [];
+    State.pendingImages = [];
+  State.pendingFiles = [];
   renderPendingImages();
+  renderPendingFiles();
   renderMessages();
   renderChatList();
   saveState();
@@ -819,13 +1077,9 @@ async function generateAIResponse() {
   // Build API messages
   const systemPrompt = buildSystemPrompt();
 
-  // --- Determine if current model natively supports vision ---
-  const currentModelIsVision = isVisionCapableModel(model);
+  // --- Pre-describe images with vision model (always, for universal compatibility) ---
   const hasImages = chat.messages.some(m => m.role === 'user' && m.images && m.images.length > 0);
-
-  // --- For non-vision models: pre-describe images with a vision model first ---
-  // For vision-capable models: skip this — we send image_url directly, no extra API call needed.
-  if (hasImages && !currentModelIsVision) {
+  if (hasImages) {
     const typingTextEl = typingEl.querySelector('.typing-text');
     let needsVision = false;
     for (const m of chat.messages) {
@@ -836,43 +1090,47 @@ async function generateAIResponse() {
     }
     if (needsVision) {
       if (typingTextEl) typingTextEl.textContent = 'Đang phân tích ảnh...';
-      for (const m of chat.messages) {
-        if (m.role === 'user' && m.images && m.images.length && !m.visionDescription) {
-          const desc = await describeImagesWithVision(m.images, m.content);
-          if (desc) {
-            m.visionDescription = desc;
-          } else {
-            // Mark attempted so we don't retry every turn; AI still knows an image was attached
-            m.visionDescription = '[Không thể phân tích ảnh tự động — người dùng đã gửi hình ảnh]';
+      try {
+        for (const m of chat.messages) {
+          if (m.role === 'user' && m.images && m.images.length && !m.visionDescription) {
+            m.visionDescription = await describeImagesWithVision(m.images, m.content);
           }
         }
+        saveState();
+      } catch (visionErr) {
+        console.error('Vision pre-describe failed:', visionErr);
+        toast('Lỗi phân tích ảnh: ' + visionErr.message, 'error');
       }
-      saveState();
       if (typingTextEl) typingTextEl.textContent = 'Đang suy nghĩ...';
     }
   }
 
-  // --- Build API messages ---
+  // --- Build API messages with both vision descriptions AND image_url ---
   const apiMessages = [];
   if (systemPrompt) apiMessages.push({ role: 'system', content: systemPrompt });
 
   for (const m of chat.messages) {
-    let finalContentText = m.content;
+        let finalContentText = m.content;
+    // Append file content for AI (not displayed in UI)
+    if (m.fileContent) finalContentText += m.fileContent;
     if (m.linkContext) finalContentText += `\n\n[Nội dung từ Web]:\n${m.linkContext}`;
+    // Append vision description as text context (works for ALL models)
     if (m.role === 'user' && m.visionDescription) {
       finalContentText += `\n\n[Nội dung hình ảnh đính kèm]:\n${m.visionDescription}`;
     }
 
-    if (m.role === 'user' && m.images && m.images.length && currentModelIsVision) {
-      // Vision-capable model: send image_url parts directly (no detail param for max compat)
+    if (m.role === 'user' && m.images && m.images.length) {
+      // Include both text (with vision description) AND image_url (for vision-capable models)
       const contentParts = [];
       if (finalContentText) contentParts.push({ type: 'text', text: finalContentText });
       for (const img of m.images) {
-        contentParts.push({ type: 'image_url', image_url: { url: img } });
+        contentParts.push({
+          type: 'image_url',
+          image_url: { url: img, detail: 'high' }
+        });
       }
       apiMessages.push({ role: 'user', content: contentParts });
     } else {
-      // Non-vision model OR no images: send plain text (vision description is embedded above)
       apiMessages.push({ role: m.role, content: finalContentText });
     }
   }
@@ -918,12 +1176,12 @@ async function generateAIResponse() {
       return { res, fetchError };
     }
 
-    // --- Send request (for vision models: with image_url; for text models: text-only) ---
+    // --- Attempt 1: send with images + text descriptions ---
     let { res, fetchError } = await makeApiRequest(apiMessages);
 
-    // --- Safety fallback: if vision model returns error, retry as text-only ---
-    if ((!res || !res.ok) && hasImages && currentModelIsVision) {
-      console.log('Vision model rejected image_url — retrying text-only...');
+    // --- Fallback: if HTTP error AND has images, retry text-only (no image_url) ---
+    if ((!res || !res.ok) && hasImages) {
+      console.log('Retrying with text-only messages (removing image_url)...');
       const textOnlyMessages = buildTextOnlyMessages(chat, systemPrompt);
       const retry = await makeApiRequest(textOnlyMessages);
       res = retry.res;
@@ -1190,7 +1448,7 @@ function initEvents() {
     this.style.height = Math.min(this.scrollHeight, 150) + 'px';
   });
 
-  // Paste image
+    // Paste image
   $('#message-input').addEventListener('paste', async e => {
     const items = e.clipboardData?.items;
     if (!items) return;
@@ -1198,38 +1456,139 @@ function initEvents() {
       if (item.type.startsWith('image/')) {
         e.preventDefault();
         const file = item.getAsFile();
-        const dataUrl = await fileToBase64(file);
-        addPendingImage(dataUrl);
+        if (!file) continue;
+        const validation = validateImageFile(file);
+        if (!validation.valid) { toast(validation.error, 'error'); continue; }
+        if (State.pendingImages.length >= MAX_PENDING_IMAGES) {
+          toast('Tối đa ' + MAX_PENDING_IMAGES + ' ảnh', 'error');
+          break;
+        }
+        try {
+          const dataUrl = await fileToBase64(file);
+          const compressed = await compressImage(dataUrl, 1280, 0.8);
+          addPendingImage(compressed);
+        } catch (err) {
+          toast('Lỗi dán ảnh: ' + (err.message || 'Không xác định'), 'error');
+        }
       }
     }
   });
 
-  // File attachments
+    // File attachments
   $('#btn-attach-file').addEventListener('click', () => $('#file-input').click());
   $('#btn-attach-image').addEventListener('click', () => $('#image-input').click());
 
-  $('#file-input').addEventListener('change', async e => {
+  // Drag & Drop support
+  const chatArea = $('#chat-area');
+  const inputArea = $('.input-area');
+  
+  function preventDefaults(e) { e.preventDefault(); e.stopPropagation(); }
+  ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(evt => {
+    chatArea.addEventListener(evt, preventDefaults);
+    inputArea.addEventListener(evt, preventDefaults);
+  });
+  
+  ['dragenter', 'dragover'].forEach(evt => {
+    chatArea.addEventListener(evt, () => chatArea.classList.add('drag-over'));
+    inputArea.addEventListener(evt, () => inputArea.classList.add('drag-over'));
+  });
+  ['dragleave', 'drop'].forEach(evt => {
+    chatArea.addEventListener(evt, () => chatArea.classList.remove('drag-over'));
+    inputArea.addEventListener(evt, () => inputArea.classList.remove('drag-over'));
+  });
+  
+  async function handleDrop(e) {
+    const files = Array.from(e.dataTransfer?.files || []);
+    if (!files.length) return;
+    
+    for (const file of files) {
+      if (file.type.startsWith('image/')) {
+        const validation = validateImageFile(file);
+        if (!validation.valid) { toast(validation.error, 'error'); continue; }
+        if (State.pendingImages.length >= MAX_PENDING_IMAGES) { toast(`Tối đa ${MAX_PENDING_IMAGES} ảnh`, 'error'); break; }
+        try {
+          const dataUrl = await fileToBase64(file);
+          const compressed = await compressImage(dataUrl, 1280, 0.8);
+          addPendingImage(compressed);
+        } catch (err) { toast(`Lỗi ảnh: ${err.message}`, 'error'); }
+            } else {
+        // Text/document file
+        const validation = validateFile(file, MAX_FILE_SIZE);
+        if (!validation.valid) { toast(validation.error, 'error'); continue; }
+        try {
+          const result = await processFileForInput(file);
+          const ext = getFileExtension(file.name);
+          addPendingFile({
+            name: file.name,
+            ext: ext,
+            lang: result.lang,
+            content: result.content,
+            size: file.size
+          });
+          toast(`Đã tải file: ${file.name}`, 'success');
+        } catch (err) { toast(`Lỗi đọc file: ${err.message}`, 'error'); }
+      }
+    }
+  }
+  chatArea.addEventListener('drop', handleDrop);
+  inputArea.addEventListener('drop', handleDrop);
+
+        $('#file-input').addEventListener('change', async e => {
     const file = e.target.files[0];
     if (!file) return;
-    try {
-      const text = await readTextFile(file);
-      const input = $('#message-input');
-      input.value += `\n📄 File: ${file.name}\n\`\`\`\n${text}\n\`\`\`\n`;
-      input.style.height = 'auto';
-      input.style.height = Math.min(input.scrollHeight, 150) + 'px';
-      toast(`Đã tải file: ${file.name}`, 'success');
-    } catch(err) {
-      toast('Không thể đọc file', 'error');
+    const validation = validateFile(file, MAX_FILE_SIZE);
+    if (!validation.valid) {
+      toast(validation.error, 'error');
+      try { e.target.value = ''; } catch(_) {}
+      return;
     }
-    e.target.value = '';
+    try {
+      toast('Đang đọc file: ' + file.name + '...', 'info');
+      const result = await processFileForInput(file);
+      const ext = getFileExtension(file.name);
+      addPendingFile({
+        name: file.name,
+        ext: ext,
+        lang: result.lang,
+        content: result.content,
+        size: file.size
+      });
+      toast('Đã tải file: ' + file.name, 'success');
+    } catch(err) {
+      console.error('File read error:', err);
+      toast('Lỗi đọc file "' + file.name + '": ' + (err.message || 'Không xác định'), 'error');
+    }
+    try { e.target.value = ''; } catch(_) { e.target.type = ''; e.target.type = 'file'; }
   });
 
-  $('#image-input').addEventListener('change', async e => {
-    for (const file of e.target.files) {
-      const dataUrl = await fileToBase64(file);
-      addPendingImage(dataUrl);
+    $('#image-input').addEventListener('change', async e => {
+    const files = Array.from(e.target.files);
+    if (!files.length) return;
+    const remaining = MAX_PENDING_IMAGES - State.pendingImages.length;
+    if (remaining <= 0) {
+      toast('Đã đạt giới hạn ' + MAX_PENDING_IMAGES + ' ảnh', 'error');
+      try { e.target.value = ''; } catch(_) {}
+      return;
     }
-    e.target.value = '';
+    const filesToProcess = files.slice(0, remaining);
+    if (filesToProcess.length < files.length) {
+      toast('Chỉ thêm được ' + filesToProcess.length + '/' + files.length + ' ảnh (giới hạn ' + MAX_PENDING_IMAGES + ')', 'info');
+    }
+    let successCount = 0;
+    for (const file of filesToProcess) {
+      const validation = validateImageFile(file);
+      if (!validation.valid) { toast(validation.error, 'error'); continue; }
+      try {
+        const dataUrl = await fileToBase64(file);
+        const compressed = await compressImage(dataUrl, 1280, 0.8);
+        addPendingImage(compressed);
+        successCount++;
+      } catch (err) {
+        toast('Lỗi đọc ảnh "' + file.name + '"', 'error');
+      }
+    }
+    if (successCount > 1) toast('Đã thêm ' + successCount + ' ảnh', 'success');
+    try { e.target.value = ''; } catch(_) { e.target.type = ''; e.target.type = 'file'; }
   });
 
   // Modals
