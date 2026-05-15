@@ -170,10 +170,35 @@ body.light-mode .tone-btn {
   color: var(--text-secondary);
 }
 
+body.light-mode .tone-btn:hover {
+  border-color: var(--accent-1);
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--text-primary);
+}
+
+body.light-mode .tone-btn.active {
+  background: var(--accent-gradient);
+  border-color: transparent;
+  color: #fff;
+  box-shadow: 0 2px 12px var(--accent-glow);
+}
+
 body.light-mode .color-theme-btn {
   background: rgba(0, 0, 0, 0.03);
   border-color: rgba(0, 0, 0, 0.08);
   color: var(--text-secondary);
+}
+
+body.light-mode .color-theme-btn:hover {
+  border-color: var(--accent-1);
+  background: rgba(0, 0, 0, 0.05);
+}
+
+body.light-mode .color-theme-btn.active {
+  border-color: var(--accent-1);
+  background: rgba(0, 0, 0, 0.04);
+  box-shadow: 0 0 0 2px var(--accent-glow), 0 2px 8px var(--accent-glow);
+  color: var(--text-primary);
 }
 
 body.light-mode .btn-secondary {

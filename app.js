@@ -89,7 +89,7 @@ function getMemoryPrompt() {
     const label = MEMORY_CATEGORIES[cat] || cat;
     memText += `${label}: ${facts.join('; ')}\n`;
   }
-  memText += '\nHãy sử dụng thông tin trên để cá nhân hóa câu trả lời. Gọi người dùng bằng tên nếu biết. Tham chiếu đến sở thích/kỹ năng của họ khi phù hợp.';
+  memText += '\nSử dụng thông tin trên để cá nhân hóa câu trả lời. Gọi người dùng bằng tên nếu biết. LƯU Ý: Nếu có mâu thuẫn giữa trí nhớ và cài đặt hiện tại (System Prompt, Mục đích), LUÔN ưu tiên cài đặt hiện tại.';
   return memText;
 }
 
@@ -1003,7 +1003,7 @@ const VISION_FALLBACK_PROXY = {
 const VISION_MODEL = 'gemini-3.1-pro-preview';
 
 // Compress image to reduce payload size (critical for web/mobile)
-function compressImage(dataUrl, maxSize = 1024, quality = 0.7) {
+function compressImage(dataUrl, maxSize = 1024, quality = 0.65) {
   return new Promise((resolve) => {
     const img = new Image();
     img.onload = () => {
@@ -1107,8 +1107,9 @@ async function describeImagesWithVision(images, userText) {
 
   for (const config of configs) {
     try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 30000);
+            const controller = new AbortController();
+      // TỐI ƯU: Giảm timeout từ 30s xuống 15s để nhanh chóng chuyển sang proxy tiếp theo
+      const timeout = setTimeout(() => controller.abort(), 15000);
 
       const endpoint = config.baseUrl + '/chat/completions';
       const fetchUrl = config.corsWrap ? corsProxyUrl(endpoint) : endpoint;
@@ -1176,8 +1177,8 @@ function buildSystemPrompt() {
   const memoryPrompt = getMemoryPrompt();
   if (memoryPrompt) parts.push(memoryPrompt);
   
-  if (State.settings.systemPrompt) parts.push(State.settings.systemPrompt);
-  if (State.settings.userPurpose) parts.push(`Mục đích người dùng: ${State.settings.userPurpose}. Tập trung hỗ trợ tối đa theo hướng này.`);
+    if (State.settings.systemPrompt) parts.push(`[SYSTEM PROMPT - ƯU TIÊN CAO NHẤT]: ${State.settings.systemPrompt}`);
+  if (State.settings.userPurpose) parts.push(`[MỤC ĐÍCH SỬ DỤNG - ƯU TIÊN CAO]: Mục đích HIỆN TẠI của người dùng: ${State.settings.userPurpose}. LUÔN ưu tiên mục đích này. Bỏ qua mọi thông tin mục đích cũ nếu mâu thuẫn.`);
   const toneMap = {
     friendly: 'Giao tiếp thân thiện, ấm áp, dùng emoji phù hợp.',
     professional: 'Giao tiếp chuyên nghiệp, rõ ràng, có cấu trúc.',
@@ -1350,24 +1351,32 @@ async function generateAIResponse() {
   // Build API messages
   const systemPrompt = buildSystemPrompt();
 
-  // --- Pre-describe images with vision model (always, for universal compatibility) ---
+    // --- Pre-describe images with vision model (TỐI ƯU: chỉ phân tích ảnh CHƯA CÓ description) ---
   const hasImages = chat.messages.some(m => m.role === 'user' && m.images && m.images.length > 0);
   if (hasImages) {
     const typingTextEl = typingEl.querySelector('.typing-text');
-    let needsVision = false;
-    for (const m of chat.messages) {
-      if (m.role === 'user' && m.images && m.images.length && !m.visionDescription) {
-        needsVision = true;
-        break;
-      }
-    }
-    if (needsVision) {
+    // Chỉ lấy những tin nhắn CẦN phân tích (chưa có visionDescription)
+    const msgsNeedVision = chat.messages.filter(m => 
+      m.role === 'user' && m.images && m.images.length && !m.visionDescription
+    );
+    if (msgsNeedVision.length > 0) {
       if (typingTextEl) typingTextEl.textContent = 'Đang phân tích ảnh...';
       try {
-        for (const m of chat.messages) {
-          if (m.role === 'user' && m.images && m.images.length && !m.visionDescription) {
-            m.visionDescription = await describeImagesWithVision(m.images, m.content);
-          }
+        // Song song hóa: phân tích nhiều ảnh cùng lúc (tối đa 3 concurrent)
+        const CONCURRENT_LIMIT = 3;
+        for (let i = 0; i < msgsNeedVision.length; i += CONCURRENT_LIMIT) {
+          const batch = msgsNeedVision.slice(i, i + CONCURRENT_LIMIT);
+          const results = await Promise.allSettled(
+            batch.map(m => describeImagesWithVision(m.images, m.content))
+          );
+          results.forEach((result, idx) => {
+            if (result.status === 'fulfilled' && result.value) {
+              batch[idx].visionDescription = result.value;
+                        } else {
+              // KHÔNG set visionDescription khi fail → để fallback gửi image_url trực tiếp cho model chính
+              console.warn('Vision failed for message:', result.reason?.message);
+            }
+          });
         }
         saveState();
       } catch (visionErr) {
@@ -1382,8 +1391,8 @@ async function generateAIResponse() {
   const apiMessages = [];
   if (systemPrompt) apiMessages.push({ role: 'system', content: systemPrompt });
 
-  // Giới hạn ngữ cảnh: Chỉ lấy 20 tin nhắn gần nhất để tránh tràn Token API
-  const MAX_HISTORY = 20;
+    // Giới hạn ngữ cảnh: Flash nhẹ hơn, Pro sâu hơn
+  const MAX_HISTORY = State.mode === 'flash' ? 10 : 24;
   const messagesToInclude = chat.messages.slice(-MAX_HISTORY);
 
   for (const m of messagesToInclude) {
@@ -1396,20 +1405,21 @@ async function generateAIResponse() {
       finalContentText += `\n\n[Nội dung hình ảnh đính kèm]:\n${m.visionDescription}`;
     }
 
-    if (m.role === 'user' && m.images && m.images.length) {
-      // Include both text (with vision description) AND image_url (for vision-capable models)
-      const contentParts = [];
-      if (finalContentText) contentParts.push({ type: 'text', text: finalContentText });
-      for (const img of m.images) {
-        contentParts.push({
-          type: 'image_url',
-          image_url: { url: img, detail: 'high' }
-        });
-      }
-      apiMessages.push({ role: 'user', content: contentParts });
-    } else {
-      apiMessages.push({ role: m.role, content: finalContentText });
-    }
+        if (m.role === 'user' && m.images && m.images.length) {
+          // LUÔN gửi image_url để model vision-capable nhìn thấy ảnh trực tiếp
+          // visionDescription (nếu có) đã được append vào finalContentText ở trên → bổ sung ngữ cảnh text
+          const contentParts = [];
+          if (finalContentText) contentParts.push({ type: 'text', text: finalContentText });
+          for (const img of m.images) {
+            contentParts.push({
+              type: 'image_url',
+              image_url: { url: img, detail: State.mode === 'flash' ? 'low' : 'high' }
+            });
+          }
+          apiMessages.push({ role: 'user', content: contentParts });
+        } else {
+          apiMessages.push({ role: m.role, content: finalContentText });
+        }
   }
 
   let assistantContent = '';
@@ -1525,13 +1535,18 @@ async function generateAIResponse() {
                 container.appendChild(assistantEl);
               }
             }
-            assistantContent += delta;
+                        assistantContent += delta;
             if (isStillActiveChat()) {
-              bubbleEl.innerHTML = formatMessage(assistantContent);
-              const chatArea = $('#chat-area');
-              const isNearBottom = chatArea.scrollHeight - chatArea.scrollTop - chatArea.clientHeight < 150;
-              if (isNearBottom) {
-                requestAnimationFrame(() => { chatArea.scrollTop = chatArea.scrollHeight; });
+              // TỐI ƯU: Throttle render để tránh lag UI khi streaming nhanh
+              if (!bubbleEl._renderPending) {
+                bubbleEl._renderPending = true;
+                requestAnimationFrame(() => {
+                  bubbleEl.innerHTML = formatMessage(assistantContent);
+                  const chatArea = $('#chat-area');
+                  const isNearBottom = chatArea.scrollHeight - chatArea.scrollTop - chatArea.clientHeight < 150;
+                  if (isNearBottom) chatArea.scrollTop = chatArea.scrollHeight;
+                  bubbleEl._renderPending = false;
+                });
               }
             }
           }
@@ -2027,12 +2042,14 @@ function initEvents() {
     const el = $('#api-key-2');
     el.type = el.type === 'password' ? 'text' : 'password';
   });
-  $('#btn-save-api').addEventListener('click', () => {
+    $('#btn-save-api').addEventListener('click', () => {
     State.settings.baseUrl = $('#api-base-url').value.trim();
     State.settings.apiKey = $('#api-key').value.trim();
     State.settings.baseUrl2 = $('#api-base-url-2').value.trim();
     State.settings.apiKey2 = $('#api-key-2').value.trim();
     State.settings.currentModel = $('#model-select').value;
+    // Lưu NGAY LẬP TỨC (bypass debounce)
+    try { localStorage.setItem('suna_settings', JSON.stringify(State.settings)); } catch(e) {}
     saveState();
     updateModelDisplay();
     closeModal('api-modal');
@@ -2060,13 +2077,19 @@ function initEvents() {
   });
 
   // General settings
-  $('#btn-save-settings').addEventListener('click', () => {
+    $('#btn-save-settings').addEventListener('click', () => {
     State.settings.userName = $('#user-name-input').value.trim() || 'Bạn';
     State.settings.systemPrompt = $('#system-prompt').value;
     State.settings.userPurpose = $('#user-purpose').value;
     State.settings.flashModel = $('#flash-model-select').value;
     State.settings.proModel = $('#pro-model-select').value;
-    saveState();
+    
+    // Lưu NGAY LẬP TỨC (bypass debounce) để tránh mất dữ liệu khi reload
+    try {
+      localStorage.setItem('suna_settings', JSON.stringify(State.settings));
+    } catch(e) { console.error('Save settings error:', e); }
+    saveState(); // Vẫn gọi debounce để lưu chats
+    
     updateModelDisplay();
     renderMessages();
     closeModal('settings-modal');
@@ -2113,11 +2136,13 @@ function initEvents() {
       btn.classList.add('active');
     });
   });
-  $('#btn-save-personality').addEventListener('click', () => {
+    $('#btn-save-personality').addEventListener('click', () => {
     State.settings.tone = document.querySelector('.tone-btn.active')?.dataset.tone || 'friendly';
     State.settings.theme = document.querySelector('.color-theme-btn.active')?.dataset.theme || 'aurora';
     State.settings.customPersonality = $('#custom-personality').value;
     applyTheme();
+    // Lưu NGAY LẬP TỨC (bypass debounce)
+    try { localStorage.setItem('suna_settings', JSON.stringify(State.settings)); } catch(e) {}
     saveState();
     closeModal('personality-modal');
     toast('Đã lưu tính cách AI', 'success');
@@ -2131,10 +2156,12 @@ function initEvents() {
     $('#font-size-value').textContent = this.value + 'px';
     $('#font-preview').style.fontSize = this.value + 'px';
   });
-  $('#btn-save-font').addEventListener('click', () => {
+    $('#btn-save-font').addEventListener('click', () => {
     State.settings.fontFamily = $('#font-family-select').value;
     State.settings.fontSize = parseInt($('#font-size-range').value);
     applyTheme();
+    // Lưu NGAY LẬP TỨC (bypass debounce)
+    try { localStorage.setItem('suna_settings', JSON.stringify(State.settings)); } catch(e) {}
     saveState();
     closeModal('font-modal');
     toast('Đã áp dụng font chữ', 'success');
