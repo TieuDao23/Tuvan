@@ -17,8 +17,155 @@ const State = {
   modelProxyMap: {},
   isGenerating: false,
   abortController: null,
-  generatingChatId: null
+  generatingChatId: null,
+  // === AI Memory System ===
+  memory: {
+    facts: [],        // Mảng các thông tin đã ghi nhớ về user [{fact, category, timestamp}]
+    lastUpdated: 0
+  }
 };
+
+// ===== AI Memory System =====
+const MEMORY_CATEGORIES = {
+  identity: '👤 Danh tính',
+  preference: '⭐ Sở thích',
+  skill: '💻 Kỹ năng',
+  work: '💼 Công việc',
+  context: '📌 Ngữ cảnh',
+  style: '🎨 Phong cách'
+};
+
+async function loadMemory() {
+  try {
+    const mem = await idbGet('suna_memory');
+    if (mem && mem.facts) State.memory = mem;
+  } catch(e) { console.error('Load memory error:', e); }
+}
+
+async function saveMemory() {
+  try {
+    State.memory.lastUpdated = Date.now();
+    await idbSet('suna_memory', State.memory);
+  } catch(e) { console.error('Save memory error:', e); }
+}
+
+function addMemoryFact(fact, category = 'context') {
+  // Tránh trùng lặp (so sánh nội dung tương tự)
+  const isDuplicate = State.memory.facts.some(f => 
+    f.fact.toLowerCase().trim() === fact.toLowerCase().trim()
+  );
+  if (isDuplicate) return false;
+  
+  // Giới hạn tối đa 50 fact để không phình prompt
+  if (State.memory.facts.length >= 50) {
+    State.memory.facts.shift(); // Xóa fact cũ nhất để nhường chỗ
+  }
+  State.memory.facts.push({
+    fact: fact.trim(),
+    category,
+    timestamp: Date.now()
+  });
+  saveMemory();
+  return true;
+}
+
+function removeMemoryFact(index) {
+  if (index >= 0 && index < State.memory.facts.length) {
+    State.memory.facts.splice(index, 1);
+    saveMemory();
+  }
+}
+
+function getMemoryPrompt() {
+  if (!State.memory.facts.length) return '';
+  let memText = '[TRÍ NHỚ VỀ NGƯỜI DÙNG - Thông tin đã ghi nhớ từ các cuộc hội thoại trước]:\n';
+  const grouped = {};
+  for (const f of State.memory.facts) {
+    const cat = f.category || 'context';
+    if (!grouped[cat]) grouped[cat] = [];
+    grouped[cat].push(f.fact);
+  }
+  for (const [cat, facts] of Object.entries(grouped)) {
+    const label = MEMORY_CATEGORIES[cat] || cat;
+    memText += `${label}: ${facts.join('; ')}\n`;
+  }
+  memText += '\nHãy sử dụng thông tin trên để cá nhân hóa câu trả lời. Gọi người dùng bằng tên nếu biết. Tham chiếu đến sở thích/kỹ năng của họ khi phù hợp.';
+  return memText;
+}
+
+// Tự động trích xuất thông tin quan trọng từ tin nhắn user
+function extractMemoryFromMessage(text) {
+  if (!text || text.length < 5) return;
+  const lower = text.toLowerCase();
+  
+  // Phát hiện tên
+  const namePatterns = [
+    /(?:tên|name)\s+(?:(?:của\s+)?(?:tôi|mình|tao|em|anh|chị)\s+)?(?:là|is)\s+["']?([A-ZÀ-Ỹa-zà-ỹ][a-zà-ỹ]+(?:\s+[A-ZÀ-Ỹa-zà-ỹ][a-zà-ỹ]+)*)/i,
+    /(?:tôi|mình|tao|em|anh|chị)\s+(?:tên\s+)?là\s+([A-ZÀ-Ỹ][a-zà-ỹ]+(?:\s+[A-ZÀ-Ỹ][a-zà-ỹ]+)*)/i,
+    /(?:call me|gọi\s+(?:tôi|mình)\s+là)\s+([A-ZÀ-Ỹa-zà-ỹ]\w+)/i
+  ];
+  for (const p of namePatterns) {
+    const m = text.match(p);
+    if (m && m[1] && m[1].length >= 2 && m[1].length <= 30) {
+      addMemoryFact(`Tên: ${m[1]}`, 'identity');
+      // Tự động cập nhật tên hiển thị
+      if (State.settings.userName === 'Bạn' || State.settings.userName === '') {
+        State.settings.userName = m[1];
+        saveState();
+      }
+      break;
+    }
+  }
+  
+  // Phát hiện nghề nghiệp/công việc
+  const jobPatterns = [
+    /(?:tôi|mình|em|anh|chị)\s+(?:là|đang làm|làm việc|work as)\s+(?:một\s+)?([a-zà-ỹA-ZÀ-Ỹ\s]{3,40}?)(?:\.|,|$|\n)/i,
+    /(?:nghề|job|career|chức vụ|vị trí)\s+(?:của\s+)?(?:tôi|mình)\s+là\s+([a-zà-ỹA-ZÀ-Ỹ\s]{3,40})/i
+  ];
+  for (const p of jobPatterns) {
+    const m = text.match(p);
+    if (m && m[1]) {
+      const job = m[1].trim();
+      // Lọc bỏ các từ quá chung chung
+      if (job.length >= 3 && !['một', 'người', 'cái', 'the', 'a'].includes(job.toLowerCase())) {
+        addMemoryFact(`Nghề nghiệp: ${job}`, 'work');
+        break;
+      }
+    }
+  }
+  
+  // Phát hiện ngôn ngữ lập trình / công nghệ yêu thích  
+  const techKeywords = ['python', 'javascript', 'typescript', 'java', 'c\\+\\+', 'c#', 'rust', 'go', 'ruby', 'php', 'swift', 'kotlin', 'react', 'vue', 'angular', 'node', 'django', 'flask', 'spring', 'flutter', 'unity', 'docker', 'kubernetes', 'aws', 'azure', 'gcp', 'tensorflow', 'pytorch', 'linux', 'macos', 'windows'];
+  const techPattern = new RegExp(`(?:tôi|mình|em)\\s+(?:dùng|sử dụng|viết|code|lập trình|thích|yêu thích|prefer|use|học)\\s+(?:bằng\\s+)?(?:ngôn ngữ\\s+)?(${techKeywords.join('|')})`, 'gi');
+  const techMatches = text.match(techPattern);
+  if (techMatches) {
+    for (const tm of techMatches) {
+      for (const kw of techKeywords) {
+        if (tm.toLowerCase().includes(kw.replace(/\\\\/g, ''))) {
+          addMemoryFact(`Sử dụng: ${kw.replace(/\\\\/g, '')}`, 'skill');
+        }
+      }
+    }
+  }
+  
+  // Phát hiện sở thích
+  const hobbyPatterns = [
+    /(?:tôi|mình|em)\s+(?:thích|yêu thích|đam mê|enjoy|love|like)\s+([a-zà-ỹA-ZÀ-Ỹ\s]{3,40}?)(?:\.|,|$|\n)/i
+  ];
+  for (const p of hobbyPatterns) {
+    const m = text.match(p);
+    if (m && m[1] && m[1].trim().length >= 3) {
+      addMemoryFact(`Thích: ${m[1].trim()}`, 'preference');
+      break;
+    }
+  }
+  
+  // Phát hiện tuổi
+  const ageMatch = text.match(/(?:tôi|mình|em)\s+(?:năm nay\s+)?(?:được\s+)?(\d{1,2})\s+tuổi/i);
+  if (ageMatch && parseInt(ageMatch[1]) >= 5 && parseInt(ageMatch[1]) <= 100) {
+    addMemoryFact(`Tuổi: ${ageMatch[1]}`, 'identity');
+  }
+}
 
 function updateSendButtonState() {
   const btn = $('#btn-send');
@@ -78,18 +225,22 @@ async function idbGet(key) {
   } catch(e) { console.error('IndexedDB read error:', e); return null; }
 }
 
+let _saveTimeout = null;
 function saveState() {
-  try {
-    localStorage.setItem('suna_settings', JSON.stringify(State.settings));
-    localStorage.setItem('suna_mode', State.mode);
-    idbSet('suna_chats', State.chats); // Fire and forget background save
-  } catch (e) {
-    if (e.name === 'QuotaExceededError' || e.code === 22) {
-      toast('Bộ nhớ settings đã đầy!', 'error');
-    } else {
-      console.error('Lỗi khi lưu trạng thái:', e);
+  if (_saveTimeout) clearTimeout(_saveTimeout);
+  _saveTimeout = setTimeout(() => {
+    try {
+      localStorage.setItem('suna_settings', JSON.stringify(State.settings));
+      localStorage.setItem('suna_mode', State.mode);
+      idbSet('suna_chats', State.chats).catch(e => console.error('IndexedDB save error:', e));
+    } catch (e) {
+      if (e.name === 'QuotaExceededError' || e.code === 22) {
+        toast('Bộ nhớ settings đã đầy!', 'error');
+      } else {
+        console.error('Lỗi khi lưu trạng thái:', e);
+      }
     }
-  }
+  }, 500); // Debounce 500ms để tránh lag UI khi lưu liên tục
 }
 
 async function loadState() {
@@ -137,6 +288,14 @@ function applyTheme() {
 
 // ===== Chat Management =====
 function createChat() {
+  // Anti-spam: Không tạo chat mới nếu chat hiện tại đang trống
+  const currentChat = getActiveChat();
+  if (currentChat && currentChat.messages.length === 0 && currentChat.title === 'Chat mới') {
+    if (isMobile()) closeSidebar();
+    $('#message-input').focus();
+    return currentChat;
+  }
+
   const chat = { id: genId(), title: 'Chat mới', messages: [], createdAt: Date.now() };
   State.chats.unshift(chat);
   State.activeChatId = chat.id;
@@ -144,6 +303,7 @@ function createChat() {
   renderChatList();
   renderMessages();
   if (isMobile()) closeSidebar();
+  $('#message-input').focus();
   return chat;
 }
 
@@ -332,9 +492,10 @@ function formatMessage(text) {
     return '<code class="math-inline">' + math.trim() + '</code>';
   });
 
-  // Code blocks with language
-  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
-    const label = lang ? `<div class="code-lang">${lang}</div>` : '';
+    // Code blocks with language (Hỗ trợ các ngôn ngữ đặc biệt như c++, c#, html)
+  html = html.replace(/```([^\n]*)\n([\s\S]*?)```/g, (_, lang, code) => {
+    const cleanLang = lang.trim();
+    const label = cleanLang ? `<div class="code-lang">${cleanLang}</div>` : '';
     const safeCode = encodeURIComponent(code);
     return `<div class="code-block-wrapper">
               ${label}
@@ -363,7 +524,11 @@ function formatMessage(text) {
   html = html.replace(/~([^~]+)~/g, '<sub>$1</sub>');
 
   // Links [text](url)
-  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  // Links [text](url) - Added basic protection against javascript: links
+  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, text, url) => {
+    const safeUrl = url.trim().toLowerCase().startsWith('javascript:') ? '#' : url;
+    return `<a href="${safeUrl}" target="_blank" rel="noopener">${text}</a>`;
+  });
 
   // Unordered lists (lines starting with - or *)
   html = html.replace(/(?:^|\n)((?:[-*] .+\n?)+)/g, (match, listBlock) => {
@@ -381,8 +546,33 @@ function formatMessage(text) {
     return '<ol class="msg-list">' + items + '</ol>';
   });
 
-  // Line breaks
+    // Tables
+  html = html.replace(/(?:^|\n)(\|.*\|\n\|[-:| ]+\|\n(?:\|.*\|(?:\n|$))+)/g, (match, table) => {
+    const rows = table.trim().split('\n');
+    let tableHtml = '<table>';
+    rows.forEach((row, i) => {
+      if (i === 1) return; // Skip separator row
+      const cells = row.split('|').filter((_, index, arr) => index > 0 && index < arr.length - 1);
+      tableHtml += '<tr>';
+      cells.forEach(cell => {
+        tableHtml += i === 0 ? `<th>${cell.trim()}</th>` : `<td>${cell.trim()}</td>`;
+      });
+      tableHtml += '</tr>';
+    });
+    tableHtml += '</table>';
+    return tableHtml;
+  });
+
+  // Blockquotes
+  html = html.replace(/(?:^|\n)> (.+)(?:\n> .+)*(?:\n|$)/g, (match) => {
+    const quoteContent = match.replace(/(^|\n)> /g, '$1').trim();
+    return `<blockquote>${quoteContent}</blockquote>`;
+  });
+
+  // Line breaks (bỏ qua những cái đã nằm trong HTML tags như bảng)
   html = html.replace(/\n/g, '<br>');
+  // Dọn dẹp lỗi thẻ BR dư thừa bên trong table do line-break
+  html = html.replace(/<br>\s*<\/td>/g, '</td>').replace(/<br>\s*<\/th>/g, '</th>').replace(/<br>\s*<tr>/g, '<tr>').replace(/<\/tr>\s*<br>/g, '</tr>').replace(/<br>\s*<table>/g, '<table>').replace(/<\/table>\s*<br>/g, '</table>');
   return html;
 }
 
@@ -642,6 +832,12 @@ async function processFileForInput(file) {
     }
   }
   
+    // FIX LỖI: Đảm bảo mọi loại file (kể cả PDF) đều bị giới hạn ký tự để tránh lỗi tràn Token API
+  const GLOBAL_MAX_CHARS = 60000;
+  if (fileContent && fileContent.length > GLOBAL_MAX_CHARS) {
+    fileContent = fileContent.substring(0, GLOBAL_MAX_CHARS) + '\n\n... [Nội dung đã được cắt bớt do file quá dài. Chỉ lấy ' + GLOBAL_MAX_CHARS + ' ký tự đầu]';
+  }
+
   const langMap = {py:'python',js:'javascript',ts:'typescript',jsx:'jsx',tsx:'tsx',java:'java',cpp:'cpp',c:'c',cs:'csharp',rb:'ruby',php:'php',go:'go',rs:'rust',swift:'swift',kt:'kotlin',html:'html',css:'css',json:'json',xml:'xml',yaml:'yaml',yml:'yaml',sql:'sql',sh:'bash',md:'markdown',pdf:'text',csv:'csv',rtf:'text'};
   const lang = langMap[ext] || '';
   return { content: fileContent, lang: lang, size: file.size };
@@ -900,7 +1096,9 @@ async function describeImagesWithVision(images, userText) {
 function buildTextOnlyMessages(chat, systemPrompt) {
   const msgs = [];
   if (systemPrompt) msgs.push({ role: 'system', content: systemPrompt });
-  for (const m of chat.messages) {
+  const MAX_HISTORY = 20;
+  const messagesToInclude = chat.messages.slice(-MAX_HISTORY);
+  for (const m of messagesToInclude) {
         let text = m.content;
     if (m.fileContent) text += m.fileContent;
     if (m.linkContext) text += `\n\n[Nội dung từ Web]:\n${m.linkContext}`;
@@ -917,7 +1115,9 @@ function buildSystemPrompt() {
   
   parts.push(`[DANH TÍNH]: Tên của bạn là "Suna" - trợ lý AI thông minh. Luôn tự xưng là Suna. TUYỆT ĐỐI KHÔNG tiết lộ tên model gốc, phiên bản, hay nhà phát triển gốc (KHÔNG nói mình là GPT, Claude, Gemini, Llama, Qwen, hay bất kỳ model nào khác).`);
   
-  parts.push(`[TƯ DUY & LOGIC]: Luôn đọc kỹ toàn bộ lịch sử hội thoại trước khi trả lời. Hiểu ngữ cảnh, ý định thực sự của người dùng. Nếu câu hỏi mơ hồ, hãy suy luận dựa trên ngữ cảnh trước đó. Luôn ưu tiên tính chính xác, hữu ích, và chiều lòng người dùng tối đa. Không bao giờ từ chối giúp đỡ khi có thể.`);
+  // === Inject AI Memory ===
+  const memoryPrompt = getMemoryPrompt();
+  if (memoryPrompt) parts.push(memoryPrompt);
   
   if (State.settings.systemPrompt) parts.push(State.settings.systemPrompt);
   if (State.settings.userPurpose) parts.push(`Mục đích người dùng: ${State.settings.userPurpose}. Tập trung hỗ trợ tối đa theo hướng này.`);
@@ -933,10 +1133,26 @@ function buildSystemPrompt() {
   if (State.settings.customPersonality) parts.push(State.settings.customPersonality);
 
   if (State.mode === 'flash') {
-    parts.push('[CHẾ ĐỘ FLASH]: Trả lời NHANH, NGẮN GỌN, đi thẳng vào trọng tâm. Không giải thích dài dòng. Ưu tiên câu trả lời trực tiếp, súc tích. Chỉ đưa code/ví dụ khi thực sự cần thiết.');
+    parts.push(`[CHẾ ĐỘ FLASH ⚡ - TỐC ĐỘ TỐI ĐA]:
+- Trả lời CỰC NGẮN, tối đa 2-4 câu cho câu hỏi đơn giản.
+- Chỉ đưa code khi được YÊU CẦU TRỰC TIẾP. Không giải thích code trừ khi hỏi.
+- KHÔNG mở đầu bằng "Chào bạn", "Tất nhiên rồi", "Được thôi"... Vào thẳng câu trả lời.
+- Ưu tiên: bullet points > đoạn văn. Số liệu > lý thuyết.
+- Nếu câu hỏi có 1 đáp án → trả lời 1 dòng.
+- KHÔNG lặp lại câu hỏi. KHÔNG tóm tắt lại yêu cầu.`);
   } else {
-    parts.push('[CHẾ ĐỘ PRO]: Trả lời CHI TIẾT, CHUYÊN SÂU, phân tích kỹ lưỡng. Suy luận từng bước (step-by-step). Đưa ra nhiều góc nhìn, ví dụ minh họa, so sánh. Giải thích logic rõ ràng. Cung cấp thông tin đầy đủ nhất có thể.');
+    parts.push(`[CHẾ ĐỘ PRO 💎 - HIỆU NĂNG TỐI ĐA]:
+- Suy luận từng bước (Chain-of-Thought): Phân tích vấn đề → Xác định giải pháp → Triển khai chi tiết → Kiểm chứng.
+- Đưa ra NHIỀU phương án nếu có, so sánh ưu/nhược điểm.
+- Với code: viết đầy đủ, có comment giải thích, có error handling, có ví dụ sử dụng.
+- Với kiến thức: trích dẫn nguồn/tham chiếu nếu có thể, giải thích WHY chứ không chỉ WHAT.
+- Sử dụng bảng so sánh, danh sách có cấu trúc, heading rõ ràng.
+- Tự phản biện: Xem xét edge cases, giới hạn, lưu ý quan trọng.
+- Kết thúc bằng TÓM TẮT ngắn gọn hoặc khuyến nghị cụ thể.`);
   }
+  
+  // Logic & Tư duy (đặt sau mode để mode có priority cao hơn)
+  parts.push(`[TƯ DUY]: Đọc kỹ lịch sử hội thoại. Hiểu ngữ cảnh và ý định thực sự. Nếu câu hỏi mơ hồ, suy luận từ ngữ cảnh. Ưu tiên: chính xác, hữu ích. Không từ chối giúp đỡ khi có thể.`);
   
   parts.push('[HÌNH ẢNH]: Bạn CÓ khả năng nhìn và phân tích hình ảnh. Khi người dùng gửi ảnh, hãy trực tiếp phân tích. KHÔNG nói rằng bạn không thể xem ảnh. Đọc chữ (OCR) trong ảnh nếu có.');
   
@@ -1105,11 +1321,15 @@ async function generateAIResponse() {
     }
   }
 
-  // --- Build API messages with both vision descriptions AND image_url ---
+    // --- Build API messages with both vision descriptions AND image_url ---
   const apiMessages = [];
   if (systemPrompt) apiMessages.push({ role: 'system', content: systemPrompt });
 
-  for (const m of chat.messages) {
+  // Giới hạn ngữ cảnh: Chỉ lấy 20 tin nhắn gần nhất để tránh tràn Token API
+  const MAX_HISTORY = 20;
+  const messagesToInclude = chat.messages.slice(-MAX_HISTORY);
+
+  for (const m of messagesToInclude) {
         let finalContentText = m.content;
     // Append file content for AI (not displayed in UI)
     if (m.fileContent) finalContentText += m.fileContent;
@@ -1142,20 +1362,32 @@ async function generateAIResponse() {
     async function makeApiRequest(messages) {
       const proxy = getProxyForModel(model);
       const url = proxy.url + '/chat/completions';
-      const reqBody = {
+            const reqBody = {
         model, messages, stream: true,
-        temperature: State.mode === 'flash' ? 0.5 : 0.7,
-        max_tokens: State.mode === 'flash' ? 2048 : 8192
+        temperature: State.mode === 'flash' ? 0.3 : 0.75,
+        max_tokens: State.mode === 'flash' ? 1024 : 16384,
+        ...(State.mode === 'flash' ? {
+          top_p: 0.85,
+          frequency_penalty: 0.1,
+          presence_penalty: 0.0
+        } : {
+          top_p: 0.95,
+          frequency_penalty: 0.15,
+          presence_penalty: 0.1
+        })
       };
       let res = null, fetchError = null;
-      try {
+            try {
         res = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${proxy.key}` },
           body: JSON.stringify(reqBody),
           signal: State.abortController.signal
         });
-      } catch (err) { fetchError = err; }
+      } catch (err) { 
+        fetchError = err;
+        if (err.name === 'AbortError') throw err; // Không thử proxy khác nếu người dùng chủ động ngắt
+      }
 
       if (!res || !res.ok) {
         const { baseUrl, apiKey, baseUrl2, apiKey2 } = State.settings;
@@ -1258,8 +1490,14 @@ async function generateAIResponse() {
     }
 
     chat.messages.push({ role: 'assistant', content: assistantContent, timestamp: Date.now() });
-    saveState();
-    if (isStillActiveChat()) renderMessages();
+      saveState();
+      if (isStillActiveChat()) renderMessages();
+    
+      // === AI Memory: Trích xuất thông tin từ tin nhắn user gần nhất ===
+      const lastUserMsg = [...chat.messages].reverse().find(m => m.role === 'user');
+      if (lastUserMsg && lastUserMsg.content) {
+        extractMemoryFromMessage(lastUserMsg.content);
+      }
 
   } catch(e) {
     if (e.name === 'AbortError') {
@@ -1330,27 +1568,39 @@ window.deleteMessage = function(idx) {
 }
 
 window.copyText = function(text) {
-  navigator.clipboard.writeText(text).then(() => {
-    toast('Đã sao chép vào khay nhớ tạm', 'success');
-  }).catch(() => {
-    toast('Lỗi khi sao chép', 'error');
-  });
+  // Hỗ trợ copy trên cả HTTP (mạng LAN) và HTTPS
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).then(() => {
+      toast('Đã sao chép vào khay nhớ tạm', 'success');
+    }).catch(() => toast('Lỗi khi sao chép', 'error'));
+  } else {
+    const textArea = document.createElement("textarea");
+    textArea.value = text;
+    document.body.appendChild(textArea);
+    textArea.select();
+    try {
+      document.execCommand('copy');
+      toast('Đã sao chép', 'success');
+    } catch (err) {
+      toast('Trình duyệt không hỗ trợ sao chép', 'error');
+    }
+    document.body.removeChild(textArea);
+  }
 };
 
 // ===== Particles Effect =====
 let _particleInterval = null;
 function initParticles() {
-  // Prevent duplicate particle containers
-  const existing = document.getElementById('particles-container');
-  if (existing) existing.remove();
-  if (_particleInterval) { clearInterval(_particleInterval); _particleInterval = null; }
+const existing = document.getElementById('particles-container');
+if (existing) existing.remove();
+if (_particleInterval) { clearInterval(_particleInterval); _particleInterval = null; }
 
-  const container = document.createElement('div');
-  container.id = 'particles-container';
-  container.style.cssText = 'position: absolute; inset: 0; pointer-events: none; z-index: 0; overflow: hidden;';
-  $('#chat-area').appendChild(container);
+const container = document.createElement('div');
+container.id = 'particles-container';
+container.style.cssText = 'position: absolute; inset: 0; pointer-events: none; z-index: 0; overflow: hidden;';
+$('#chat-area').appendChild(container);
 
-  const MAX_PARTICLES = 15;
+const MAX_PARTICLES = 15;
   _particleInterval = setInterval(() => {
     if (document.hidden) return;
     if (container.childElementCount >= MAX_PARTICLES) return;
@@ -1419,8 +1669,88 @@ function initEvents() {
     closeSidebar();
   });
 
-  // New chat
+    // New chat
   $('#btn-new-chat').addEventListener('click', () => createChat());
+
+  // Tải xuống đoạn chat (Export to Markdown)
+  $('#btn-export-chat').addEventListener('click', () => {
+    const chat = getActiveChat();
+    if (!chat || chat.messages.length === 0) {
+      toast('Đoạn chat đang trống', 'info');
+      return;
+    }
+    let mdContent = `# ${chat.title}\n\n*Ngày tạo: ${new Date(chat.createdAt).toLocaleString('vi-VN')}*\n\n---\n\n`;
+    chat.messages.forEach(m => {
+      const roleName = m.role === 'user' ? State.settings.userName || 'Bạn' : 'Suna Chat';
+      mdContent += `### **${roleName}**:\n${m.content}\n\n---\n\n`;
+    });
+    
+    const blob = new Blob([mdContent], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `SunaChat_${chat.title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.md`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast('Đã tải xuống đoạn chat', 'success');
+  });
+
+  // Nhập văn bản bằng giọng nói (Voice Recognition)
+  const btnVoice = $('#btn-voice');
+  let recognition = null;
+  let isRecording = false;
+  
+  if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    recognition = new SpeechRecognition();
+    recognition.lang = 'vi-VN';
+    recognition.interimResults = true;
+    
+    recognition.onstart = () => {
+      isRecording = true;
+      btnVoice.classList.add('recording');
+      $('#message-input').placeholder = 'Đang nghe...';
+      toast('Đang lắng nghe...', 'info');
+    };
+    
+    recognition.onresult = (event) => {
+      let transcript = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        transcript += event.results[i][0].transcript;
+      }
+      $('#message-input').value = transcript;
+      $('#message-input').style.height = 'auto';
+      $('#message-input').style.height = Math.min($('#message-input').scrollHeight, 150) + 'px';
+    };
+    
+    recognition.onerror = (event) => {
+      console.error('Speech error:', event.error);
+      if (event.error !== 'no-speech') toast('Lỗi Micro: ' + event.error, 'error');
+      stopRecording();
+    };
+    
+    recognition.onend = () => stopRecording();
+  } else {
+    btnVoice.style.display = 'none'; // Ẩn nút nếu trình duyệt không hỗ trợ
+  }
+
+  function stopRecording() {
+    isRecording = false;
+    btnVoice.classList.remove('recording');
+    $('#message-input').placeholder = 'Nhập tin nhắn... (Ctrl+V để dán ảnh)';
+  }
+
+  btnVoice.addEventListener('click', () => {
+    if (!recognition) return;
+    if (isRecording) {
+      recognition.stop();
+    } else {
+      $('#message-input').value = '';
+      recognition.start();
+    }
+  });
 
   // Mode toggle
   $$('.mode-btn').forEach(btn => {
@@ -1805,6 +2135,7 @@ function closeSidebar() {
 // ===== Init =====
 async function init() {
   await loadState();
+  await loadMemory();
   applyTheme();
   setMode(State.mode);
   renderChatList();
