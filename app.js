@@ -284,6 +284,22 @@ function applyTheme() {
   document.body.setAttribute('data-theme', State.settings.theme);
   document.body.style.setProperty('--font-main', State.settings.fontFamily);
   document.body.style.setProperty('--font-size', State.settings.fontSize + 'px');
+  
+  // Light/Dark mode
+  if (State.settings.lightMode) {
+    document.body.classList.add('light-mode');
+    const icon = document.getElementById('theme-icon');
+    if (icon) icon.textContent = 'dark_mode';
+    // Cập nhật meta theme-color cho trình duyệt mobile
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', '#f5f5f7');
+  } else {
+    document.body.classList.remove('light-mode');
+    const icon = document.getElementById('theme-icon');
+    if (icon) icon.textContent = 'light_mode';
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', '#0d0b14');
+  }
 }
 
 // ===== Chat Management =====
@@ -468,27 +484,63 @@ function renderMessages() {
   });
 }
 
+function renderKatex(math, displayMode) {
+  try {
+    if (typeof katex !== 'undefined') {
+      // Decode HTML entities trước khi render (vì đã qua escHtml)
+      const decoded = math.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+      return katex.renderToString(decoded.trim(), {
+        displayMode: displayMode,
+        throwOnError: false,
+        strict: false,
+        trust: true,
+        macros: {
+          '\\R': '\\mathbb{R}',
+          '\\N': '\\mathbb{N}',
+          '\\Z': '\\mathbb{Z}',
+          '\\Q': '\\mathbb{Q}',
+          '\\C': '\\mathbb{C}'
+        }
+      });
+    }
+  } catch(e) {
+    console.warn('KaTeX render error:', e.message);
+  }
+  return null;
+}
+
 function formatMessage(text) {
   if (!text) return '';
   let html = escHtml(text);
 
+  // === PLACEHOLDER SYSTEM ===
+  // KaTeX output chứa các ký tự đặc biệt (*, ^, ~, _, etc.) mà Markdown regex sẽ phá hỏng.
+  // Giải pháp: thay KaTeX output bằng placeholder tạm, xử lý Markdown xong mới khôi phục.
+  const mathPlaceholders = [];
+  function saveMath(html) {
+    const id = mathPlaceholders.length;
+    mathPlaceholders.push(html);
+    return '%%MATH_' + id + '%%';
+  }
+
   // Block math: $$...$$ or \[...\]
   html = html.replace(/(?:\$\$|\\\[)([\s\S]*?)(?:\$\$|\\\])/g, (_, math) => {
-    try {
-      if (typeof katex !== 'undefined') {
-        return '<div class="math-block">' + katex.renderToString(math.trim(), { displayMode: true, throwOnError: false }) + '</div>';
-      }
-    } catch(e) {}
+    const rendered = renderKatex(math, true);
+    if (rendered) return saveMath('<div class="math-block">' + rendered + '</div>');
     return '<div class="math-block"><code>' + math.trim() + '</code></div>';
   });
 
-  // Inline math: $...$ or \(...\)
-  html = html.replace(/(?:\$|\\\()([^\$\n]+?)(?:\$|\\\))/g, (_, math) => {
-    try {
-      if (typeof katex !== 'undefined') {
-        return katex.renderToString(math.trim(), { displayMode: false, throwOnError: false });
-      }
-    } catch(e) {}
+  // Inline math: $...$ — nhưng không bắt $$ (đã xử lý ở trên)
+  html = html.replace(/(?<!\$)\$([^\$\n]+?)\$(?!\$)/g, (_, math) => {
+    const rendered = renderKatex(math, false);
+    if (rendered) return saveMath('<span class="math-inline-rendered">' + rendered + '</span>');
+    return '<code class="math-inline">' + math.trim() + '</code>';
+  });
+
+  // \(...\) inline math
+  html = html.replace(/\\\(([\s\S]*?)\\\)/g, (_, math) => {
+    const rendered = renderKatex(math, false);
+    if (rendered) return saveMath('<span class="math-inline-rendered">' + rendered + '</span>');
     return '<code class="math-inline">' + math.trim() + '</code>';
   });
 
@@ -571,8 +623,13 @@ function formatMessage(text) {
 
   // Line breaks (bỏ qua những cái đã nằm trong HTML tags như bảng)
   html = html.replace(/\n/g, '<br>');
-  // Dọn dẹp lỗi thẻ BR dư thừa bên trong table do line-break
+    // Dọn dẹp lỗi thẻ BR dư thừa bên trong table do line-break
   html = html.replace(/<br>\s*<\/td>/g, '</td>').replace(/<br>\s*<\/th>/g, '</th>').replace(/<br>\s*<tr>/g, '<tr>').replace(/<\/tr>\s*<br>/g, '</tr>').replace(/<br>\s*<table>/g, '<table>').replace(/<\/table>\s*<br>/g, '</table>');
+
+  // === KHÔI PHỤC MATH PLACEHOLDERS ===
+  // Đặt lại toàn bộ KaTeX HTML đã render vào đúng vị trí (sau khi Markdown xử lý xong)
+  html = html.replace(/%%MATH_(\d+)%%/g, (_, id) => mathPlaceholders[parseInt(id)] || '');
+
   return html;
 }
 
@@ -1659,6 +1716,13 @@ function updateModelDisplay() {
 
 // ===== Event Listeners =====
 function initEvents() {
+    // Light/Dark Mode toggle
+  $('#btn-toggle-theme').addEventListener('click', () => {
+    State.settings.lightMode = !State.settings.lightMode;
+    applyTheme();
+    saveState();
+  });
+
   // Sidebar toggle
   $('#btn-toggle-sidebar').addEventListener('click', () => {
     toggleSidebar();

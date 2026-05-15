@@ -16,6 +16,7 @@
     <!-- KaTeX for math rendering -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
     <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
     <link rel="stylesheet" href="styles.css">
     <!-- PDF.js for reading PDF files -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
@@ -102,6 +103,9 @@
                     </div>
                 </div>
                 <div class="top-bar-right">
+                    <button id="btn-toggle-theme" class="btn-icon" title="Chuyển đổi Sáng/Tối">
+                        <span class="material-icons-round" id="theme-icon">light_mode</span>
+                    </button>
                     <button id="btn-export-chat" class="btn-icon" title="Tải xuống đoạn chat (Markdown)">
                         <span class="material-icons-round">download</span>
                     </button>
