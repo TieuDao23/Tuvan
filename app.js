@@ -1881,77 +1881,6 @@ function initEvents() {
     });
   }
 
-  // Tính năng 4: Drag & Drop File (Kéo thả file vào chat)
-  const dragOverlay = $('#drag-drop-overlay');
-  let dragCounter = 0;
-  
-  if (dragOverlay) {
-    window.addEventListener('dragenter', (e) => {
-      e.preventDefault();
-      dragCounter++;
-      dragOverlay.classList.add('active');
-    });
-    
-    window.addEventListener('dragleave', (e) => {
-      e.preventDefault();
-      dragCounter--;
-      if (dragCounter === 0) dragOverlay.classList.remove('active');
-    });
-    
-    window.addEventListener('dragover', (e) => {
-      e.preventDefault(); // Phải có để kích hoạt sự kiện drop
-    });
-    
-    window.addEventListener('drop', (e) => {
-      e.preventDefault();
-      dragCounter = 0;
-      dragOverlay.classList.remove('active');
-      
-      if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-        // Tái sử dụng logic handleFileSelect hiện có
-        handleFilesDropped(e.dataTransfer.files);
-      }
-    });
-  }
-  
-  // Xử lý file drop tương đương input file change
-  async function handleFilesDropped(fileList) {
-    const inputEl = { files: fileList };
-    // Gọi hàm xử lý đã có
-    await window.processFiles(inputEl);
-  }
-
-  // Tính năng 4: Drag & Drop File (Kéo thả file vào chat)
-  const dragOverlay = $('#drag-drop-overlay');
-  let dragCounter = 0;
-  
-  if (dragOverlay) {
-    window.addEventListener('dragenter', (e) => {
-      e.preventDefault();
-      dragCounter++;
-      dragOverlay.classList.add('active');
-    });
-    
-    window.addEventListener('dragleave', (e) => {
-      e.preventDefault();
-      dragCounter--;
-      if (dragCounter === 0) dragOverlay.classList.remove('active');
-    });
-    
-    window.addEventListener('dragover', (e) => {
-      e.preventDefault(); // Phải có để kích hoạt sự kiện drop
-    });
-    
-    window.addEventListener('drop', (e) => {
-      e.preventDefault();
-      dragCounter = 0;
-      dragOverlay.classList.remove('active');
-      
-      if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-        window.processFiles({ files: e.dataTransfer.files });
-      }
-    });
-  }
 
     // New chat
   $('#btn-new-chat').addEventListener('click', () => createChat());
@@ -2093,9 +2022,7 @@ function initEvents() {
   $('#btn-attach-image').addEventListener('click', () => $('#image-input').click());
 
   // Tính năng 4: Drag & Drop File (Giao diện Kéo thả Overlay)
-  const chatArea = $('#chat-area');
-  const inputArea = $('.input-area');
-  const dragOverlay = $('#drag-drop-overlay');
+  const dndOverlay = $('#drag-drop-overlay');
   let dragCounter = 0;
   
   function preventDefaults(e) { e.preventDefault(); e.stopPropagation(); }
@@ -2103,22 +2030,22 @@ function initEvents() {
     window.addEventListener(evt, preventDefaults);
   });
   
-  if (dragOverlay) {
+  if (dndOverlay) {
     window.addEventListener('dragenter', (e) => {
       if (e.dataTransfer && e.dataTransfer.types.includes('Files')) {
         dragCounter++;
-        dragOverlay.classList.add('active');
+        dndOverlay.classList.add('active');
       }
     });
     
     window.addEventListener('dragleave', (e) => {
       dragCounter--;
-      if (dragCounter === 0) dragOverlay.classList.remove('active');
+      if (dragCounter === 0) dndOverlay.classList.remove('active');
     });
     
     window.addEventListener('drop', (e) => {
       dragCounter = 0;
-      dragOverlay.classList.remove('active');
+      dndOverlay.classList.remove('active');
       handleDrop(e);
     });
   }

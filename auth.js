@@ -57,7 +57,7 @@ async function loadFirebaseSDK() {
 
 // ===== Cloud Sync =====
 function cloudSave(immediate = false) {
-  if (!AuthState.isLoggedIn || AuthState.useLocalOnly || !_fb) return;
+  if (!AuthState.isLoggedIn || !_fb) return;
   if (AuthState.syncDebounceTimer) clearTimeout(AuthState.syncDebounceTimer);
 
   const doSave = async () => {
@@ -117,7 +117,7 @@ async function cloudLoad() {
 }
 
 function triggerCloudSync() {
-  if (AuthState.isLoggedIn && !AuthState.useLocalOnly) {
+  if (AuthState.isLoggedIn) {
     cloudSave(false);
     updateSyncIndicator('syncing');
   }
@@ -247,25 +247,6 @@ async function handleLogin() {
   clearAuthErrors();
   if (!email) { showAuthError('login', 'Vui lòng nhập email'); return; }
   if (!pass) { showAuthError('login', 'Vui lòng nhập mật khẩu'); return; }
-
-  // --- DEVELOPER BYPASS CHẾ ĐỘ TEST ---
-  if (email === 'duyanhblt1@gmail.com' && pass === 'Lovesiwen3000@') {
-    setAuthLoading('login', true);
-    setTimeout(() => {
-      AuthState.user = { uid: 'local-admin-123', email: 'duyanhblt1@gmail.com', displayName: 'Sáng tạo giả' };
-      AuthState.isLoggedIn = true;
-      AuthState.isAdmin = true;
-      AuthState.useLocalOnly = true;
-      hideAuthScreen();
-      doAppInit();
-      updateUserDisplay();
-      updateSyncIndicator('offline');
-      if (typeof toast === 'function') toast('Đăng nhập quyền Admin thành công!', 'success');
-      setAuthLoading('login', false);
-    }, 800);
-    return;
-  }
-  // ------------------------------------
 
   if (!_fb) { showAuthError('login', 'Firebase chưa sẵn sàng. Kiểm tra kết nối mạng.'); return; }
 
