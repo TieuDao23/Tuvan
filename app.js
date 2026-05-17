@@ -240,6 +240,8 @@ function saveState() {
         console.error('Lỗi khi lưu trạng thái:', e);
       }
     }
+    // Trigger cloud sync if logged in
+    if (typeof triggerCloudSync === 'function') triggerCloudSync();
   }, 500); // Debounce 500ms để tránh lag UI khi lưu liên tục
 }
 
@@ -323,6 +325,19 @@ function createChat() {
   return chat;
 }
 
+function openRenameChat(id) {
+  const chat = State.chats.find(c => c.id === id);
+  if (!chat) return;
+  State.pendingRenameId = id;
+  $('#rename-input').value = chat.title;
+  openModal('rename-modal');
+  setTimeout(() => {
+    const input = $('#rename-input');
+    input.focus();
+    input.select();
+  }, 100);
+}
+
 function confirmDeleteChat(id) {
   const chat = State.chats.find(c => c.id === id);
   State.pendingDeleteId = id;
@@ -363,23 +378,46 @@ function renderChatList() {
     el.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-muted);font-size:0.82rem;">Chưa có đoạn chat nào</div>';
     return;
   }
-  el.innerHTML = State.chats.map(c => `
+  
+  // Tính năng 2: Search Chats
+  const searchInput = $('#chat-search-input');
+  const query = searchInput ? searchInput.value.trim().toLowerCase() : '';
+  
+  const filteredChats = State.chats.filter(c => c.title.toLowerCase().includes(query));
+
+  if (filteredChats.length === 0) {
+    el.innerHTML = '<div class="chat-item" style="opacity:0.5; justify-content:center; pointer-events:none;">Không tìm thấy</div>';
+    return;
+  }
+  
+  el.innerHTML = filteredChats.map(c => `
     <div class="chat-item ${c.id === State.activeChatId ? 'active' : ''}" data-id="${c.id}">
       <span class="material-icons-round chat-item-icon">chat_bubble</span>
       <div class="chat-item-text">
         <div class="chat-item-title">${escHtml(c.title)}</div>
         <div class="chat-item-date">${new Date(c.createdAt).toLocaleDateString('vi-VN')}</div>
       </div>
-      <button class="chat-item-delete" data-delete="${c.id}" title="Xóa">
-        <span class="material-icons-round" style="font-size:16px;">delete</span>
-      </button>
+      <div class="chat-item-actions">
+        <button class="chat-item-rename" data-rename="${c.id}" title="Đổi tên">
+          <span class="material-icons-round" style="font-size:16px;">edit</span>
+        </button>
+        <button class="chat-item-delete" data-delete="${c.id}" title="Xóa">
+          <span class="material-icons-round" style="font-size:16px;">delete</span>
+        </button>
+      </div>
     </div>
   `).join('');
 
   el.querySelectorAll('.chat-item').forEach(item => {
     item.addEventListener('click', e => {
-      if (e.target.closest('.chat-item-delete')) return;
+      if (e.target.closest('.chat-item-delete') || e.target.closest('.chat-item-rename')) return;
       switchChat(item.dataset.id);
+    });
+  });
+  el.querySelectorAll('.chat-item-rename').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      openRenameChat(btn.dataset.rename);
     });
   });
   el.querySelectorAll('.chat-item-delete').forEach(btn => {
@@ -404,7 +442,7 @@ function renderMessages() {
   welcome.style.display = 'none';
   container.style.display = 'flex';
 
-  container.innerHTML = chat.messages.map((m, idx) => {
+  let htmlContent = chat.messages.map((m, idx) => {
     const isUser = m.role === 'user';
     const userAvatarHtml = State.settings.userAvatar
       ? `<img src="${State.settings.userAvatar}" alt="User">`
@@ -427,24 +465,34 @@ function renderMessages() {
     }
 
     let content = '';
-        if (m.images && m.images.length) {
-      content += m.images.map(img => `<img src="${img}" alt="image">`).join('');
+    // Caching HTML to optimize performance (tối ưu tốc độ render)
+    if (!m.htmlCache || m.content !== m._lastRawContent) {
+      m._lastRawContent = m.content;
+      let formatted = '';
+      if (m.images && m.images.length) {
+        formatted += m.images.map(img => `<img src="${img}" alt="image">`).join('');
+      }
+      if (m.files && m.files.length) {
+        formatted += '<div class="msg-files-container">' + m.files.map(f => {
+          const icon = getFileIcon(f.ext);
+          const sizeStr = f.size < 1024 ? f.size + 'B' : f.size < 1024 * 1024 ? (f.size / 1024).toFixed(1) + 'KB' : (f.size / (1024*1024)).toFixed(1) + 'MB';
+          return `<div class="msg-file-card"><div class="msg-file-icon">${icon}</div><div class="msg-file-info"><div class="msg-file-name">${escHtml(f.name)}</div><div class="msg-file-meta">${sizeStr} • ${f.lang || f.ext.toUpperCase() || 'FILE'}</div></div></div>`;
+        }).join('') + '</div>';
+      }
+      formatted += formatMessage(m.content);
+      m.htmlCache = formatted;
     }
-            if (m.files && m.files.length) {
-      content += '<div class="msg-files-container">' + m.files.map(f => {
-        const icon = getFileIcon(f.ext);
-        const sizeStr = f.size < 1024 ? f.size + 'B' : f.size < 1024 * 1024 ? (f.size / 1024).toFixed(1) + 'KB' : (f.size / (1024*1024)).toFixed(1) + 'MB';
-        return `<div class="msg-file-card"><div class="msg-file-icon">${icon}</div><div class="msg-file-info"><div class="msg-file-name">${escHtml(f.name)}</div><div class="msg-file-meta">${sizeStr} • ${f.lang || f.ext.toUpperCase() || 'FILE'}</div></div></div>`;
-      }).join('') + '</div>';
-    }
-    content += formatMessage(m.content);
+    
+    content += m.htmlCache;
     
     const actionHtml = `
       <div class="message-actions">
         <button class="action-btn" onclick="copyText(decodeURIComponent('${encodeURIComponent(m.content)}'))" title="Sao chép"><span class="material-icons-round">content_copy</span></button>
         ${isUser 
           ? `<button class="action-btn" onclick="editMessage(${idx})" title="Chỉnh sửa"><span class="material-icons-round">edit</span></button>` 
-          : `<button class="action-btn" onclick="reloadMessage(${idx})" title="Tải lại"><span class="material-icons-round">refresh</span></button>`
+          : `<button class="action-btn" onclick="quoteMessage(${idx})" title="Trích dẫn/Trả lời"><span class="material-icons-round">reply</span></button>
+             <button class="action-btn" onclick="readAloud(decodeURIComponent('${encodeURIComponent(m.content)}'))" title="Đọc văn bản"><span class="material-icons-round">volume_up</span></button>
+             <button class="action-btn" onclick="reloadMessage(${idx})" title="Tải lại"><span class="material-icons-round">refresh</span></button>`
         }
         <button class="action-btn delete-btn" onclick="deleteMessage(${idx})" title="Xóa"><span class="material-icons-round">delete_outline</span></button>
       </div>
@@ -468,7 +516,7 @@ function renderMessages() {
 
   // Show typing indicator if this chat is currently generating
   if (State.generatingChatId === chat.id && State.isGenerating) {
-    container.innerHTML += `
+    htmlContent += `
       <div class="message assistant" id="restore-typing">
         <div class="message-avatar"><img src="assets/avatar.png" alt="Suna"></div>
         <div class="message-content">
@@ -477,6 +525,8 @@ function renderMessages() {
         </div>
       </div>`;
   }
+
+  container.innerHTML = htmlContent;
 
   requestAnimationFrame(() => {
     const chatArea = $('#chat-area');
@@ -996,10 +1046,6 @@ function getProxyForModel(model) {
 }
 
 // ===== Vision Fallback System =====
-const VISION_FALLBACK_PROXY = {
-  baseUrl: 'https://gcli.ggchan.dev/v1',
-  apiKey: 'gg-gcli-ISYgoJBO77zC7DrfkpDPx9XxaNPmqtilFKGto2OhejQ'
-};
 const VISION_MODEL = 'gemini-3.1-pro-preview';
 
 // Compress image to reduce payload size (critical for web/mobile)
@@ -1026,14 +1072,16 @@ function compressImage(dataUrl, maxSize = 1024, quality = 0.65) {
 }
 
 // Find ALL vision-capable models from user's fetched model list
+const VISION_PATTERNS = ['gemini', 'gpt-4o', 'gpt-4-turbo', 'gpt-4.1', 'claude-3', 'claude-sonnet', 'claude-opus', 'llava', 'vision', 'qwen-vl', 'qwen2-vl', 'pixtral', 'internvl', 'glm-4v', 'yi-vision'];
+
+function isVisionModel(modelName) {
+  if (!modelName) return false;
+  const lower = modelName.toLowerCase();
+  return VISION_PATTERNS.some(p => lower.includes(p));
+}
+
 function findUserVisionModels() {
-  const patterns = ['gemini', 'gpt-4o', 'gpt-4-turbo', 'gpt-4.1', 'claude-3', 'claude-sonnet', 'claude-opus', 'llava', 'vision', 'qwen-vl', 'qwen2-vl', 'pixtral', 'internvl', 'glm-4v', 'yi-vision'];
-  const found = [];
-  for (const model of State.models) {
-    const lower = model.toLowerCase();
-    if (patterns.some(p => lower.includes(p))) found.push(model);
-  }
-  return found;
+  return State.models.filter(model => isVisionModel(model));
 }
 
 // Common vision models to brute-force try on user's proxy
@@ -1075,13 +1123,7 @@ function getVisionConfigs() {
     }
   }
 
-  // Priority 4: hardcoded fallback WITH cors proxy for web
-  const isWeb = typeof location !== 'undefined' && location.protocol.startsWith('http');
-  if (isWeb) {
-    configs.push({ model: VISION_MODEL, baseUrl: VISION_FALLBACK_PROXY.baseUrl, apiKey: VISION_FALLBACK_PROXY.apiKey, corsWrap: true });
-  } else {
-    configs.push({ model: VISION_MODEL, baseUrl: VISION_FALLBACK_PROXY.baseUrl, apiKey: VISION_FALLBACK_PROXY.apiKey });
-  }
+
   return configs;
 }
 
@@ -1351,18 +1393,19 @@ async function generateAIResponse() {
   // Build API messages
   const systemPrompt = buildSystemPrompt();
 
-    // --- Pre-describe images with vision model (TỐI ƯU: chỉ phân tích ảnh CHƯA CÓ description) ---
-  const hasImages = chat.messages.some(m => m.role === 'user' && m.images && m.images.length > 0);
-  if (hasImages) {
-    const typingTextEl = typingEl.querySelector('.typing-text');
-    // Chỉ lấy những tin nhắn CẦN phân tích (chưa có visionDescription)
-    const msgsNeedVision = chat.messages.filter(m => 
-      m.role === 'user' && m.images && m.images.length && !m.visionDescription
-    );
-    if (msgsNeedVision.length > 0) {
+    // --- TỐI ƯU TỐC ĐỘ: Pre-describe images --- 
+    const hasImages = chat.messages.some(m => m.role === 'user' && m.images && m.images.length > 0);
+    const isCurrentVision = isVisionModel(model);
+    
+    // Hàm xử lý ảnh (chỉ gọi khi thật sự cần)
+    const runVisionTaskIfNeeded = async () => {
+      const msgsNeedVision = chat.messages.filter(m => m.role === 'user' && m.images && m.images.length && !m.visionDescription);
+      if (msgsNeedVision.length === 0) return;
+      
+      const typingTextEl = typingEl.querySelector('.typing-text');
       if (typingTextEl) typingTextEl.textContent = 'Đang phân tích ảnh...';
+      
       try {
-        // Song song hóa: phân tích nhiều ảnh cùng lúc (tối đa 3 concurrent)
         const CONCURRENT_LIMIT = 3;
         for (let i = 0; i < msgsNeedVision.length; i += CONCURRENT_LIMIT) {
           const batch = msgsNeedVision.slice(i, i + CONCURRENT_LIMIT);
@@ -1372,20 +1415,22 @@ async function generateAIResponse() {
           results.forEach((result, idx) => {
             if (result.status === 'fulfilled' && result.value) {
               batch[idx].visionDescription = result.value;
-                        } else {
-              // KHÔNG set visionDescription khi fail → để fallback gửi image_url trực tiếp cho model chính
+            } else {
               console.warn('Vision failed for message:', result.reason?.message);
             }
           });
         }
         saveState();
       } catch (visionErr) {
-        console.error('Vision pre-describe failed:', visionErr);
-        toast('Lỗi phân tích ảnh: ' + visionErr.message, 'error');
+        console.error('Vision task error:', visionErr);
       }
       if (typingTextEl) typingTextEl.textContent = 'Đang suy nghĩ...';
+    };
+
+    // Nếu model hiện tại là text-only, bắt buộc phải phân tích ảnh trước khi gửi API
+    if (hasImages && !isCurrentVision) {
+      await runVisionTaskIfNeeded();
     }
-  }
 
     // --- Build API messages with both vision descriptions AND image_url ---
   const apiMessages = [];
@@ -1481,6 +1526,9 @@ async function generateAIResponse() {
     // --- Fallback: if HTTP error AND has images, retry text-only (no image_url) ---
     if ((!res || !res.ok) && hasImages) {
       console.log('Retrying with text-only messages (removing image_url)...');
+      // Vì model chính thất bại với ảnh, ta cần mượn fallback model để dịch ảnh ra chữ trước khi thử lại
+      await runVisionTaskIfNeeded();
+      
       const textOnlyMessages = buildTextOnlyMessages(chat, systemPrompt);
       const retry = await makeApiRequest(textOnlyMessages);
       res = retry.res;
@@ -1525,18 +1573,20 @@ async function generateAIResponse() {
           const parsed = JSON.parse(data);
           const delta = parsed.choices?.[0]?.delta?.content;
           if (delta) {
+            assistantContent += delta;
             if (!typingRemoved) {
               typingRemoved = true;
-              if (isStillActiveChat()) {
-                if (typingEl.parentNode) typingEl.remove();
-                // Also remove the restored typing indicator from renderMessages
+              if (typingEl.parentNode) typingEl.remove();
+            }
+
+            if (isStillActiveChat()) {
+              // Phục hồi kết nối DOM nếu user chuyển chat qua lại
+              if (!assistantEl.parentNode) {
                 const restoreTyping = document.getElementById('restore-typing');
                 if (restoreTyping) restoreTyping.remove();
                 container.appendChild(assistantEl);
               }
-            }
-                        assistantContent += delta;
-            if (isStillActiveChat()) {
+
               // TỐI ƯU: Throttle render để tránh lag UI khi streaming nhanh
               if (!bubbleEl._renderPending) {
                 bubbleEl._renderPending = true;
@@ -1554,11 +1604,14 @@ async function generateAIResponse() {
       }
     }
 
-    if (!typingRemoved && isStillActiveChat()) {
+    if (isStillActiveChat()) {
       if (typingEl.parentNode) typingEl.remove();
       const restoreTyping = document.getElementById('restore-typing');
       if (restoreTyping) restoreTyping.remove();
-      container.appendChild(assistantEl);
+      if (!assistantEl.parentNode && assistantContent) {
+        container.appendChild(assistantEl);
+        bubbleEl.innerHTML = formatMessage(assistantContent);
+      }
     }
 
     chat.messages.push({ role: 'assistant', content: assistantContent, timestamp: Date.now() });
@@ -1660,6 +1713,61 @@ window.copyText = function(text) {
   }
 };
 
+// Tính năng 1: Text-to-Speech (Đọc văn bản)
+window.readAloud = function(text) {
+  if (!window.speechSynthesis) return toast('Trình duyệt không hỗ trợ đọc văn bản', 'error');
+  // Xóa bỏ các ký tự Markdown trước khi đọc để giọng đọc tự nhiên hơn
+  const plainText = text.replace(/[*_#`~>]/g, '').replace(/\[.*?\]\(.*?\)/g, '');
+  
+  if (window.speechSynthesis.speaking) {
+    window.speechSynthesis.cancel();
+    return;
+  }
+  const utterance = new SpeechSynthesisUtterance(plainText);
+  utterance.lang = 'vi-VN';
+  utterance.rate = 1.05; // Đọc nhanh hơn một chút xíu cho tự nhiên
+  window.speechSynthesis.speak(utterance);
+  toast('Đang đọc văn bản...', 'info');
+};
+
+// Tính năng 5: Quote / Trích dẫn tin nhắn
+window.quoteMessage = function(idx) {
+  const chat = getActiveChat();
+  if (!chat || !chat.messages[idx]) return;
+  const content = chat.messages[idx].content;
+  // Lấy tối đa 150 ký tự để trích dẫn cho gọn
+  const snippet = content.length > 150 ? content.substring(0, 150) + '...' : content;
+  const input = $('#chat-input');
+  
+  if (input) {
+    const quoteText = `> ${snippet.replace(/\n/g, '\n> ')}\n\n`;
+    input.value = quoteText + input.value;
+    input.focus();
+    // Tự động điều chỉnh chiều cao input
+    input.style.height = 'auto';
+    input.style.height = (input.scrollHeight) + 'px';
+  }
+};
+
+// Tính năng 5: Quote / Trích dẫn tin nhắn
+window.quoteMessage = function(idx) {
+  const chat = getActiveChat();
+  if (!chat || !chat.messages[idx]) return;
+  const content = chat.messages[idx].content;
+  // Lấy tối đa 150 ký tự để trích dẫn cho gọn
+  const snippet = content.length > 150 ? content.substring(0, 150) + '...' : content;
+  const input = $('#chat-input');
+  
+  if (input) {
+    const quoteText = `> ${snippet.replace(/\n/g, '\n> ')}\n\n`;
+    input.value = quoteText + input.value;
+    input.focus();
+    // Tự động điều chỉnh chiều cao input
+    input.style.height = 'auto';
+    input.style.height = (input.scrollHeight) + 'px';
+  }
+};
+
 // ===== Particles Effect =====
 let _particleInterval = null;
 function initParticles() {
@@ -1747,6 +1855,103 @@ function initEvents() {
   $('#sidebar-overlay').addEventListener('click', () => {
     closeSidebar();
   });
+
+  // Tính năng 2: Chat Search (Tìm kiếm)
+  const searchInput = $('#chat-search-input');
+  if (searchInput) {
+    searchInput.addEventListener('input', () => {
+      renderChatList();
+    });
+  }
+
+  // Tính năng 3: Scroll to Bottom (Cuộn xuống)
+  const chatArea = $('#chat-area');
+  const btnScroll = $('#btn-scroll-bottom');
+  if (chatArea && btnScroll) {
+    chatArea.addEventListener('scroll', () => {
+      // Nếu cách đáy hơn 300px thì hiện nút
+      if (chatArea.scrollHeight - chatArea.scrollTop - chatArea.clientHeight > 300) {
+        btnScroll.classList.add('show');
+      } else {
+        btnScroll.classList.remove('show');
+      }
+    });
+    btnScroll.addEventListener('click', () => {
+      chatArea.scrollTo({ top: chatArea.scrollHeight, behavior: 'smooth' });
+    });
+  }
+
+  // Tính năng 4: Drag & Drop File (Kéo thả file vào chat)
+  const dragOverlay = $('#drag-drop-overlay');
+  let dragCounter = 0;
+  
+  if (dragOverlay) {
+    window.addEventListener('dragenter', (e) => {
+      e.preventDefault();
+      dragCounter++;
+      dragOverlay.classList.add('active');
+    });
+    
+    window.addEventListener('dragleave', (e) => {
+      e.preventDefault();
+      dragCounter--;
+      if (dragCounter === 0) dragOverlay.classList.remove('active');
+    });
+    
+    window.addEventListener('dragover', (e) => {
+      e.preventDefault(); // Phải có để kích hoạt sự kiện drop
+    });
+    
+    window.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dragCounter = 0;
+      dragOverlay.classList.remove('active');
+      
+      if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        // Tái sử dụng logic handleFileSelect hiện có
+        handleFilesDropped(e.dataTransfer.files);
+      }
+    });
+  }
+  
+  // Xử lý file drop tương đương input file change
+  async function handleFilesDropped(fileList) {
+    const inputEl = { files: fileList };
+    // Gọi hàm xử lý đã có
+    await window.processFiles(inputEl);
+  }
+
+  // Tính năng 4: Drag & Drop File (Kéo thả file vào chat)
+  const dragOverlay = $('#drag-drop-overlay');
+  let dragCounter = 0;
+  
+  if (dragOverlay) {
+    window.addEventListener('dragenter', (e) => {
+      e.preventDefault();
+      dragCounter++;
+      dragOverlay.classList.add('active');
+    });
+    
+    window.addEventListener('dragleave', (e) => {
+      e.preventDefault();
+      dragCounter--;
+      if (dragCounter === 0) dragOverlay.classList.remove('active');
+    });
+    
+    window.addEventListener('dragover', (e) => {
+      e.preventDefault(); // Phải có để kích hoạt sự kiện drop
+    });
+    
+    window.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dragCounter = 0;
+      dragOverlay.classList.remove('active');
+      
+      if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        window.processFiles({ files: e.dataTransfer.files });
+      }
+    });
+  }
 
     // New chat
   $('#btn-new-chat').addEventListener('click', () => createChat());
@@ -1883,28 +2088,40 @@ function initEvents() {
     }
   });
 
-    // File attachments
+  // File attachments
   $('#btn-attach-file').addEventListener('click', () => $('#file-input').click());
   $('#btn-attach-image').addEventListener('click', () => $('#image-input').click());
 
-  // Drag & Drop support
+  // Tính năng 4: Drag & Drop File (Giao diện Kéo thả Overlay)
   const chatArea = $('#chat-area');
   const inputArea = $('.input-area');
+  const dragOverlay = $('#drag-drop-overlay');
+  let dragCounter = 0;
   
   function preventDefaults(e) { e.preventDefault(); e.stopPropagation(); }
   ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(evt => {
-    chatArea.addEventListener(evt, preventDefaults);
-    inputArea.addEventListener(evt, preventDefaults);
+    window.addEventListener(evt, preventDefaults);
   });
   
-  ['dragenter', 'dragover'].forEach(evt => {
-    chatArea.addEventListener(evt, () => chatArea.classList.add('drag-over'));
-    inputArea.addEventListener(evt, () => inputArea.classList.add('drag-over'));
-  });
-  ['dragleave', 'drop'].forEach(evt => {
-    chatArea.addEventListener(evt, () => chatArea.classList.remove('drag-over'));
-    inputArea.addEventListener(evt, () => inputArea.classList.remove('drag-over'));
-  });
+  if (dragOverlay) {
+    window.addEventListener('dragenter', (e) => {
+      if (e.dataTransfer && e.dataTransfer.types.includes('Files')) {
+        dragCounter++;
+        dragOverlay.classList.add('active');
+      }
+    });
+    
+    window.addEventListener('dragleave', (e) => {
+      dragCounter--;
+      if (dragCounter === 0) dragOverlay.classList.remove('active');
+    });
+    
+    window.addEventListener('drop', (e) => {
+      dragCounter = 0;
+      dragOverlay.classList.remove('active');
+      handleDrop(e);
+    });
+  }
   
   async function handleDrop(e) {
     const files = Array.from(e.dataTransfer?.files || []);
@@ -1920,7 +2137,7 @@ function initEvents() {
           const compressed = await compressImage(dataUrl, 1280, 0.8);
           addPendingImage(compressed);
         } catch (err) { toast(`Lỗi ảnh: ${err.message}`, 'error'); }
-            } else {
+      } else {
         // Text/document file
         const validation = validateFile(file, MAX_FILE_SIZE);
         if (!validation.valid) { toast(validation.error, 'error'); continue; }
@@ -1939,10 +2156,8 @@ function initEvents() {
       }
     }
   }
-  chatArea.addEventListener('drop', handleDrop);
-  inputArea.addEventListener('drop', handleDrop);
 
-        $('#file-input').addEventListener('change', async e => {
+  $('#file-input').addEventListener('change', async e => {
     const file = e.target.files[0];
     if (!file) return;
     const validation = validateFile(file, MAX_FILE_SIZE);
@@ -2110,6 +2325,32 @@ function initEvents() {
     e.target.value = '';
   });
 
+    // Rename chat
+  $('#btn-confirm-rename').addEventListener('click', () => {
+    const newTitle = $('#rename-input').value.trim();
+    if (newTitle && State.pendingRenameId) {
+      const chat = State.chats.find(c => c.id === State.pendingRenameId);
+      if (chat) {
+        chat.title = newTitle;
+        saveState();
+        renderChatList();
+        toast('Đã đổi tên đoạn chat', 'success');
+      }
+    }
+    State.pendingRenameId = null;
+    closeModal('rename-modal');
+  });
+  $('#btn-cancel-rename').addEventListener('click', () => {
+    State.pendingRenameId = null;
+    closeModal('rename-modal');
+  });
+  $('#rename-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      $('#btn-confirm-rename').click();
+    }
+  });
+
   // Delete confirmation
   $('#btn-confirm-delete').addEventListener('click', () => {
     if (State.pendingDeleteId) {
@@ -2225,8 +2466,6 @@ function closeSidebar() {
 
 // ===== Init =====
 async function init() {
-  await loadState();
-  await loadMemory();
   applyTheme();
   setMode(State.mode);
   renderChatList();
@@ -2234,6 +2473,7 @@ async function init() {
   updateModelDisplay();
   initEvents();
   initParticles();
+  updateUserDisplay();
 
   // Start with sidebar collapsed on mobile
   if (isMobile()) {
@@ -2250,5 +2490,35 @@ async function init() {
   });
 }
 
-document.addEventListener('DOMContentLoaded', init);
+// ===== onUserSignedIn callback (called by auth.js after successful login) =====
+function onUserSignedIn() {
+  // Re-run app initialization sequence with cloud data
+  applyTheme();
+  setMode(State.mode);
+  renderChatList();
+  renderMessages();
+  updateModelDisplay();
+  initParticles();
+}
+
+
+document.addEventListener('DOMContentLoaded', async () => {
+  // 1. Load local state
+  await loadState();
+  await loadMemory();
+
+  // 2. Auth flow
+  if (typeof initAuth === 'function') {
+    initAuthEvents();
+    await initAuth();
+    // Nếu đã đăng nhập, auth.js đã gọi doAppInit() → init()
+    // Nếu chưa đăng nhập, auth screen đang hiện, chờ user login
+  } else {
+    init(); // No auth module
+  }
+});
+
+
+
+
 
