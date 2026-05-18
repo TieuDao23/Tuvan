@@ -25,6 +25,13 @@
         pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
       }
     </script>
+    <!-- Mermaid cho Sơ đồ tư duy -->
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+    <script>
+        if (typeof mermaid !== 'undefined') {
+            mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'loose' });
+        }
+    </script>
 </head>
 
 <body>
@@ -122,6 +129,11 @@
                             </svg>
                             <span>Tiếp tục với Google</span>
                         </button>
+
+                        <button type="button" class="btn-auth-guest" style="margin-top: 10px; background: rgba(255,255,255,0.05); color: #aaa; border: 1px solid rgba(255,255,255,0.1);">
+                            <span class="material-icons-round" style="font-size: 18px; margin-right: 8px;">person_outline</span>
+                            <span>Dùng thử không cần tài khoản</span>
+                        </button>
                     </form>
 
                     <!-- REGISTER FORM -->
@@ -182,13 +194,18 @@
                             </svg>
                             <span>Đăng ký với Google</span>
                         </button>
+
+                        <button type="button" class="btn-auth-guest" style="margin-top: 10px; background: rgba(255,255,255,0.05); color: #aaa; border: 1px solid rgba(255,255,255,0.1);">
+                            <span class="material-icons-round" style="font-size: 18px; margin-right: 8px;">person_outline</span>
+                            <span>Dùng thử không cần tài khoản</span>
+                        </button>
                     </form>
                 </div>
             </div>
         </div>
 
         <!-- Auth Loading Overlay -->
-        <div id="auth-loading" class="auth-loading" style="display:none;">
+        <div id="auth-loading" class="auth-loading" style="display:flex;">
             <div class="auth-loading-inner">
                 <div class="auth-loading-spinner"></div>
                 <p>Đang tải dữ liệu của bạn...</p>
@@ -244,17 +261,18 @@
                 <div id="chat-list" class="chat-list"></div>
             </div>
 
-            <!-- Sidebar User Info -->
-            <div id="sidebar-user-info" class="sidebar-user-info"></div>
-
             <!-- Sidebar Footer -->
             <div class="sidebar-footer">
                 <button id="btn-settings" class="sidebar-footer-btn" title="Cài đặt">
                     <span class="material-icons-round">settings</span>
                     <span>Cài đặt</span>
                 </button>
+                <button id="btn-memory" class="sidebar-footer-btn" title="Quản lý Trí nhớ AI">
+                    <span style="font-size: 1.2rem;">🌸</span>
+                    <span>Trí nhớ Suna</span>
+                </button>
                 <button id="btn-personality" class="sidebar-footer-btn" title="Tính cách AI">
-                    <span class="material-icons-round">psychology</span>
+                    <span style="font-size: 1.2rem;">🌿</span>
                     <span>Tính cách</span>
                 </button>
             </div>
@@ -278,6 +296,16 @@
                     </div>
                 </div>
                 <div class="top-bar-right">
+                    <!-- User Profile Dropdown -->
+                    <div class="top-user-profile" style="position: relative;">
+                        <button id="btn-user-menu" class="btn-icon" title="Tài khoản" onclick="document.getElementById('user-dropdown').classList.toggle('active')">
+                            <span class="material-icons-round">account_circle</span>
+                        </button>
+                        <div id="user-dropdown" class="user-dropdown">
+                            <div id="sidebar-user-info" class="sidebar-user-info"></div>
+                        </div>
+                    </div>
+                    
                     <!-- Sync Indicator -->
                     <div id="sync-indicator" class="sync-indicator offline" title="Chưa đăng nhập">
                         <span class="material-icons-round">cloud_off</span>
@@ -338,6 +366,16 @@
 
             <!-- Input Area -->
             <div class="input-area">
+                <div class="input-tools-bar">
+                    <button id="btn-web-search" class="tool-chip" title="Tìm kiếm thông tin thực tế từ Internet">
+                        <span class="material-icons-round" id="web-search-icon">public</span>
+                        <span id="web-search-text">Web Search</span>
+                    </button>
+                    <button id="btn-translator-mode" class="tool-chip" title="Mở chế độ phiên dịch viên">
+                        <span class="material-icons-round">translate</span>
+                        <span>Dịch trực tiếp</span>
+                    </button>
+                </div>
                 <div class="input-container">
                     <div class="input-actions-left">
                         <button id="btn-voice" class="btn-input-action" title="Nhập bằng giọng nói (Micro)">
@@ -574,11 +612,84 @@
         </div>
     </div>
 
+    <!-- Memory Cabinet Modal -->
+    <div id="memory-modal" class="modal-overlay" style="display:none;">
+        <div class="modal memory-modal" style="max-width: 600px;">
+            <div class="modal-header">
+                <h2><span class="material-icons-round" style="color:#f093fb;">psychology_alt</span> Tủ trí nhớ Suna</h2>
+                <button class="btn-close-modal" data-close="memory-modal"><span class="material-icons-round">close</span></button>
+            </div>
+            <div class="modal-body">
+                <p class="settings-desc">Suna sẽ tự động ghi nhớ các thông tin quan trọng về bạn để cuộc trò chuyện cá nhân hóa hơn. Bạn có thể quản lý chúng tại đây.</p>
+                <div class="memory-input-group" style="display:flex; gap:10px; margin-bottom:15px;">
+                    <input type="text" id="new-memory-input" class="settings-input" placeholder="Ví dụ: Tôi thích ăn phở, tôi nuôi 1 chú chó tên Lu...">
+                    <button id="btn-add-memory" class="btn-primary" style="white-space:nowrap;"><span class="material-icons-round">add</span> Thêm</button>
+                </div>
+                <div id="memory-list" class="memory-list">
+                    <!-- Memory facts will be rendered here -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Translator Mode Modal -->
+    <div id="translator-modal" class="modal-overlay" style="display:none;">
+        <div class="modal translator-modal" style="max-width: 700px;">
+            <div class="modal-header">
+                <h2><span class="material-icons-round" style="color:#4facfe;">translate</span> Phiên dịch viên AI thời gian thực</h2>
+                <button class="btn-close-modal" data-close="translator-modal"><span class="material-icons-round">close</span></button>
+            </div>
+            <div class="modal-body" style="padding: 0;">
+                <div class="translator-container">
+                    <div class="translator-pane source-pane">
+                        <div class="lang-selector">
+                            <span class="lang-flag">🇻🇳</span> Tiếng Việt
+                        </div>
+                        <div class="translator-text" id="translator-source-text">Nhấn vào mic để nói...</div>
+                        <button class="btn-translator-mic" id="btn-mic-vi"><span class="material-icons-round">mic</span></button>
+                    </div>
+                    <div class="translator-divider">
+                        <span class="material-icons-round">sync_alt</span>
+                    </div>
+                    <div class="translator-pane target-pane">
+                        <div class="lang-selector">
+                            <select id="translator-target-lang" class="settings-select" style="background:transparent; border:none; color:white; font-weight:bold; font-size:16px;">
+                                <option value="en">🇬🇧 Tiếng Anh</option>
+                                <option value="ja">🇯🇵 Tiếng Nhật</option>
+                                <option value="zh">🇨🇳 Tiếng Trung</option>
+                                <option value="ko">🇰🇷 Tiếng Hàn</option>
+                                <option value="es">🇪🇸 Tiếng Tây Ban Nha</option>
+                                <option value="fr">🇫🇷 Tiếng Pháp</option>
+                            </select>
+                        </div>
+                        <div class="translator-text" id="translator-target-text">Bản dịch sẽ hiển thị ở đây...</div>
+                        <button class="btn-translator-mic" id="btn-mic-target"><span class="material-icons-round">mic</span></button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Artifacts / Code Preview Panel -->
+    <div id="artifacts-panel" class="artifacts-panel">
+        <div class="artifacts-header">
+            <div class="artifacts-title"><span class="material-icons-round">code</span> <span id="artifact-title">Live Workspace</span></div>
+            <div class="artifacts-actions">
+                <button id="btn-refresh-artifact" class="btn-icon" title="Tải lại"><span class="material-icons-round">refresh</span></button>
+                <button id="btn-close-artifact" class="btn-icon"><span class="material-icons-round">close</span></button>
+            </div>
+        </div>
+        <div class="artifacts-content">
+            <iframe id="artifact-iframe" sandbox="allow-scripts allow-same-origin" style="width:100%; height:100%; border:none; background:white;"></iframe>
+        </div>
+    </div>
+
     <!-- Toast Container -->
     <div id="toast-container" class="toast-container"></div>
 
-    <script src="auth.js?v=4"></script>
-    <script src="app.js?v=4"></script>
+    <script src="auth.js?v=5"></script>
+    <script src="features.js?v=5"></script>
+    <script src="app.js?v=5"></script>
 </body>
 
 </html>

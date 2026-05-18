@@ -25,6 +25,9 @@ const State = {
   }
 };
 
+window.State = State;
+window.saveMemory = saveMemory;
+
 // ===== AI Memory System =====
 const MEMORY_CATEGORIES = {
   identity: '👤 Danh tính',
@@ -280,6 +283,7 @@ function toast(msg, type = 'info') {
   $('#toast-container').appendChild(t);
   setTimeout(() => t.remove(), 3000);
 }
+window.toast = toast;
 
 // ===== Theme =====
 function applyTheme() {
@@ -478,6 +482,11 @@ function renderMessages() {
           const sizeStr = f.size < 1024 ? f.size + 'B' : f.size < 1024 * 1024 ? (f.size / 1024).toFixed(1) + 'KB' : (f.size / (1024*1024)).toFixed(1) + 'MB';
           return `<div class="msg-file-card"><div class="msg-file-icon">${icon}</div><div class="msg-file-info"><div class="msg-file-name">${escHtml(f.name)}</div><div class="msg-file-meta">${sizeStr} • ${f.lang || f.ext.toUpperCase() || 'FILE'}</div></div></div>`;
         }).join('') + '</div>';
+        
+        // Feature: Interactive Document Analyzer
+        if (isUser) {
+          formatted += `<button class="btn-analyze-doc" onclick="analyzeDocument('${m.files[0].name}')"><span class="material-icons-round">analytics</span> Phân tích tài liệu</button>`;
+        }
       }
       formatted += formatMessage(m.content);
       m.htmlCache = formatted;
@@ -530,7 +539,16 @@ function renderMessages() {
 
   requestAnimationFrame(() => {
     const chatArea = $('#chat-area');
-    chatArea.scrollTop = chatArea.scrollHeight;
+    // Smart auto-scroll: Only scroll to bottom if not generating, or if already near bottom
+    const isNearBottom = chatArea.scrollHeight - chatArea.scrollTop - chatArea.clientHeight < 150;
+    if (!State.isGenerating || isNearBottom) {
+      chatArea.scrollTop = chatArea.scrollHeight;
+    }
+    
+    // Khởi tạo Mermaid Diagrams nếu có
+    if (window.mermaid && document.querySelector('.mermaid')) {
+      try { window.mermaid.init(undefined, document.querySelectorAll('.mermaid')); } catch(e){}
+    }
   });
 }
 
@@ -594,15 +612,29 @@ function formatMessage(text) {
     return '<code class="math-inline">' + math.trim() + '</code>';
   });
 
-    // Code blocks with language (Hỗ trợ các ngôn ngữ đặc biệt như c++, c#, html)
+  // Code blocks with language (Hỗ trợ các ngôn ngữ đặc biệt như c++, c#, html)
   html = html.replace(/```([^\n]*)\n([\s\S]*?)```/g, (_, lang, code) => {
-    const cleanLang = lang.trim();
-    const label = cleanLang ? `<div class="code-lang">${cleanLang}</div>` : '';
+    const cleanLang = lang.trim().toLowerCase();
     const safeCode = encodeURIComponent(code);
+    
+    // Feature: Mermaid Diagram
+    if (cleanLang === 'mermaid') {
+      return `<div class="mermaid-wrapper"><div class="mermaid">${code}</div></div>`;
+    }
+    
+    // Feature: Live Artifacts Preview (HTML/SVG)
+    let artifactBtn = '';
+    if (cleanLang === 'html' || cleanLang === 'svg' || cleanLang.includes('xml') || cleanLang === 'javascript') {
+      const b64 = btoa(unescape(encodeURIComponent(code))); // Safe base64 for HTML
+      artifactBtn = `<button class="btn-preview-artifact" onclick="window.openArtifact(decodeURIComponent(escape(atob('${b64}'))))"><span class="material-icons-round">play_arrow</span> Xem trước (Live Preview)</button>`;
+    }
+
+    const label = cleanLang ? `<div class="code-lang">${cleanLang}</div>` : '';
     return `<div class="code-block-wrapper">
               ${label}
               <button class="btn-copy-code" onclick="copyText(decodeURIComponent('${safeCode}'))" title="Sao chép code"><span class="material-icons-round">content_copy</span></button>
               <pre><code>${code}</code></pre>
+              ${artifactBtn}
             </div>`;
   });
   // Inline code
@@ -634,9 +666,25 @@ function formatMessage(text) {
 
   // Unordered lists (lines starting with - or *)
   html = html.replace(/(?:^|\n)((?:[-*] .+\n?)+)/g, (match, listBlock) => {
-    const items = listBlock.trim().split('\n').map(line =>
-      '<li>' + line.replace(/^[-*] /, '') + '</li>'
-    ).join('');
+    const items = listBlock.trim().split('\n').map(line => {
+      let content = line.replace(/^[-*] /, '');
+      // Feature: Interactive Dashboard Planner
+      if (content.startsWith('[ ] ')) {
+        return `<div class="task-item" onclick="this.classList.toggle('completed')">
+                  <div class="task-checkbox"><span class="material-icons-round">check</span></div>
+                  <div class="task-text">${content.substring(4)}</div>
+                </div>`;
+      } else if (content.startsWith('[x] ') || content.startsWith('[X] ')) {
+        return `<div class="task-item completed" onclick="this.classList.toggle('completed')">
+                  <div class="task-checkbox"><span class="material-icons-round">check</span></div>
+                  <div class="task-text">${content.substring(4)}</div>
+                </div>`;
+      }
+      return '<li>' + content + '</li>';
+    }).join('');
+    
+    // If the list contains task items, wrap in a div instead of ul to avoid bullet points
+    if (items.includes('task-item')) return '<div class="msg-tasks">' + items + '</div>';
     return '<ul class="msg-list">' + items + '</ul>';
   });
 
@@ -1255,7 +1303,24 @@ function buildSystemPrompt() {
   parts.push(`[TƯ DUY]: Đọc kỹ lịch sử hội thoại. Hiểu ngữ cảnh và ý định thực sự. Nếu câu hỏi mơ hồ, suy luận từ ngữ cảnh. Ưu tiên: chính xác, hữu ích. Không từ chối giúp đỡ khi có thể.`);
   
   parts.push('[HÌNH ẢNH]: Bạn CÓ khả năng nhìn và phân tích hình ảnh. Khi người dùng gửi ảnh, hãy trực tiếp phân tích. KHÔNG nói rằng bạn không thể xem ảnh. Đọc chữ (OCR) trong ảnh nếu có.');
-  
+
+  // Memory
+  if (State.memory && State.memory.facts && State.memory.facts.length > 0) {
+    parts.push(`[TRÍ NHỚ AI]: Bạn phải ghi nhớ các thông tin sau về người dùng để cá nhân hóa:\n- ${State.memory.facts.join('\n- ')}`);
+  }
+
+  // Web Search
+  if (State.webSearchEnabled) {
+    parts.push(`[WEB SEARCH]: Tính năng tìm kiếm đang BẬT. Khi người dùng hỏi thông tin thời sự, giá cả, thời tiết hoặc kiến thức mới nhất, hãy giả định bạn có quyền truy cập Internet và tự tin cung cấp câu trả lời tốt nhất dựa trên kiến thức hiện tại của bạn. KHÔNG BAO GIỜ nói "tôi không có quyền truy cập internet".`);
+  }
+
+  // Formatting & Premium features
+  parts.push(`[ĐỊNH DẠNG ĐẶC BIỆT]:
+1. [Sơ đồ tư duy]: Nếu người dùng yêu cầu vẽ sơ đồ hoặc mind map, hãy trả về CHỈ mã \`\`\`mermaid ... \`\`\` hợp lệ. KHÔNG giải thích dài dòng.
+2. [Giao diện/Live Workspace]: Nếu yêu cầu thiết kế giao diện web, vẽ SVG, hoặc lập trình Front-end (HTML/CSS/JS), hãy trả về MỘT khối \`\`\`html ... \`\`\` HOẶC \`\`\`svg ... \`\`\` duy nhất, bao gồm đầy đủ CSS/JS bên trong để có thể chạy được (Live Preview).
+3. [Kế hoạch/Task List]: Khi lập lịch trình, lộ trình học, to-do list, hãy sử dụng Markdown Checklist định dạng \`- [ ] \` để hệ thống tự động render thành Interactive Dashboard Planner.
+4. [Tài liệu]: Nếu người dùng đính kèm tài liệu, hãy sử dụng tính năng "Phân tích tài liệu" (Document Analyzer) để đọc hiểu sâu, tóm tắt hoặc dịch thuật đoạn văn bản đó.`);
+
   return parts.join('\n\n');
 }
 
@@ -1430,6 +1495,24 @@ async function generateAIResponse() {
     // Nếu model hiện tại là text-only, bắt buộc phải phân tích ảnh trước khi gửi API
     if (hasImages && !isCurrentVision) {
       await runVisionTaskIfNeeded();
+    }
+
+    // --- Thực hiện Web Search thực tế nếu được bật ---
+    const lastMsg = chat.messages[chat.messages.length - 1];
+    if (State.webSearchEnabled && lastMsg && lastMsg.role === 'user' && !lastMsg.webSearchDone && window.performWebSearch) {
+      const typingTextEl = typingEl.querySelector('.typing-text');
+      if (typingTextEl) typingTextEl.textContent = 'Đang tìm kiếm trực tiếp trên Internet...';
+      try {
+        const searchResults = await window.performWebSearch(lastMsg.content);
+        if (searchResults) {
+          lastMsg.linkContext = (lastMsg.linkContext || '') + `\n\n[Kết quả Web Search trực tiếp]:\n${searchResults}`;
+          saveState();
+        }
+        lastMsg.webSearchDone = true;
+      } catch(e) {
+        console.error("Web search failed", e);
+      }
+      if (typingTextEl) typingTextEl.textContent = 'Đang suy nghĩ...';
     }
 
     // --- Build API messages with both vision descriptions AND image_url ---
@@ -1737,7 +1820,7 @@ window.quoteMessage = function(idx) {
   const content = chat.messages[idx].content;
   // Lấy tối đa 150 ký tự để trích dẫn cho gọn
   const snippet = content.length > 150 ? content.substring(0, 150) + '...' : content;
-  const input = $('#chat-input');
+  const input = $('#message-input');
   
   if (input) {
     const quoteText = `> ${snippet.replace(/\n/g, '\n> ')}\n\n`;
@@ -1756,7 +1839,7 @@ window.quoteMessage = function(idx) {
   const content = chat.messages[idx].content;
   // Lấy tối đa 150 ký tự để trích dẫn cho gọn
   const snippet = content.length > 150 ? content.substring(0, 150) + '...' : content;
-  const input = $('#chat-input');
+  const input = $('#message-input');
   
   if (input) {
     const quoteText = `> ${snippet.replace(/\n/g, '\n> ')}\n\n`;
@@ -1839,6 +1922,10 @@ function updateModelDisplay() {
 
 // ===== Event Listeners =====
 function initEvents() {
+  // Network Connection Status
+  window.addEventListener('offline', () => { if(window.toast) toast('Mất kết nối mạng. Suna Chat đang hoạt động ngoại tuyến!', 'error'); });
+  window.addEventListener('online', () => { if(window.toast) toast('Đã khôi phục kết nối mạng.', 'success'); });
+
     // Light/Dark Mode toggle
   $('#btn-toggle-theme').addEventListener('click', () => {
     State.settings.lightMode = !State.settings.lightMode;
@@ -2400,7 +2487,8 @@ async function init() {
   updateModelDisplay();
   initEvents();
   initParticles();
-  updateUserDisplay();
+  if (typeof updateUserDisplay === 'function') updateUserDisplay();
+  if (window.updateWebSearchUI) window.updateWebSearchUI();
 
   // Start with sidebar collapsed on mobile
   if (isMobile()) {
@@ -2426,6 +2514,7 @@ function onUserSignedIn() {
   renderMessages();
   updateModelDisplay();
   initParticles();
+  if (window.updateWebSearchUI) window.updateWebSearchUI();
 }
 
 
@@ -2445,7 +2534,29 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 });
 
+// =============================================
+// DIRECT API CALL (for features.js)
+// =============================================
+window.directApiCall = async function(prompt) {
+  const model = getActiveModel() || 'gemini-2.5-flash';
+  const proxy = getProxyForModel(model);
+  if (!proxy || !State.settings.apiKey) throw new Error("Vui lòng cấu hình API (nhập API Key).");
 
+  const url = proxy.url + '/chat/completions';
+  const messages = [{ role: 'user', content: prompt }];
+  const reqBody = { model, messages, temperature: 0.3, max_tokens: 1024 };
 
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${State.settings.apiKey}` },
+    body: JSON.stringify(reqBody)
+  });
 
-
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || "Lỗi mạng hoặc API.");
+  }
+  
+  const data = await res.json();
+  return data.choices?.[0]?.message?.content || "";
+};

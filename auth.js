@@ -65,12 +65,6 @@ function cloudSave(immediate = false) {
     AuthState.isSyncing = true;
     try {
       const uid = AuthState.user.uid;
-      await _fb.setDoc(_fb.doc(_fb.db, 'users', uid, 'data', 'settings'), {
-        ...State.settings, updatedAt: _fb.serverTimestamp()
-      });
-      await _fb.setDoc(_fb.doc(_fb.db, 'users', uid, 'data', 'memory'), {
-        ...State.memory, updatedAt: _fb.serverTimestamp()
-      });
       const chatsClean = State.chats.map(c => ({
         ...c,
         messages: c.messages.map(m => {
@@ -81,9 +75,20 @@ function cloudSave(immediate = false) {
           return copy;
         })
       }));
-      await _fb.setDoc(_fb.doc(_fb.db, 'users', uid, 'data', 'chats'), {
-        chats: JSON.stringify(chatsClean), updatedAt: _fb.serverTimestamp()
-      });
+
+      // Chạy song song các tiến trình lưu trữ để tiết kiệm thời gian
+      await Promise.all([
+        _fb.setDoc(_fb.doc(_fb.db, 'users', uid, 'data', 'settings'), {
+          ...State.settings, updatedAt: _fb.serverTimestamp()
+        }),
+        _fb.setDoc(_fb.doc(_fb.db, 'users', uid, 'data', 'memory'), {
+          ...State.memory, updatedAt: _fb.serverTimestamp()
+        }),
+        _fb.setDoc(_fb.doc(_fb.db, 'users', uid, 'data', 'chats'), {
+          chats: JSON.stringify(chatsClean), updatedAt: _fb.serverTimestamp()
+        })
+      ]);
+
       AuthState.lastSyncTime = Date.now();
       updateSyncIndicator('synced');
     } catch (e) {
@@ -100,11 +105,16 @@ async function cloudLoad() {
   if (!AuthState.isLoggedIn || !_fb) return false;
   try {
     const uid = AuthState.user.uid;
-    const sSnap = await _fb.getDoc(_fb.doc(_fb.db, 'users', uid, 'data', 'settings'));
+    
+    // Tải dữ liệu song song từ Firestore
+    const [sSnap, mSnap, cSnap] = await Promise.all([
+      _fb.getDoc(_fb.doc(_fb.db, 'users', uid, 'data', 'settings')),
+      _fb.getDoc(_fb.doc(_fb.db, 'users', uid, 'data', 'memory')),
+      _fb.getDoc(_fb.doc(_fb.db, 'users', uid, 'data', 'chats'))
+    ]);
+
     if (sSnap.exists()) { const d = sSnap.data(); delete d.updatedAt; Object.assign(State.settings, d); }
-    const mSnap = await _fb.getDoc(_fb.doc(_fb.db, 'users', uid, 'data', 'memory'));
     if (mSnap.exists()) { const d = mSnap.data(); delete d.updatedAt; if (d.facts) State.memory = d; }
-    const cSnap = await _fb.getDoc(_fb.doc(_fb.db, 'users', uid, 'data', 'chats'));
     if (cSnap.exists() && cSnap.data().chats) {
       const cc = JSON.parse(cSnap.data().chats);
       if (cc && cc.length > 0) {
@@ -140,17 +150,32 @@ function showAuthScreen() {
   if (el) { el.style.display = 'flex'; el.style.opacity = '1'; el.style.transform = 'none'; }
   const app = document.getElementById('app');
   if (app) app.style.display = 'none';
+  const loading = document.getElementById('auth-loading');
+  if (loading) loading.style.display = 'none';
   switchAuthTab('login');
 }
 
-function hideAuthScreen() {
+function hideAuthScreen(immediate = false) {
   const el = document.getElementById('auth-screen');
   if (!el) return;
+  
+  // Show app immediately underneath the auth screen to prevent any white flash or layout gaps
+  const appEl = document.getElementById('app');
+  if (appEl) {
+    appEl.style.display = 'flex';
+    void appEl.offsetWidth; // force reflow
+  }
+  
+  if (immediate) {
+    el.style.display = 'none';
+    return;
+  }
+  
+  // Fade out auth screen
   el.style.opacity = '0';
-  el.style.transform = 'scale(1.02)';
+  
   setTimeout(() => {
     el.style.display = 'none';
-    document.getElementById('app').style.display = 'flex';
   }, 300);
 }
 
@@ -204,7 +229,8 @@ function translateFirebaseError(code) {
     'auth/configuration-not-found': 'Bạn chưa bật phương thức đăng nhập này. Hãy vào Firebase Console > Authentication > Sign-in method và BẬT Email/Password hoặc Google.',
     'auth/operation-not-allowed': 'Bạn chưa bật phương thức đăng nhập này. Hãy vào Firebase Console > Authentication > Sign-in method và BẬT Email/Password hoặc Google.',
     'auth/api-key-not-valid. please pass a valid api key.': 'CHÚ Ý: Bạn chưa điền Firebase API Key! Vui lòng mở file auth.js (dòng 6) và thay API Key thật của bạn vào.',
-    'auth/invalid-api-key': 'CHÚ Ý: Firebase API Key không hợp lệ! Vui lòng mở file auth.js và kiểm tra lại API Key.'
+    'auth/invalid-api-key': 'CHÚ Ý: Firebase API Key không hợp lệ! Vui lòng mở file auth.js và kiểm tra lại API Key.',
+    'auth/unauthorized-domain': 'Tên miền này chưa được cấp phép. Vui lòng vào Firebase Console > Authentication > Settings > Authorized domains và thêm tên miền của bạn (ví dụ: sunachat.vercel.app).'
   };
 
   // Xử lý các lỗi có chứa chuỗi api-key-not-valid
@@ -281,26 +307,61 @@ async function handleForgotPassword() {
   if (!_fb) { showAuthError('login', 'Firebase chưa sẵn sàng.'); return; }
   try {
     await _fb.sendPasswordResetEmail(_fb.auth, email);
-    if (typeof toast === 'function') toast('Đã gửi link reset mật khẩu tới ' + email, 'success');
+    if (window.toast) window.toast('Đã gửi link reset mật khẩu tới ' + email, 'success');
   } catch (e) {
     showAuthError('login', translateFirebaseError(e.code));
   }
 }
 
-async function handleLogout() {
+window.handleLogout = async function handleLogout() {
+  if (AuthState.useLocalOnly) {
+    AuthState.user = null;
+    AuthState.isLoggedIn = false;
+    AuthState.useLocalOnly = false;
+    localStorage.removeItem('suna_guest_mode');
+    showAuthScreen();
+    if (window.toast) window.toast('Đã đăng xuất', 'info');
+    return;
+  }
+  
   if (!_fb) return;
   try {
     cloudSave(true);
     await _fb.signOutFn(_fb.auth);
     AuthState.isLoggedIn = false;
     AuthState.user = null;
+    localStorage.removeItem('suna_guest_mode');
     updateUserDisplay();
     updateSyncIndicator('offline');
-    if (typeof toast === 'function') toast('Đã đăng xuất', 'info');
+    if (window.toast) window.toast('Đã đăng xuất', 'info');
     showAuthScreen();
   } catch (e) {
-    if (typeof toast === 'function') toast('Lỗi: ' + e.message, 'error');
+    if (window.toast) window.toast('Lỗi: ' + e.message, 'error');
   }
+}
+
+// ===== Guest Login =====
+function handleGuestLogin() {
+  setAuthLoading('login', true);
+  setTimeout(() => {
+    AuthState.user = { uid: 'guest-' + Date.now(), email: 'khach@suna.local', displayName: 'Khách' };
+    AuthState.isLoggedIn = true;
+    AuthState.isAdmin = false;
+    AuthState.useLocalOnly = true;
+    
+    // Lưu trạng thái guest vào localStorage để không phải đăng nhập lại khi F5
+    localStorage.setItem('suna_guest_mode', 'true');
+    
+    hideAuthScreen();
+    doAppInit();
+    updateUserDisplay();
+    updateSyncIndicator('offline');
+    
+    if (window.toast) {
+      window.toast('Đang dùng chế độ Khách (Không đồng bộ)', 'info');
+    }
+    setAuthLoading('login', false);
+  }, 600);
 }
 
 
@@ -328,11 +389,11 @@ function updateUserDisplay() {
           </div>
           <div class="sidebar-user-email">${u.email || ''}</div>
         </div>
-        <button id="btn-logout" class="btn-logout" title="Đăng xuất">
+        <button id="btn-logout" class="btn-logout" title="Đăng xuất" onclick="handleLogout()">
           <span class="material-icons-round">logout</span>
         </button>
       </div>`;
-    document.getElementById('btn-logout')?.addEventListener('click', handleLogout);
+    // document.getElementById('btn-logout')?.addEventListener('click', handleLogout);
   } else {
     el.innerHTML = `
       <button class="btn-sign-in-sidebar" onclick="showAuthScreen()">
@@ -357,18 +418,29 @@ function doAppInit() {
 
 // ===== Main Auth Init =====
 async function initAuth() {
-  // Check for any legacy local-only flag and remove it
-  localStorage.removeItem('suna_local_only');
+  // Bỏ qua load auth block nếu đang dùng chế độ Khách (để vào thẳng app)
+  if (localStorage.getItem('suna_guest_mode') === 'true') {
+    AuthState.user = { uid: 'guest-' + Date.now(), email: 'khach@suna.local', displayName: 'Khách' };
+    AuthState.isLoggedIn = true;
+    AuthState.isAdmin = false;
+    AuthState.useLocalOnly = true;
+    
+    hideAuthScreen(true);
+    doAppInit();
+    updateUserDisplay();
+    updateSyncIndicator('offline');
+  }
 
   const sdkLoaded = await loadFirebaseSDK();
 
   if (!sdkLoaded) {
-    // Firebase load thất bại — giữ auth screen để user thấy lỗi
-    console.warn('Firebase unavailable — showing auth screen');
-    const errEl = document.getElementById('login-error');
-    if (errEl) {
-      errEl.textContent = 'Không thể kết nối đến máy chủ xác thực. Vui lòng kiểm tra mạng hoặc thử lại sau.';
-      errEl.style.display = 'block';
+    if (!AuthState.isLoggedIn) {
+      console.warn('Firebase unavailable — showing auth screen');
+      const errEl = document.getElementById('login-error');
+      if (errEl) {
+        errEl.textContent = 'Không thể kết nối đến máy chủ xác thực. Vui lòng kiểm tra mạng hoặc thử lại sau.';
+        errEl.style.display = 'block';
+      }
     }
     return;
   }
@@ -382,7 +454,8 @@ async function initAuth() {
         AuthState.user = user;
         AuthState.isLoggedIn = true;
         AuthState.isAdmin = (user.email === 'duyanhblt1@gmail.com' || user.email === 'admin@suna.local');
-        localStorage.removeItem('suna_local_only');
+        AuthState.useLocalOnly = false;
+        localStorage.removeItem('suna_guest_mode');
 
         // Loading overlay
         const loadEl = document.getElementById('auth-loading');
@@ -396,17 +469,18 @@ async function initAuth() {
         doAppInit();
         updateUserDisplay();
         updateSyncIndicator('synced');
-
-        if (typeof toast === 'function') {
-          toast('Xin chào, ' + (user.displayName || user.email) + '! 👋', 'success');
-        }
       } else {
-        AuthState.user = null;
-        AuthState.isLoggedIn = false;
-        // Auth screen đã hiện sẵn từ HTML
-        showAuthScreen();
-        updateUserDisplay();
-        updateSyncIndicator('offline');
+        // Nếu user = null nhưng đang ở Guest Mode, giữ nguyên không làm gì cả
+        if (localStorage.getItem('suna_guest_mode') === 'true') {
+          // Do nothing, let them stay as guest
+        } else {
+          AuthState.user = null;
+          AuthState.isLoggedIn = false;
+          AuthState.useLocalOnly = false;
+          showAuthScreen();
+          updateUserDisplay();
+          updateSyncIndicator('offline');
+        }
       }
 
       AuthState.initialized = true;
@@ -417,6 +491,15 @@ async function initAuth() {
 
 // ===== Init Auth Event Listeners =====
 function initAuthEvents() {
+  // Đóng dropdown khi click ra ngoài
+  document.addEventListener('click', (e) => {
+    const btn = document.getElementById('btn-user-menu');
+    const drop = document.getElementById('user-dropdown');
+    if (btn && drop && !btn.contains(e.target) && !drop.contains(e.target)) {
+      drop.classList.remove('active');
+    }
+  });
+
   // Tab switching
   document.querySelectorAll('.auth-tab-btn').forEach(btn =>
     btn.addEventListener('click', () => switchAuthTab(btn.dataset.tab))
@@ -430,6 +513,10 @@ function initAuthEvents() {
   // Google — cả 2 form đều có nút Google
   document.querySelectorAll('.btn-auth-google').forEach(btn =>
     btn.addEventListener('click', handleGoogleLogin)
+  );
+  // Guest login
+  document.querySelectorAll('.btn-auth-guest').forEach(btn =>
+    btn.addEventListener('click', handleGuestLogin)
   );
   // Forgot password
   document.getElementById('btn-forgot-password')?.addEventListener('click', handleForgotPassword);

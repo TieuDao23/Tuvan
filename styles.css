@@ -460,6 +460,7 @@ body.light-mode .toast.info {
 html {
   height: 100%;
   -webkit-font-smoothing: antialiased;
+  background-color: var(--bg-primary, #0a0810);
 }
 
 body {
@@ -852,6 +853,8 @@ body {
   background: rgba(10, 10, 26, 0.8);
   backdrop-filter: blur(20px);
   flex-shrink: 0;
+  position: relative;
+  z-index: 100;
 }
 
 .btn-icon {
@@ -1418,6 +1421,43 @@ h4.msg-heading { font-size: 1em; color: var(--accent-1); }
 }
 
 /* ===== Input Area ===== */
+.input-tools-bar {
+  display: flex;
+  gap: 8px;
+  max-width: 900px;
+  margin: 0 auto 10px;
+  padding: 0 4px;
+}
+
+.tool-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--bg-glass);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  font-family: inherit;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+}
+.tool-chip .material-icons-round { font-size: 1.1rem; }
+.tool-chip:hover {
+  background: var(--hover-color);
+  color: var(--text-primary);
+  border-color: var(--accent-1);
+}
+.tool-chip.active {
+  background: var(--accent-1);
+  color: #fff;
+  border-color: var(--accent-2);
+  box-shadow: 0 0 15px var(--accent-glow);
+}
+
 .input-area {
   padding: 12px 20px 20px;
   flex-shrink: 0;
@@ -1692,6 +1732,56 @@ h4.msg-heading { font-size: 1em; color: var(--accent-1); }
   flex-direction: column;
   gap: 20px;
 }
+
+/* ===== Memory Cabinet ===== */
+.memory-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--bg-glass);
+  border: 1px solid var(--border-color);
+  padding: 12px 16px;
+  border-radius: var(--radius-md);
+  margin-bottom: 8px;
+  transition: all 0.25s ease;
+}
+.memory-chip:hover {
+  background: var(--hover-color);
+  border-color: var(--accent-1);
+}
+.mem-content {
+  flex: 1;
+  font-size: 0.92rem;
+  color: var(--text-primary);
+}
+.mem-cat {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  background: rgba(255,255,255,0.05);
+  padding: 4px 8px;
+  border-radius: 8px;
+  white-space: nowrap;
+}
+body.light-mode .mem-cat { background: rgba(0,0,0,0.05); }
+
+.btn-delete-mem {
+  background: transparent;
+  border: none;
+  color: #ff6b6b;
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+.btn-delete-mem:hover {
+  background: rgba(255, 107, 107, 0.15);
+  color: #ff4757;
+}
+.btn-delete-mem .material-icons-round { font-size: 20px; }
 
 .settings-section h3 {
   font-size: 0.9rem;
@@ -3484,6 +3574,40 @@ h4.msg-heading { font-size: 1em; color: var(--accent-1); }
 }
 .btn-sign-in-sidebar .material-icons-round { font-size: 18px; }
 
+/* User Profile Dropdown */
+.top-user-profile {
+  position: relative;
+}
+
+.user-dropdown {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 8px;
+  background: var(--bg-glass);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+  min-width: 260px;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-10px);
+  transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+  z-index: 200;
+}
+.user-dropdown.active {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+.user-dropdown .sidebar-user-info {
+  border-top: none;
+  margin-top: 0;
+  padding: 16px;
+}
+
 /* =============================================
    RESPONSIVE AUTH
    ============================================= */
@@ -3504,5 +3628,222 @@ h4.msg-heading { font-size: 1em; color: var(--accent-1); }
   .auth-card { padding: 24px 20px; }
 }
 
+/* =============================================
+   REDESIGN UI/UX: FLOATING ISLANDS & GLASSMORPHISM
+   ============================================= */
 
+/* 1. ANIMATED BASE (Background) */
+.bg-animation {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: -1;
+  background: var(--bg-primary);
+  overflow: hidden;
+}
 
+.bg-orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+  opacity: 0.3;
+  animation: floatOrb 20s infinite ease-in-out alternate;
+  background: var(--accent-glow, var(--accent-1));
+  pointer-events: none;
+}
+
+.bg-orb-1 {
+  width: 50vw;
+  height: 50vw;
+  top: -10%;
+  left: -10%;
+  background: var(--accent-1);
+}
+.bg-orb-2 {
+  width: 40vw;
+  height: 40vw;
+  bottom: -10%;
+  right: -5%;
+  background: var(--accent-2);
+  animation-duration: 25s;
+  animation-delay: -5s;
+}
+.bg-orb-3 {
+  width: 30vw;
+  height: 30vw;
+  top: 40%;
+  left: 30%;
+  background: var(--accent-glow);
+  animation-duration: 18s;
+  animation-delay: -10s;
+}
+
+@keyframes floatOrb {
+  0% { transform: translate(0, 0) scale(1); }
+  33% { transform: translate(5%, 10%) scale(1.1); }
+  66% { transform: translate(-5%, -5%) scale(0.9); }
+  100% { transform: translate(10%, -10%) scale(1.05); }
+}
+
+/* 2. THE GLASS ISLANDS */
+/* Reset app layout to accommodate padding */
+#app {
+  padding: 16px !important;
+  gap: 16px !important;
+  background: transparent !important;
+  box-sizing: border-box !important;
+}
+
+.sidebar {
+  height: 100% !important;
+  border-radius: 24px !important;
+  background: var(--bg-glass) !important;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--border-color) !important;
+  box-shadow: var(--shadow-lg) !important;
+  margin: 0 !important;
+  position: relative;
+}
+
+.main-content {
+  height: 100% !important;
+  border-radius: 24px !important;
+  background: var(--bg-glass) !important;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--border-color) !important;
+  box-shadow: var(--shadow-lg) !important;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+}
+
+.top-bar {
+  background: transparent !important;
+  border-bottom: 1px solid var(--border-color) !important;
+  border-radius: 24px 24px 0 0 !important;
+}
+
+/* 3. INPUT AREA & DOCK */
+.input-area {
+  background: transparent !important;
+  border-top: none !important;
+  padding: 0 24px 24px 24px !important;
+}
+
+.input-container {
+  border-radius: 30px !important;
+  background: rgba(0, 0, 0, 0.4) !important;
+  backdrop-filter: blur(15px);
+  -webkit-backdrop-filter: blur(15px);
+  border: 1px solid var(--border-color) !important;
+  padding: 8px 16px !important;
+  transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) !important;
+}
+
+body.light-mode .input-container {
+  background: rgba(255, 255, 255, 0.7) !important;
+}
+
+.input-container:focus-within {
+  box-shadow: 0 0 0 2px var(--accent-1), 0 4px 20px var(--accent-glow) !important;
+  border-color: transparent !important;
+  transform: translateY(-2px);
+}
+
+.message-input {
+  transition: height 0.2s ease;
+}
+
+/* 4. CHAT BUBBLES */
+.chat-area {
+  background: transparent !important;
+  padding: 24px !important;
+  scroll-behavior: smooth;
+}
+
+.message {
+  animation: slideUpSpring 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+  opacity: 0;
+  transform: translateY(20px);
+}
+
+@keyframes slideUpSpring {
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.message.user .message-bubble {
+  background: var(--accent-gradient) !important;
+  color: #fff !important;
+  border-radius: 20px 20px 4px 20px !important;
+  box-shadow: 0 4px 15px var(--accent-glow) !important;
+  border: none !important;
+}
+
+.message.assistant .message-bubble {
+  background: var(--bg-glass) !important;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-radius: 20px 20px 20px 4px !important;
+  border: 1px solid var(--border-color) !important;
+  box-shadow: var(--shadow-md) !important;
+}
+
+/* Markdown Blocks */
+.code-block-wrapper, .math-block, .msg-files-container {
+  background: rgba(0,0,0,0.2) !important;
+  border-radius: 12px !important;
+  border: 1px solid rgba(255,255,255,0.05) !important;
+  overflow: hidden;
+}
+body.light-mode .code-block-wrapper, body.light-mode .math-block {
+  background: rgba(255,255,255,0.5) !important;
+}
+.code-block-wrapper pre {
+  max-width: 100%;
+  overflow-x: auto;
+  word-wrap: normal;
+}
+.message-bubble {
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+/* 5. SCROLLBARS */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.1); border-radius: 10px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.2); }
+body.light-mode ::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.1); }
+body.light-mode ::-webkit-scrollbar-thumb:hover { background: rgba(0, 0, 0, 0.2); }
+
+/* 6. ADAPTIVE PERFORMANCE (Mobile) */
+@media (max-width: 768px) {
+  #app { padding: 0 !important; gap: 0 !important; }
+  .sidebar, .main-content {
+    border-radius: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+  }
+  .bg-orb {
+    animation: none; filter: blur(50px); opacity: 0.15;
+  }
+  .sidebar, .main-content, .message.assistant .message-bubble, .input-container {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    background: var(--bg-secondary) !important;
+  }
+  body.light-mode .sidebar, body.light-mode .main-content, body.light-mode .input-container {
+    background: #ffffff !important;
+  }
+  .input-area { padding: 12px !important; }
+  .message { animation: slideUpFade 0.3s ease-out forwards; }
+}
+
+@keyframes slideUpFade {
+  to { opacity: 1; transform: translateY(0); }
+}
