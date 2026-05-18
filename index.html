@@ -18,6 +18,10 @@
     <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
     <link rel="stylesheet" href="styles.css">
+    <!-- Preload Firebase SDK for instant auth -->
+    <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js">
+    <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js">
+    <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js">
     <!-- PDF.js for reading PDF files -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <script>
@@ -634,9 +638,9 @@
 
     <!-- Translator Mode Modal -->
     <div id="translator-modal" class="modal-overlay" style="display:none;">
-        <div class="modal translator-modal" style="max-width: 700px;">
+        <div class="modal translator-modal" style="max-width: 720px;">
             <div class="modal-header">
-                <h2><span class="material-icons-round" style="color:#4facfe;">translate</span> Phiên dịch viên AI thời gian thực</h2>
+                <h2><span class="material-icons-round" style="color:#4facfe;">translate</span> Phiên dịch viên AI</h2>
                 <button class="btn-close-modal" data-close="translator-modal"><span class="material-icons-round">close</span></button>
             </div>
             <div class="modal-body" style="padding: 0;">
@@ -645,26 +649,89 @@
                         <div class="lang-selector">
                             <span class="lang-flag">🇻🇳</span> Tiếng Việt
                         </div>
-                        <div class="translator-text" id="translator-source-text">Nhấn vào mic để nói...</div>
-                        <button class="btn-translator-mic" id="btn-mic-vi"><span class="material-icons-round">mic</span></button>
+                        <div class="translator-text" id="translator-source-text">Nhấn mic hoặc nhập văn bản...</div>
+                        <div class="translator-input-row">
+                            <textarea id="translator-source-input" class="translator-textarea" placeholder="Nhập văn bản tiếng Việt..." rows="2"></textarea>
+                            <button class="btn-translator-mic" id="btn-mic-vi" title="Giữ mic để nói"><span class="material-icons-round">mic</span></button>
+                        </div>
                     </div>
                     <div class="translator-divider">
-                        <span class="material-icons-round">sync_alt</span>
+                        <button id="btn-translator-swap" class="btn-translator-swap" title="Đảo ngôn ngữ">
+                            <span class="material-icons-round">swap_vert</span>
+                        </button>
                     </div>
                     <div class="translator-pane target-pane">
                         <div class="lang-selector">
-                            <select id="translator-target-lang" class="settings-select" style="background:transparent; border:none; color:white; font-weight:bold; font-size:16px;">
+                            <select id="translator-target-lang" class="settings-select" style="background:transparent; border:none; color:var(--text-primary); font-weight:bold; font-size:15px;">
                                 <option value="en">🇬🇧 Tiếng Anh</option>
                                 <option value="ja">🇯🇵 Tiếng Nhật</option>
                                 <option value="zh">🇨🇳 Tiếng Trung</option>
                                 <option value="ko">🇰🇷 Tiếng Hàn</option>
-                                <option value="es">🇪🇸 Tiếng Tây Ban Nha</option>
+                                <option value="es">🇪🇸 Tây Ban Nha</option>
                                 <option value="fr">🇫🇷 Tiếng Pháp</option>
                             </select>
                         </div>
                         <div class="translator-text" id="translator-target-text">Bản dịch sẽ hiển thị ở đây...</div>
-                        <button class="btn-translator-mic" id="btn-mic-target"><span class="material-icons-round">mic</span></button>
+                        <div class="translator-input-row">
+                            <textarea id="translator-target-input" class="translator-textarea" placeholder="Nhập văn bản cần dịch..." rows="2"></textarea>
+                            <button class="btn-translator-mic" id="btn-mic-target" title="Giữ mic để nói"><span class="material-icons-round">mic</span></button>
+                        </div>
                     </div>
+                </div>
+                <!-- Translator Action Bar -->
+                <div class="translator-actions">
+                    <button id="btn-translator-translate" class="btn-primary" style="flex:1;">
+                        <span class="material-icons-round">translate</span> Dịch văn bản
+                    </button>
+                    <button id="btn-translator-copy" class="btn-secondary" title="Copy bản dịch">
+                        <span class="material-icons-round">content_copy</span>
+                    </button>
+                    <button id="btn-translator-to-chat" class="btn-secondary" title="Điền vào ô chat">
+                        <span class="material-icons-round">chat</span> Điền vào Chat
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Export Modal -->
+    <div id="export-modal" class="modal-overlay" style="display:none;">
+        <div class="modal" style="max-width: 460px;">
+            <div class="modal-header">
+                <h2><span class="material-icons-round" style="color:#43e97b;">download</span> Xuất cuộc hội thoại</h2>
+                <button class="btn-close-modal" data-close="export-modal"><span class="material-icons-round">close</span></button>
+            </div>
+            <div class="modal-body">
+                <p style="color:var(--text-secondary); margin-bottom:16px;">Chọn định dạng xuất cho cuộc hội thoại hiện tại:</p>
+                <div class="export-options">
+                    <button id="btn-export-md" class="export-option-btn">
+                        <span class="material-icons-round">description</span>
+                        <div>
+                            <strong>Markdown</strong>
+                            <small>Tệp .md — dễ đọc, dễ chia sẻ</small>
+                        </div>
+                    </button>
+                    <button id="btn-export-txt" class="export-option-btn">
+                        <span class="material-icons-round">article</span>
+                        <div>
+                            <strong>Văn bản thuần</strong>
+                            <small>Tệp .txt — tương thích mọi nơi</small>
+                        </div>
+                    </button>
+                    <button id="btn-export-html" class="export-option-btn">
+                        <span class="material-icons-round">code</span>
+                        <div>
+                            <strong>HTML</strong>
+                            <small>Trang web đẹp, mở trên trình duyệt</small>
+                        </div>
+                    </button>
+                    <button id="btn-export-json" class="export-option-btn">
+                        <span class="material-icons-round">data_object</span>
+                        <div>
+                            <strong>JSON</strong>
+                            <small>Dữ liệu thô — cho lập trình viên</small>
+                        </div>
+                    </button>
                 </div>
             </div>
         </div>
@@ -687,9 +754,9 @@
     <!-- Toast Container -->
     <div id="toast-container" class="toast-container"></div>
 
-    <script src="auth.js?v=5"></script>
-    <script src="features.js?v=5"></script>
-    <script src="app.js?v=5"></script>
+    <script src="auth.js?v=6"></script>
+    <script src="features.js?v=6"></script>
+    <script src="app.js?v=6"></script>
 </body>
 
 </html>

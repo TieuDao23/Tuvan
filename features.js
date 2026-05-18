@@ -49,7 +49,7 @@ window.speakText = function(text, lang = 'vi-VN') {
 };
 
 // =============================================
-// 2. TRANSLATOR MODE (Speech-to-Speech)
+// 2. TRANSLATOR MODE (Voice + Text, Bidirectional)
 // =============================================
 let translatorRecog = null;
 
@@ -59,105 +59,143 @@ function initTranslatorMode() {
   const btnMicVi = document.getElementById('btn-mic-vi');
   const btnMicTarget = document.getElementById('btn-mic-target');
   const targetLangSelect = document.getElementById('translator-target-lang');
-  
   const txtSource = document.getElementById('translator-source-text');
   const txtTarget = document.getElementById('translator-target-text');
+  const inputSource = document.getElementById('translator-source-input');
+  const inputTarget = document.getElementById('translator-target-input');
+  const btnTranslate = document.getElementById('btn-translator-translate');
+  const btnCopy = document.getElementById('btn-translator-copy');
+  const btnToChat = document.getElementById('btn-translator-to-chat');
+  const btnSwap = document.getElementById('btn-translator-swap');
 
   if (!btnOpen) return;
+  btnOpen.addEventListener('click', () => { if (modal) modal.style.display = 'flex'; });
 
-  btnOpen.addEventListener('click', () => {
-    if (modal) modal.style.display = 'flex';
-  });
+  let currentSource = 'vi';
+  let isTranslating = false;
 
+  // --- Core translate function ---
+  async function doTranslate(text, fromSide) {
+    if (!text || isTranslating) return;
+    isTranslating = true;
+    const targetEl = fromSide === 'vi' ? txtTarget : txtSource;
+    targetEl.innerText = 'Đang dịch...';
+    targetEl.classList.remove('active');
+    try {
+      const fromLang = fromSide === 'vi' ? 'Tiếng Việt' : targetLangSelect.options[targetLangSelect.selectedIndex].text.replace(/^[\u{1F1E6}-\u{1F1FF}]+\s*/u, '');
+      const toLang = fromSide === 'vi' ? targetLangSelect.options[targetLangSelect.selectedIndex].text.replace(/^[\u{1F1E6}-\u{1F1FF}]+\s*/u, '') : 'Tiếng Việt';
+      const prompt = `Dịch câu sau từ ${fromLang} sang ${toLang}. CHỈ trả về bản dịch, KHÔNG giải thích, KHÔNG thêm dấu ngoặc kép.\nCâu: ${text}`;
+      if (window.directApiCall) {
+        let result = await window.directApiCall(prompt);
+        result = result.trim().replace(/^["'"'\u201C\u201D]+|["'"'\u201C\u201D]+$/g, '');
+        targetEl.innerText = result;
+        targetEl.classList.add('active');
+        const speakLang = fromSide === 'vi' ? targetLangSelect.value : 'vi-VN';
+        window.speakText(result, speakLang);
+      } else {
+        targetEl.innerText = 'Lỗi: Chưa cấu hình API.';
+      }
+    } catch (e) {
+      targetEl.innerText = 'Lỗi: ' + e.message;
+    }
+    isTranslating = false;
+  }
+
+  // --- Text input translate button ---
+  if (btnTranslate) {
+    btnTranslate.addEventListener('click', () => {
+      const viText = inputSource?.value.trim();
+      const targetText = inputTarget?.value.trim();
+      if (viText) {
+        txtSource.innerText = viText;
+        txtSource.classList.add('active');
+        doTranslate(viText, 'vi');
+      } else if (targetText) {
+        txtTarget.innerText = targetText;
+        txtTarget.classList.add('active');
+        doTranslate(targetText, 'target');
+      } else if (window.toast) {
+        window.toast('Nhập văn bản hoặc nói vào mic trước khi dịch', 'info');
+      }
+    });
+  }
+
+  // --- Copy & Send to chat ---
+  if (btnCopy) {
+    btnCopy.addEventListener('click', () => {
+      const text = txtTarget.innerText;
+      if (!text || text.includes('hiển thị ở đây')) return;
+      navigator.clipboard.writeText(text).then(() => {
+        if (window.toast) window.toast('Đã copy bản dịch!', 'success');
+      });
+    });
+  }
+  if (btnToChat) {
+    btnToChat.addEventListener('click', () => {
+      const text = txtTarget.innerText;
+      if (!text || text.includes('hiển thị ở đây')) return;
+      const chatInput = document.getElementById('message-input');
+      if (chatInput) {
+        chatInput.value += (chatInput.value ? '\n' : '') + text;
+        chatInput.style.height = 'auto';
+        chatInput.style.height = Math.min(chatInput.scrollHeight, 150) + 'px';
+      }
+      if (modal) modal.style.display = 'none';
+      if (window.toast) window.toast('Đã điền bản dịch vào ô chat', 'success');
+    });
+  }
+
+  // --- Swap languages ---
+  if (btnSwap) {
+    btnSwap.addEventListener('click', () => {
+      const srcText = txtSource.innerText;
+      const tgtText = txtTarget.innerText;
+      txtSource.innerText = tgtText;
+      txtTarget.innerText = srcText;
+      if (inputSource) { const tmp = inputSource.value; inputSource.value = inputTarget?.value || ''; if (inputTarget) inputTarget.value = tmp; }
+    });
+  }
+
+  // --- Speech Recognition ---
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SpeechRecognition) {
-    btnMicVi.style.display = 'none';
-    btnMicTarget.style.display = 'none';
-    txtSource.innerText = "Trình duyệt không hỗ trợ nhận diện giọng nói.";
+    if (btnMicVi) btnMicVi.style.display = 'none';
+    if (btnMicTarget) btnMicTarget.style.display = 'none';
     return;
   }
 
   translatorRecog = new SpeechRecognition();
   translatorRecog.interimResults = true;
 
-  let currentSource = 'vi';
-  let isTranslating = false;
-
   const startRecog = (langCode) => {
     if (isTranslating) return;
     const langMap = { 'en': 'en-US', 'ja': 'ja-JP', 'zh': 'zh-CN', 'ko': 'ko-KR', 'es': 'es-ES', 'fr': 'fr-FR' };
     translatorRecog.lang = langCode === 'vi' ? 'vi-VN' : (langMap[targetLangSelect.value] || targetLangSelect.value);
     currentSource = langCode;
-    
-    txtSource.innerText = "Đang nghe...";
-    txtTarget.innerText = "Bản dịch sẽ hiển thị ở đây...";
-    txtSource.classList.remove('active');
-    txtTarget.classList.remove('active');
-    
-    if (langCode === 'vi') btnMicVi.classList.add('recording');
-    else btnMicTarget.classList.add('recording');
-
+    if (langCode === 'vi') { txtSource.innerText = 'Đang nghe...'; btnMicVi.classList.add('recording'); }
+    else { txtTarget.innerText = 'Đang nghe...'; btnMicTarget.classList.add('recording'); }
     try { translatorRecog.start(); } catch(e){}
   };
-
   const stopRecog = () => {
-    btnMicVi.classList.remove('recording');
-    btnMicTarget.classList.remove('recording');
+    btnMicVi?.classList.remove('recording');
+    btnMicTarget?.classList.remove('recording');
     try { translatorRecog.stop(); } catch(e){}
   };
 
-  btnMicVi.addEventListener('click', () => {
-    if (btnMicVi.classList.contains('recording')) stopRecog();
-    else startRecog('vi');
-  });
-
-  btnMicTarget.addEventListener('click', () => {
-    if (btnMicTarget.classList.contains('recording')) stopRecog();
-    else startRecog('target');
-  });
+  btnMicVi?.addEventListener('click', () => { btnMicVi.classList.contains('recording') ? stopRecog() : startRecog('vi'); });
+  btnMicTarget?.addEventListener('click', () => { btnMicTarget.classList.contains('recording') ? stopRecog() : startRecog('target'); });
 
   translatorRecog.onresult = (e) => {
     let transcript = '';
-    for (let i = e.resultIndex; i < e.results.length; i++) {
-      transcript += e.results[i][0].transcript;
-    }
-    if (currentSource === 'vi') txtSource.innerText = transcript;
-    else txtTarget.innerText = transcript;
-    
-    if (currentSource === 'vi') txtSource.classList.add('active');
-    else txtTarget.classList.add('active');
+    for (let i = e.resultIndex; i < e.results.length; i++) transcript += e.results[i][0].transcript;
+    if (currentSource === 'vi') { txtSource.innerText = transcript; txtSource.classList.add('active'); }
+    else { txtTarget.innerText = transcript; txtTarget.classList.add('active'); }
   };
 
-  translatorRecog.onend = async () => {
+  translatorRecog.onend = () => {
     stopRecog();
-    let textToTranslate = currentSource === 'vi' ? txtSource.innerText : txtTarget.innerText;
-    if (!textToTranslate || textToTranslate === "Đang nghe...") return;
-
-    isTranslating = true;
-    let targetEl = currentSource === 'vi' ? txtTarget : txtSource;
-    targetEl.innerText = "Đang dịch...";
-
-    try {
-      const fromLang = currentSource === 'vi' ? 'Tiếng Việt' : 'ngôn ngữ ' + targetLangSelect.options[targetLangSelect.selectedIndex].text;
-      const toLang = currentSource === 'vi' ? 'ngôn ngữ ' + targetLangSelect.options[targetLangSelect.selectedIndex].text : 'Tiếng Việt';
-      const prompt = `Dịch câu sau từ ${fromLang} sang ${toLang}. Chỉ trả về văn bản đã dịch, không thêm bất kỳ lời giải thích nào.\nCâu cần dịch: "${textToTranslate}"`;
-      
-      // We will call Suna Chat's backend (which is handled by app.js direct API call)
-      if (window.directApiCall) {
-        const result = await window.directApiCall(prompt);
-        targetEl.innerText = result.trim();
-        targetEl.classList.add('active');
-        
-        // Speak result
-        const speakLang = currentSource === 'vi' ? targetLangSelect.value : 'vi-VN';
-        window.speakText(result.trim(), speakLang);
-      } else {
-        targetEl.innerText = "Lỗi: Không thể kết nối AI.";
-      }
-    } catch (e) {
-      targetEl.innerText = "Lỗi dịch thuật: " + e.message;
-    }
-    isTranslating = false;
+    const text = currentSource === 'vi' ? txtSource.innerText : txtTarget.innerText;
+    if (text && text !== 'Đang nghe...') doTranslate(text, currentSource);
   };
 }
 
@@ -336,8 +374,6 @@ window.analyzeDocument = function(fileName) {
     inputEl.style.height = 'auto';
     inputEl.style.height = Math.min(inputEl.scrollHeight, 150) + 'px';
     inputEl.focus();
-    
-    // Automatically trigger send if State exists
     if (window.State && !window.State.isGenerating) {
       setTimeout(() => {
         const btnSend = document.getElementById('btn-send');
@@ -347,10 +383,89 @@ window.analyzeDocument = function(fileName) {
   }
 };
 
+// =============================================
+// 6. EXPORT CHAT
+// =============================================
+function initExportChat() {
+  const modal = document.getElementById('export-modal');
+  if (!modal) return;
+
+  // Open export modal from top-bar button
+  const btnExport = document.getElementById('btn-export-chat');
+  if (btnExport) btnExport.addEventListener('click', () => { modal.style.display = 'flex'; });
+
+  function getChat() {
+    if (!window.State) return null;
+    return window.State.chats.find(c => c.id === window.State.activeChatId);
+  }
+
+  function download(content, filename, mime) {
+    const blob = new Blob([content], { type: mime + ';charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    modal.style.display = 'none';
+    if (window.toast) window.toast('Đã xuất: ' + filename, 'success');
+  }
+
+  function sanitizeTitle(t) { return (t || 'chat').replace(/[^a-zA-Z0-9\u00C0-\u024F\u1E00-\u1EFF _-]/g, '').slice(0, 50); }
+
+  // Markdown
+  document.getElementById('btn-export-md')?.addEventListener('click', () => {
+    const chat = getChat(); if (!chat) return;
+    let md = `# ${chat.title}\n_Xuất lúc: ${new Date().toLocaleString('vi-VN')}_\n\n---\n\n`;
+    chat.messages.forEach(m => {
+      const role = m.role === 'user' ? '**🧑 Bạn**' : '**🤖 Suna**';
+      md += `${role}:\n\n${m.content || ''}\n\n---\n\n`;
+    });
+    download(md, sanitizeTitle(chat.title) + '.md', 'text/markdown');
+  });
+
+  // Plain Text
+  document.getElementById('btn-export-txt')?.addEventListener('click', () => {
+    const chat = getChat(); if (!chat) return;
+    let txt = `${chat.title}\nXuất lúc: ${new Date().toLocaleString('vi-VN')}\n${'='.repeat(40)}\n\n`;
+    chat.messages.forEach(m => {
+      txt += `[${m.role === 'user' ? 'Bạn' : 'Suna'}]:\n${m.content || ''}\n\n`;
+    });
+    download(txt, sanitizeTitle(chat.title) + '.txt', 'text/plain');
+  });
+
+  // HTML
+  document.getElementById('btn-export-html')?.addEventListener('click', () => {
+    const chat = getChat(); if (!chat) return;
+    let body = '';
+    chat.messages.forEach(m => {
+      const cls = m.role === 'user' ? 'user' : 'ai';
+      const label = m.role === 'user' ? 'Bạn' : 'Suna';
+      const content = (m.content || '').replace(/</g, '&lt;').replace(/\n/g, '<br>');
+      body += `<div class="msg ${cls}"><b>${label}:</b><p>${content}</p></div>`;
+    });
+    const html = `<!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><title>${chat.title}</title>
+<style>body{font-family:'Inter',sans-serif;max-width:720px;margin:40px auto;padding:20px;background:#0d0b14;color:#ede8e3}
+h1{color:#e8a87c}.msg{margin:16px 0;padding:16px;border-radius:12px;line-height:1.7}
+.user{background:rgba(232,168,124,0.15);border-left:3px solid #e8a87c}
+.ai{background:rgba(255,255,255,0.05);border-left:3px solid #555}
+b{display:block;margin-bottom:6px;font-size:0.85em;opacity:0.7}p{margin:0;white-space:pre-wrap}</style></head>
+<body><h1>${chat.title}</h1><small>Xuất lúc: ${new Date().toLocaleString('vi-VN')}</small><hr>${body}</body></html>`;
+    download(html, sanitizeTitle(chat.title) + '.html', 'text/html');
+  });
+
+  // JSON
+  document.getElementById('btn-export-json')?.addEventListener('click', () => {
+    const chat = getChat(); if (!chat) return;
+    const data = { title: chat.title, exportedAt: new Date().toISOString(), messages: chat.messages.map(m => ({ role: m.role, content: m.content })) };
+    download(JSON.stringify(data, null, 2), sanitizeTitle(chat.title) + '.json', 'application/json');
+  });
+}
+
 // Khởi chạy tất cả khi tải xong
 document.addEventListener('DOMContentLoaded', () => {
   initTTS();
   initTranslatorMode();
   initMemoryCabinet();
   initArtifactsAndSearch();
+  initExportChat();
 });

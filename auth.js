@@ -55,6 +55,27 @@ async function loadFirebaseSDK() {
   }
 }
 
+// ===== Auth Cache (Instant Login) =====
+function cacheAuthUser(user) {
+  try {
+    localStorage.setItem('suna_cached_user', JSON.stringify({
+      uid: user.uid, email: user.email,
+      displayName: user.displayName, photoURL: user.photoURL
+    }));
+  } catch(e) {}
+}
+
+function getCachedAuthUser() {
+  try {
+    const c = localStorage.getItem('suna_cached_user');
+    return c ? JSON.parse(c) : null;
+  } catch(e) { return null; }
+}
+
+function clearCachedAuth() {
+  localStorage.removeItem('suna_cached_user');
+}
+
 // ===== Cloud Sync =====
 function cloudSave(immediate = false) {
   if (!AuthState.isLoggedIn || !_fb) return;
@@ -314,6 +335,7 @@ async function handleForgotPassword() {
 }
 
 window.handleLogout = async function handleLogout() {
+  clearCachedAuth();
   if (AuthState.useLocalOnly) {
     AuthState.user = null;
     AuthState.isLoggedIn = false;
@@ -416,24 +438,47 @@ function doAppInit() {
   if (typeof init === 'function') init();
 }
 
-// ===== Main Auth Init =====
+// ===== Main Auth Init (Optimized: Instant Local + Background Cloud Merge) =====
 async function initAuth() {
-  // Bỏ qua load auth block nếu đang dùng chế độ Khách (để vào thẳng app)
+  // 1. Guest mode — fast path (unchanged)
   if (localStorage.getItem('suna_guest_mode') === 'true') {
     AuthState.user = { uid: 'guest-' + Date.now(), email: 'khach@suna.local', displayName: 'Khách' };
     AuthState.isLoggedIn = true;
     AuthState.isAdmin = false;
     AuthState.useLocalOnly = true;
-    
     hideAuthScreen(true);
     doAppInit();
     updateUserDisplay();
     updateSyncIndicator('offline');
+    // Load SDK in background for potential re-login
+    loadFirebaseSDK().then(ok => {
+      if (ok) _fb.onAuthStateChanged(_fb.auth, () => {});
+    });
+    return;
   }
 
+  // 2. ⚡ Cached auth — INSTANT APP DISPLAY
+  const cachedUser = getCachedAuthUser();
+  if (cachedUser) {
+    AuthState.user = cachedUser;
+    AuthState.isLoggedIn = true;
+    AuthState.isAdmin = (cachedUser.email === 'duyanhblt1@gmail.com' || cachedUser.email === 'admin@suna.local');
+    AuthState.useLocalOnly = false;
+    hideAuthScreen(true);    // No animation — instant
+    doAppInit();             // Show app NOW with local data
+    updateUserDisplay();
+    updateSyncIndicator('syncing'); // Indicate background sync
+  }
+
+  // 3. Load Firebase SDK (background if cached, blocking if not)
   const sdkLoaded = await loadFirebaseSDK();
 
   if (!sdkLoaded) {
+    if (cachedUser) {
+      // SDK failed but we have cached auth — stay with local data
+      updateSyncIndicator('error');
+      return;
+    }
     if (!AuthState.isLoggedIn) {
       console.warn('Firebase unavailable — showing auth screen');
       const errEl = document.getElementById('login-error');
@@ -445,7 +490,7 @@ async function initAuth() {
     return;
   }
 
-  // Lắng nghe trạng thái auth
+  // 4. Firebase auth listener
   return new Promise((resolve) => {
     let resolved = false;
 
@@ -456,23 +501,38 @@ async function initAuth() {
         AuthState.isAdmin = (user.email === 'duyanhblt1@gmail.com' || user.email === 'admin@suna.local');
         AuthState.useLocalOnly = false;
         localStorage.removeItem('suna_guest_mode');
+        cacheAuthUser(user); // Cache for instant load next time
 
-        // Loading overlay
-        const loadEl = document.getElementById('auth-loading');
-        if (loadEl) loadEl.style.display = 'flex';
-
-        await cloudLoad();
-
-        if (loadEl) loadEl.style.display = 'none';
-
-        hideAuthScreen();
-        doAppInit();
-        updateUserDisplay();
-        updateSyncIndicator('synced');
+        if (cachedUser) {
+          // ⚡ App already showing — SILENT background sync
+          await cloudLoad();
+          if (typeof onUserSignedIn === 'function') onUserSignedIn();
+          updateUserDisplay();
+          updateSyncIndicator('synced');
+        } else {
+          // First login / no cache — brief loading
+          const loadEl = document.getElementById('auth-loading');
+          if (loadEl) loadEl.style.display = 'flex';
+          await cloudLoad();
+          if (loadEl) loadEl.style.display = 'none';
+          hideAuthScreen();
+          doAppInit();
+          updateUserDisplay();
+          updateSyncIndicator('synced');
+        }
       } else {
-        // Nếu user = null nhưng đang ở Guest Mode, giữ nguyên không làm gì cả
         if (localStorage.getItem('suna_guest_mode') === 'true') {
-          // Do nothing, let them stay as guest
+          // Guest mode — do nothing
+        } else if (cachedUser) {
+          // Token expired — force re-login
+          clearCachedAuth();
+          AuthState.user = null;
+          AuthState.isLoggedIn = false;
+          AuthState.useLocalOnly = false;
+          showAuthScreen();
+          updateUserDisplay();
+          updateSyncIndicator('offline');
+          if (window.toast) window.toast('Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.', 'info');
         } else {
           AuthState.user = null;
           AuthState.isLoggedIn = false;

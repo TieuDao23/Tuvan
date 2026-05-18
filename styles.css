@@ -3847,3 +3847,144 @@ body.light-mode ::-webkit-scrollbar-thumb:hover { background: rgba(0, 0, 0, 0.2)
 @keyframes slideUpFade {
   to { opacity: 1; transform: translateY(0); }
 }
+
+/* =============================================
+   TRANSLATOR UPGRADED STYLES
+   ============================================= */
+.translator-input-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border-color);
+}
+
+.translator-textarea {
+  flex: 1;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 10px 14px;
+  color: var(--text-primary);
+  font-family: var(--font-main);
+  font-size: 14px;
+  resize: none;
+  outline: none;
+  transition: border-color 0.2s;
+}
+.translator-textarea:focus {
+  border-color: var(--accent-1);
+}
+.translator-textarea::placeholder {
+  color: var(--text-muted);
+}
+
+.translator-actions {
+  display: flex;
+  gap: 10px;
+  padding: 14px 16px;
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-card);
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+}
+
+.btn-translator-swap {
+  background: var(--bg-hover);
+  border: 1px solid var(--border-color);
+  border-radius: 50%;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--text-secondary);
+  transition: all 0.2s;
+}
+.btn-translator-swap:hover {
+  background: var(--accent-1);
+  color: #fff;
+  transform: rotate(180deg);
+}
+
+.translator-divider {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 0;
+}
+
+/* =============================================
+   EXPORT MODAL STYLES
+   ============================================= */
+.export-options {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.export-option-btn {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 18px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-align: left;
+  font-family: var(--font-main);
+}
+.export-option-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent-1);
+  transform: translateX(4px);
+}
+.export-option-btn .material-icons-round {
+  font-size: 28px;
+  color: var(--accent-1);
+  flex-shrink: 0;
+}
+.export-option-btn strong {
+  display: block;
+  font-size: 0.95rem;
+  margin-bottom: 2px;
+}
+.export-option-btn small {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+/* Translator Mic Button Fix */
+.btn-translator-mic {
+  background: var(--bg-hover);
+  border: 1px solid var(--border-color);
+  border-radius: 50%;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--text-secondary);
+  transition: all 0.25s ease;
+  flex-shrink: 0;
+}
+.btn-translator-mic:hover {
+  background: var(--accent-1);
+  color: #fff;
+  border-color: var(--accent-1);
+}
+.btn-translator-mic.recording {
+  background: #e74c3c;
+  color: #fff;
+  border-color: #e74c3c;
+  animation: pulse-mic 1s ease-in-out infinite;
+}
+@keyframes pulse-mic {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(231, 76, 60, 0.5); }
+  50% { box-shadow: 0 0 0 10px rgba(231, 76, 60, 0); }
+}
