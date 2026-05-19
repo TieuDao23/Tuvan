@@ -915,6 +915,62 @@ body {
   gap: 4px;
 }
 
+/* Mobile Dropdown Menu */
+.mobile-dropdown-container {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.mobile-more-menu {
+  position: absolute;
+  top: 120%;
+  right: 0;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 8px 0;
+  min-width: 180px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  display: none;
+  flex-direction: column;
+  z-index: 200;
+  backdrop-filter: blur(20px);
+}
+
+.mobile-more-menu.active {
+  display: flex;
+  animation: fadeIn 0.2s ease;
+}
+
+.mobile-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
+  transition: background 0.2s;
+}
+
+.mobile-menu-item:hover {
+  background: var(--bg-hover);
+}
+
+.mobile-menu-item .material-icons-round {
+  font-size: 1.2rem;
+  color: var(--text-secondary);
+}
+
+.desktop-hidden {
+  display: none !important;
+}
+
 /* ===== Chat Area ===== */
 .chat-area {
   flex: 1;
@@ -1731,6 +1787,8 @@ h4.msg-heading { font-size: 1em; color: var(--accent-1); }
   display: flex;
   flex-direction: column;
   gap: 20px;
+  /* Tối ưu scroll trên di động */
+  padding-bottom: max(24px, env(safe-area-inset-bottom, 40px));
 }
 
 /* ===== Memory Cabinet ===== */
@@ -2213,9 +2271,15 @@ body.light-mode .mem-cat { background: rgba(0,0,0,0.05); }
   }
 
   /* Top bar */
-  .top-bar {
+    .top-bar {
     padding: 0 10px;
     gap: 8px;
+  }
+  .mobile-hidden {
+    display: none !important;
+  }
+  .desktop-hidden {
+    display: flex !important;
   }
 
   .current-model-display {
@@ -2370,9 +2434,10 @@ body.light-mode .mem-cat { background: rgba(0,0,0,0.05); }
     font-size: 1rem;
   }
 
-  .modal-body {
+    .modal-body {
     padding: 14px 18px 18px;
     gap: 16px;
+    padding-bottom: max(40px, env(safe-area-inset-bottom, 60px)); /* Đảm bảo nút Lưu không bị che */
   }
 
   .settings-section h3 {

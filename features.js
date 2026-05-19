@@ -13,8 +13,10 @@ function initTTS() {
     // Priorities for a sweet, energetic Vietnamese female voice
     const viVoices = voices.filter(v => v.lang.includes('vi'));
     // MS HoaiMy is known for natural, sweet female voice on Windows
-    let best = viVoices.find(v => v.name.includes('HoaiMy') || v.name.includes('Lien'));
+    // Ưu tiên giọng nữ: Google Tiếng Việt (trên Chrome/Edge), Microsoft HoaiMy (Windows), Lien (Mac/iOS)
+    let best = viVoices.find(v => v.name.includes('HoaiMy'));
     if (!best) best = viVoices.find(v => v.name.includes('Google'));
+    if (!best) best = viVoices.find(v => v.name.includes('Lien') || v.name.toLowerCase().includes('female'));
     if (!best && viVoices.length > 0) best = viVoices[0];
     
     selectedVoice = best || voices[0];
@@ -40,9 +42,9 @@ window.speakText = function(text, lang = 'vi-VN') {
     msg.voice = femaleLangVoice || langVoices[0] || voices[0];
   }
   
-  // Năng động, diễn cảm: rate hơi nhanh một chút, pitch cao một chút để giống thiếu nữ
-  msg.rate = 1.05;
-  msg.pitch = 1.2; 
+  // Năng động, diễn cảm: rate vừa phải để không bị nuốt chữ, pitch nhỉnh hơn chút để có giọng nữ tính, ngọt ngào
+  msg.rate = 1.0; // Tốc độ chuẩn để đọc rõ tiếng Việt
+  msg.pitch = 1.15; // Giọng hơi cao một chút để tạo sự tinh nghịch, dễ thương
   msg.lang = lang;
   
   window.speechSynthesis.speak(msg);

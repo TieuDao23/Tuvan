@@ -9,7 +9,7 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title>Suna Chat</title>
-    <link rel="icon" href="assets/avatar.png" type="image/png">
+    <link rel="icon" href="assets/logo.png" type="image/png">
     <link rel="apple-touch-icon" href="assets/avatar.png">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&family=Noto+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet">
@@ -24,11 +24,7 @@
     <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js">
     <!-- PDF.js for reading PDF files -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-    <script>
-      if (typeof pdfjsLib !== 'undefined') {
-        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-      }
-    </script>
+    <!-- PDF Worker configuration moved to app.js to ensure library is loaded -->
     <!-- Mermaid cho Sơ đồ tư duy -->
     <script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
     <script>
@@ -317,15 +313,26 @@
                     <button id="btn-toggle-theme" class="btn-icon" title="Chuyển đổi Sáng/Tối">
                         <span class="material-icons-round" id="theme-icon">light_mode</span>
                     </button>
-                    <button id="btn-export-chat" class="btn-icon" title="Tải xuống đoạn chat (Markdown)">
+                    <button id="btn-export-chat" class="btn-icon mobile-hidden" title="Tải xuống đoạn chat (Markdown)">
                         <span class="material-icons-round">download</span>
                     </button>
-                    <button id="btn-font-settings" class="btn-icon" title="Cài đặt font chữ">
-                        <span class="material-icons-round">text_fields</span>
-                    </button>
-                    <button id="btn-api-settings" class="btn-icon" title="API & Model">
+                    <button id="btn-api-settings" class="btn-icon" title="API & Model (Proxy)">
                         <span class="material-icons-round">api</span>
                     </button>
+                    <!-- Dropdown for Mobile -->
+                    <div class="mobile-dropdown-container">
+                        <button id="btn-mobile-more" class="btn-icon desktop-hidden" title="Thêm">
+                            <span class="material-icons-round">more_vert</span>
+                        </button>
+                        <div id="mobile-more-menu" class="mobile-more-menu">
+                            <button id="btn-export-chat-mobile" class="mobile-menu-item">
+                                <span class="material-icons-round">download</span> Tải đoạn chat
+                            </button>
+                            <button id="btn-toggle-theme-mobile" class="mobile-menu-item">
+                                <span class="material-icons-round" id="theme-icon-mobile">light_mode</span> Đổi giao diện
+                            </button>
+                        </div>
+                    </div>
                 </div>
             </header>
 
@@ -425,6 +432,12 @@
                             <label class="settings-desc">Tên hiển thị</label>
                             <input type="text" id="user-name-input" class="settings-input" placeholder="Nhập tên của bạn...">
                         </div>
+                    </div>
+                </div>
+                <div class="settings-section">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 10px;">
+                        <h3 style="margin-bottom:0;"><span class="material-icons-round">text_fields</span> Hiển thị & Font chữ</h3>
+                        <button id="btn-font-settings-in-modal" class="btn-secondary" style="padding: 5px 12px; font-size: 0.9rem;">Tùy chỉnh Font</button>
                     </div>
                 </div>
                 <div class="settings-section">

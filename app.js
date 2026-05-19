@@ -229,13 +229,20 @@ async function idbGet(key) {
 }
 
 let _saveTimeout = null;
-function saveState() {
+function saveState(forceIndexedDB = false) {
   if (_saveTimeout) clearTimeout(_saveTimeout);
   _saveTimeout = setTimeout(() => {
     try {
       localStorage.setItem('suna_settings', JSON.stringify(State.settings));
       localStorage.setItem('suna_mode', State.mode);
-      idbSet('suna_chats', State.chats).catch(e => console.error('IndexedDB save error:', e));
+      
+      // Tối ưu hiệu suất: Không ghi IndexedDB liên tục khi AI đang stream chữ
+      // Trừ khi bị ép buộc lưu (forceIndexedDB) khi kết thúc
+      if (!State.isGenerating || forceIndexedDB) {
+        idbSet('suna_chats', State.chats).catch(e => console.error('IndexedDB save error:', e));
+        // Cloud sync chỉ nên gọi khi đã lưu xong chat hoàn chỉnh
+        if (typeof triggerCloudSync === 'function') triggerCloudSync();
+      }
     } catch (e) {
       if (e.name === 'QuotaExceededError' || e.code === 22) {
         toast('Bộ nhớ settings đã đầy!', 'error');
@@ -243,9 +250,7 @@ function saveState() {
         console.error('Lỗi khi lưu trạng thái:', e);
       }
     }
-    // Trigger cloud sync if logged in
-    if (typeof triggerCloudSync === 'function') triggerCloudSync();
-  }, 500); // Debounce 500ms để tránh lag UI khi lưu liên tục
+  }, 500);
 }
 
 async function loadState() {
@@ -657,11 +662,14 @@ function formatMessage(text) {
   html = html.replace(/\^([^\^]+)\^/g, '<sup>$1</sup>');
   html = html.replace(/~([^~]+)~/g, '<sub>$1</sub>');
 
-  // Links [text](url)
-  // Links [text](url) - Added basic protection against javascript: links
+    // Links [text](url) - Advanced XSS Protection
   html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, text, url) => {
-    const safeUrl = url.trim().toLowerCase().startsWith('javascript:') ? '#' : url;
-    return `<a href="${safeUrl}" target="_blank" rel="noopener">${text}</a>`;
+    let cleanUrl = url.trim();
+    // Chặn triệt để các pseudo-protocol độc hại (javascript:, data:, vbscript:)
+    if (/^(?:javascript|data|vbscript):/i.test(cleanUrl)) {
+      cleanUrl = '#';
+    }
+    return `<a href="${cleanUrl}" target="_blank" rel="noopener noreferrer" class="msg-link">${text}</a>`;
   });
 
   // Unordered lists (lines starting with - or *)
@@ -1697,8 +1705,8 @@ async function generateAIResponse() {
       }
     }
 
-    chat.messages.push({ role: 'assistant', content: assistantContent, timestamp: Date.now() });
-      saveState();
+        chat.messages.push({ role: 'assistant', content: assistantContent, timestamp: Date.now() });
+      saveState(true); // Ép lưu vào IndexedDB và Cloud khi stream kết thúc
       if (isStillActiveChat()) renderMessages();
     
       // === AI Memory: Trích xuất thông tin từ tin nhắn user gần nhất ===
@@ -1811,25 +1819,6 @@ window.readAloud = function(text) {
   utterance.rate = 1.05; // Đọc nhanh hơn một chút xíu cho tự nhiên
   window.speechSynthesis.speak(utterance);
   toast('Đang đọc văn bản...', 'info');
-};
-
-// Tính năng 5: Quote / Trích dẫn tin nhắn
-window.quoteMessage = function(idx) {
-  const chat = getActiveChat();
-  if (!chat || !chat.messages[idx]) return;
-  const content = chat.messages[idx].content;
-  // Lấy tối đa 150 ký tự để trích dẫn cho gọn
-  const snippet = content.length > 150 ? content.substring(0, 150) + '...' : content;
-  const input = $('#message-input');
-  
-  if (input) {
-    const quoteText = `> ${snippet.replace(/\n/g, '\n> ')}\n\n`;
-    input.value = quoteText + input.value;
-    input.focus();
-    // Tự động điều chỉnh chiều cao input
-    input.style.height = 'auto';
-    input.style.height = (input.scrollHeight) + 'px';
-  }
 };
 
 // Tính năng 5: Quote / Trích dẫn tin nhắn
@@ -2446,117 +2435,4 @@ function openModal(id) {
     if (State.models.length) populateModelSelects();
   } else if (id === 'personality-modal') {
     $$('.tone-btn').forEach(b => b.classList.toggle('active', b.dataset.tone === State.settings.tone));
-    $$('.color-theme-btn').forEach(b => b.classList.toggle('active', b.dataset.theme === State.settings.theme));
-    $('#custom-personality').value = State.settings.customPersonality;
-  } else if (id === 'font-modal') {
-    $('#font-family-select').value = State.settings.fontFamily;
-    $('#font-size-range').value = State.settings.fontSize;
-    $('#font-size-value').textContent = State.settings.fontSize + 'px';
-    const preview = $('#font-preview');
-    preview.style.fontFamily = State.settings.fontFamily;
-    preview.style.fontSize = State.settings.fontSize + 'px';
-  }
-}
-
-function closeModal(id) { $(`#${id}`).style.display = 'none'; }
-
-// ===== Sidebar Helpers =====
-function toggleSidebar() {
-  const sidebar = $('.sidebar');
-  const overlay = $('#sidebar-overlay');
-  const isCollapsed = sidebar.classList.contains('collapsed');
-  if (isCollapsed) {
-    sidebar.classList.remove('collapsed');
-    if (isMobile()) overlay.classList.add('active');
-  } else {
-    closeSidebar();
-  }
-}
-
-function closeSidebar() {
-  $('.sidebar').classList.add('collapsed');
-  $('#sidebar-overlay').classList.remove('active');
-}
-
-// ===== Init =====
-async function init() {
-  applyTheme();
-  setMode(State.mode);
-  renderChatList();
-  if (State.activeChatId) renderMessages();
-  updateModelDisplay();
-  initEvents();
-  initParticles();
-  if (typeof updateUserDisplay === 'function') updateUserDisplay();
-  if (window.updateWebSearchUI) window.updateWebSearchUI();
-
-  // Start with sidebar collapsed on mobile
-  if (isMobile()) {
-    closeSidebar();
-  }
-
-  // Handle resize: adjust sidebar and overlay
-  window.addEventListener('resize', () => {
-    if (!isMobile()) {
-      $('#sidebar-overlay').classList.remove('active');
-      // Auto-expand sidebar on desktop
-      $('.sidebar').classList.remove('collapsed');
-    }
-  });
-}
-
-// ===== onUserSignedIn callback (called by auth.js after successful login) =====
-function onUserSignedIn() {
-  // Re-run app initialization sequence with cloud data
-  applyTheme();
-  setMode(State.mode);
-  renderChatList();
-  renderMessages();
-  updateModelDisplay();
-  initParticles();
-  if (window.updateWebSearchUI) window.updateWebSearchUI();
-}
-
-
-document.addEventListener('DOMContentLoaded', async () => {
-  // 1. Load local state
-  await loadState();
-  await loadMemory();
-
-  // 2. Auth flow
-  if (typeof initAuth === 'function') {
-    initAuthEvents();
-    await initAuth();
-    // Nếu đã đăng nhập, auth.js đã gọi doAppInit() → init()
-    // Nếu chưa đăng nhập, auth screen đang hiện, chờ user login
-  } else {
-    init(); // No auth module
-  }
-});
-
-// =============================================
-// DIRECT API CALL (for features.js)
-// =============================================
-window.directApiCall = async function(prompt) {
-  const model = getActiveModel() || 'gemini-2.5-flash';
-  const proxy = getProxyForModel(model);
-  if (!proxy || !State.settings.apiKey) throw new Error("Vui lòng cấu hình API (nhập API Key).");
-
-  const url = proxy.url + '/chat/completions';
-  const messages = [{ role: 'user', content: prompt }];
-  const reqBody = { model, messages, temperature: 0.3, max_tokens: 1024 };
-
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${State.settings.apiKey}` },
-    body: JSON.stringify(reqBody)
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || "Lỗi mạng hoặc API.");
-  }
-  
-  const data = await res.json();
-  return data.choices?.[0]?.message?.content || "";
-};
+    $$('.color-theme-btn').forEach(b => b.classList.toggle('active', b.dataset.theme === State.settings.theme)
