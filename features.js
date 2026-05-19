@@ -230,14 +230,17 @@ function initMemoryCabinet() {
     mems.forEach((m, idx) => {
       const el = document.createElement('div');
       el.className = 'memory-chip';
+      // m is an object {fact, category, timestamp}
+      const factText = (typeof m === 'object' && m.fact) ? m.fact : String(m);
+      const factLower = factText.toLowerCase();
       let catHtml = '';
-      if (m.toLowerCase().includes('tên') || m.toLowerCase().includes('tuổi')) catHtml = '<span class="mem-cat">👤 Cá nhân</span>';
-      else if (m.toLowerCase().includes('thích') || m.toLowerCase().includes('ghét')) catHtml = '<span class="mem-cat">⭐ Sở thích</span>';
-      else if (m.toLowerCase().includes('việc') || m.toLowerCase().includes('làm')) catHtml = '<span class="mem-cat">💼 Công việc</span>';
+      if (factLower.includes('tên') || factLower.includes('tuổi')) catHtml = '<span class="mem-cat">👤 Cá nhân</span>';
+      else if (factLower.includes('thích') || factLower.includes('ghét')) catHtml = '<span class="mem-cat">⭐ Sở thích</span>';
+      else if (factLower.includes('việc') || factLower.includes('làm')) catHtml = '<span class="mem-cat">💼 Công việc</span>';
       else catHtml = '<span class="mem-cat">📌 Chung</span>';
 
       el.innerHTML = `
-        <div class="mem-content">${m}</div>
+        <div class="mem-content">${factText}</div>
         ${catHtml}
         <button class="btn-delete-mem" data-idx="${idx}"><span class="material-icons-round">delete</span></button>
       `;
@@ -259,7 +262,8 @@ function initMemoryCabinet() {
     if (!val) return;
     if (!window.State.memory) window.State.memory = { facts: [] };
     if (!window.State.memory.facts) window.State.memory.facts = [];
-    window.State.memory.facts.push(val);
+    // Store as object {fact, category, timestamp} to match State.memory structure
+    window.State.memory.facts.push({ fact: val, category: 'context', timestamp: Date.now() });
     if (window.saveMemory) window.saveMemory();
     input.value = '';
     renderMemoryList();
@@ -463,11 +467,12 @@ b{display:block;margin-bottom:6px;font-size:0.85em;opacity:0.7}p{margin:0;white-
   });
 }
 
-// Khởi chạy tất cả khi tải xong
+// Khởi chạy tất cả features khi tải xong
 document.addEventListener('DOMContentLoaded', () => {
   initTTS();
   initTranslatorMode();
   initMemoryCabinet();
   initArtifactsAndSearch();
   initExportChat();
+  // NOTE: Auth events & main init are handled by auth.js + app.js DOMContentLoaded
 });

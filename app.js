@@ -1,4 +1,4 @@
-// ===== State Management =====
+﻿// ===== State Management =====
 const State = {
   chats: [],
   activeChatId: null,
@@ -1916,10 +1916,43 @@ function initEvents() {
   window.addEventListener('online', () => { if(window.toast) toast('Đã khôi phục kết nối mạng.', 'success'); });
 
     // Light/Dark Mode toggle
-  $('#btn-toggle-theme').addEventListener('click', () => {
-    State.settings.lightMode = !State.settings.lightMode;
-    applyTheme();
-    saveState();
+    const btnToggleTheme = $('#btn-toggle-theme');
+  if (btnToggleTheme) {
+    btnToggleTheme.addEventListener('click', () => {
+      State.settings.lightMode = !State.settings.lightMode;
+      applyTheme();
+      saveState();
+    });
+  }
+  
+  // Mobile More Menu Actions
+  const btnMobileMore = document.getElementById('btn-mobile-more');
+  const mobileMoreMenu = document.getElementById('mobile-more-menu');
+  if (btnMobileMore && mobileMoreMenu) {
+    btnMobileMore.addEventListener('click', (e) => {
+      e.stopPropagation();
+      mobileMoreMenu.classList.toggle('active');
+    });
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('.mobile-dropdown-container')) {
+        mobileMoreMenu.classList.remove('active');
+      }
+    });
+    // Clone actions for mobile menu
+    document.getElementById('btn-toggle-theme-mobile')?.addEventListener('click', () => {
+      if ($('#btn-toggle-theme')) $('#btn-toggle-theme').click();
+      mobileMoreMenu.classList.remove('active');
+    });
+    document.getElementById('btn-export-chat-mobile')?.addEventListener('click', () => {
+      if ($('#btn-export-chat')) $('#btn-export-chat').click();
+      mobileMoreMenu.classList.remove('active');
+    });
+  }
+
+  // Font settings inside Modal
+  document.getElementById('btn-font-settings-in-modal')?.addEventListener('click', () => {
+    closeModal('settings-modal');
+    openModal('font-modal');
   });
 
   // Sidebar toggle
@@ -1961,8 +1994,9 @@ function initEvents() {
     // New chat
   $('#btn-new-chat').addEventListener('click', () => createChat());
 
-  // Tải xuống đoạn chat (Export to Markdown)
-  $('#btn-export-chat').addEventListener('click', () => {
+    // Tải xuống đoạn chat (Export to Markdown)
+  const btnExportChat = $('#btn-export-chat');
+  if (btnExportChat) btnExportChat.addEventListener('click', () => {
     const chat = getActiveChat();
     if (!chat || chat.messages.length === 0) {
       toast('Đoạn chat đang trống', 'info');
@@ -2218,11 +2252,11 @@ function initEvents() {
     try { e.target.value = ''; } catch(_) { e.target.type = ''; e.target.type = 'file'; }
   });
 
-  // Modals
-  $('#btn-settings').addEventListener('click', () => openModal('settings-modal'));
-  $('#btn-api-settings').addEventListener('click', () => openModal('api-modal'));
-  $('#btn-personality').addEventListener('click', () => openModal('personality-modal'));
-  $('#btn-font-settings').addEventListener('click', () => openModal('font-modal'));
+    // Modals
+  const btnSettings = $('#btn-settings'); if (btnSettings) btnSettings.addEventListener('click', () => openModal('settings-modal'));
+  const btnApiSettings = $('#btn-api-settings'); if (btnApiSettings) btnApiSettings.addEventListener('click', () => openModal('api-modal'));
+  const btnPersonality = $('#btn-personality'); if (btnPersonality) btnPersonality.addEventListener('click', () => openModal('personality-modal'));
+  const btnFontSettings = $('#btn-font-settings'); if (btnFontSettings) btnFontSettings.addEventListener('click', () => openModal('font-modal'));
 
   $$('.btn-close-modal').forEach(btn => {
     btn.addEventListener('click', () => closeModal(btn.dataset.close));
@@ -2412,27 +2446,96 @@ function initEvents() {
   });
 }
 
+
+
 function openModal(id) {
-  $(`#${id}`).style.display = 'flex';
-  // Populate fields
+  document.getElementById(id).style.display = 'flex';
   if (id === 'settings-modal') {
-    $('#user-name-input').value = State.settings.userName || 'Bạn';
-    const avatarPreview = $('#user-avatar-preview');
-    avatarPreview.src = State.settings.userAvatar || '';
-    avatarPreview.style.display = State.settings.userAvatar ? 'block' : 'none';
+    document.getElementById('user-name-input').value = State.settings.userName || 'Ban';
+    const avatarPreview = document.getElementById('user-avatar-preview');
     if (!State.settings.userAvatar) {
       avatarPreview.style.display = 'block';
       avatarPreview.src = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 56 56"><rect fill="%23222" width="56" height="56" rx="28"/><text x="28" y="35" text-anchor="middle" fill="%23888" font-size="24">?</text></svg>');
+    } else {
+      avatarPreview.src = State.settings.userAvatar;
+      avatarPreview.style.display = 'block';
     }
-    $('#system-prompt').value = State.settings.systemPrompt;
-    $('#user-purpose').value = State.settings.userPurpose;
+    document.getElementById('system-prompt').value = State.settings.systemPrompt || '';
+    document.getElementById('user-purpose').value = State.settings.userPurpose || '';
     populateModelSelects();
   } else if (id === 'api-modal') {
-    $('#api-base-url').value = State.settings.baseUrl;
-    $('#api-key').value = State.settings.apiKey;
-    $('#api-base-url-2').value = State.settings.baseUrl2 || '';
-    $('#api-key-2').value = State.settings.apiKey2 || '';
+    document.getElementById('api-base-url').value = State.settings.baseUrl || '';
+    document.getElementById('api-key').value = State.settings.apiKey || '';
+    document.getElementById('api-base-url-2').value = State.settings.baseUrl2 || '';
+    document.getElementById('api-key-2').value = State.settings.apiKey2 || '';
     if (State.models.length) populateModelSelects();
   } else if (id === 'personality-modal') {
-    $$('.tone-btn').forEach(b => b.classList.toggle('active', b.dataset.tone === State.settings.tone));
-    $$('.color-theme-btn').forEach(b => b.classList.toggle('active', b.dataset.theme === State.settings.theme)
+    document.querySelectorAll('.tone-btn').forEach(b => b.classList.toggle('active', b.dataset.tone === State.settings.tone));
+    document.querySelectorAll('.color-theme-btn').forEach(b => b.classList.toggle('active', b.dataset.theme === State.settings.theme));
+    document.getElementById('custom-personality').value = State.settings.customPersonality || '';
+  } else if (id === 'font-modal') {
+    const fs = document.getElementById('font-family-select');
+    if (fs) fs.value = State.settings.fontFamily || "'Inter', sans-serif";
+    const sz = State.settings.fontSize || 15;
+    const fr = document.getElementById('font-size-range');
+    const fv = document.getElementById('font-size-value');
+    const fp = document.getElementById('font-preview');
+    if (fr) fr.value = sz;
+    if (fv) fv.textContent = sz + 'px';
+    if (fp) { fp.style.fontFamily = State.settings.fontFamily; fp.style.fontSize = sz + 'px'; }
+  }
+}
+
+function closeModal(id) {
+  const el = document.getElementById(id);
+  if (el) el.style.display = 'none';
+}
+window.closeModal = closeModal;
+window.openModal = openModal;
+window.getActiveModel = getActiveModel; // Expose the existing getActiveModel
+
+// ===== directApiCall for Translator =====
+window.directApiCall = async function(prompt) {
+  const model = getActiveModel();
+  const proxy = getProxyForModel(model); // Use existing function
+  if (!proxy.url || !proxy.key) throw new Error('Chua cau hinh API');
+  const url = proxy.url + '/chat/completions';
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + proxy.key },
+    body: JSON.stringify({ model: model, messages: [{ role: 'user', content: prompt }], max_tokens: 512, stream: false })
+  });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  const data = await res.json();
+  return data.choices?.[0]?.message?.content || '';
+};
+
+// ===== onUserSignedIn: called after background cloud sync =====
+window.onUserSignedIn = function() {
+  renderChatList();
+  renderMessages();
+  updateModelDisplay();
+};
+
+// ===== Main App Init (called by auth.js doAppInit) =====
+async function init() {
+  await loadState();
+  await loadMemory();
+  applyTheme();
+  setMode(State.mode || 'flash');
+  renderChatList();
+  renderMessages();
+  updateModelDisplay();
+  initParticles();
+  initEvents();
+}
+
+// ===== App Entry Point =====
+document.addEventListener('DOMContentLoaded', function() {
+  if (typeof initAuth === 'function') {
+    initAuth();
+  } else {
+    console.error('initAuth not found - check auth.js load order');
+  }
+  if (typeof initAuthEvents === 'function') initAuthEvents();
+});

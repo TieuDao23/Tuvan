@@ -46,6 +46,7 @@ async function loadFirebaseSDK() {
       updateProfile: authMod.updateProfile,
       sendPasswordResetEmail: authMod.sendPasswordResetEmail,
       doc: dbMod.doc, setDoc: dbMod.setDoc, getDoc: dbMod.getDoc,
+      onSnapshot: dbMod.onSnapshot,
       serverTimestamp: dbMod.serverTimestamp
     };
     return true;
@@ -146,6 +147,55 @@ async function cloudLoad() {
     return true;
   } catch (e) { console.error('Cloud load error:', e); return false; }
 }
+
+let _syncUnsubscribes = [];
+function initRealtimeSync() {
+  if (!AuthState.isLoggedIn || !_fb || AuthState.useLocalOnly) return;
+  const uid = AuthState.user.uid;
+  
+  // Clear any existing listeners
+  _syncUnsubscribes.forEach(u => u());
+  _syncUnsubscribes = [];
+
+  // 1. Listen to chats
+  _syncUnsubscribes.push(_fb.onSnapshot(_fb.doc(_fb.db, 'users', uid, 'data', 'chats'), (doc) => {
+    // Ignore updates triggered by this device to prevent UI jitter
+    if (!doc.exists() || doc.metadata.hasPendingWrites) return; 
+    try {
+      const cc = JSON.parse(doc.data().chats);
+      if (cc && cc.length > 0) {
+        State.chats = cc;
+        if (!State.chats.find(c => c.id === State.activeChatId)) State.activeChatId = State.chats[0].id;
+        if (typeof window.renderChatList === 'function') window.renderChatList();
+        if (typeof window.renderMessages === 'function') window.renderMessages();
+      }
+    } catch (e) { console.error('Realtime chat sync error', e); }
+  }));
+
+  // 2. Listen to memory
+  _syncUnsubscribes.push(_fb.onSnapshot(_fb.doc(_fb.db, 'users', uid, 'data', 'memory'), (doc) => {
+    if (!doc.exists() || doc.metadata.hasPendingWrites) return;
+    try {
+      const d = doc.data(); delete d.updatedAt;
+      if (d.facts) {
+        State.memory = d;
+        if (typeof window.renderMemoryList === 'function') window.renderMemoryList();
+      }
+    } catch (e) {}
+  }));
+  
+  // 3. Listen to settings
+  _syncUnsubscribes.push(_fb.onSnapshot(_fb.doc(_fb.db, 'users', uid, 'data', 'settings'), (doc) => {
+    if (!doc.exists() || doc.metadata.hasPendingWrites) return;
+    try {
+      const d = doc.data(); delete d.updatedAt;
+      Object.assign(State.settings, d);
+      if (typeof window.updateUserDisplay === 'function') window.updateUserDisplay();
+      if (typeof window.applyTheme === 'function') window.applyTheme();
+    } catch (e) {}
+  }));
+}
+
 
 function triggerCloudSync() {
   if (AuthState.isLoggedIn) {
@@ -348,6 +398,9 @@ window.handleLogout = async function handleLogout() {
   
   if (!_fb) return;
   try {
+    _syncUnsubscribes.forEach(u => u());
+    _syncUnsubscribes = [];
+    
     cloudSave(true);
     await _fb.signOutFn(_fb.auth);
     AuthState.isLoggedIn = false;
@@ -431,100 +484,86 @@ let _appInited = false;
 function doAppInit() {
   if (_appInited) {
     // Đã init rồi — chỉ refresh UI
-    if (typeof onUserSignedIn === 'function') onUserSignedIn();
+    if (typeof window.onUserSignedIn === 'function') window.onUserSignedIn();
     return;
   }
   _appInited = true;
   if (typeof init === 'function') init();
 }
 
-// ===== Main Auth Init (Optimized: Instant Local + Background Cloud Merge) =====
+// ===== Main Auth Init (Optimized: Zero-Friction / Offline First) =====
 async function initAuth() {
-  // 1. Guest mode — fast path (unchanged)
-  if (localStorage.getItem('suna_guest_mode') === 'true') {
-    AuthState.user = { uid: 'guest-' + Date.now(), email: 'khach@suna.local', displayName: 'Khách' };
-    AuthState.isLoggedIn = true;
-    AuthState.isAdmin = false;
-    AuthState.useLocalOnly = true;
-    hideAuthScreen(true);
-    doAppInit();
-    updateUserDisplay();
-    updateSyncIndicator('offline');
-    // Load SDK in background for potential re-login
-    loadFirebaseSDK().then(ok => {
-      if (ok) _fb.onAuthStateChanged(_fb.auth, () => {});
-    });
-    return;
-  }
-
-  // 2. ⚡ Cached auth — INSTANT APP DISPLAY
+  // 1. ⚡ INSTANT APP DISPLAY (Optimistic UI)
+  // We NEVER block the user with a login screen on first load.
+  // Everyone gets immediate access. Data is saved to IndexedDB.
+  
   const cachedUser = getCachedAuthUser();
+  const isGuestMode = localStorage.getItem('suna_guest_mode') === 'true';
+
   if (cachedUser) {
+    // Returning logged-in user
     AuthState.user = cachedUser;
     AuthState.isLoggedIn = true;
     AuthState.isAdmin = (cachedUser.email === 'duyanhblt1@gmail.com' || cachedUser.email === 'admin@suna.local');
     AuthState.useLocalOnly = false;
-    hideAuthScreen(true);    // No animation — instant
-    doAppInit();             // Show app NOW with local data
-    updateUserDisplay();
     updateSyncIndicator('syncing'); // Indicate background sync
+  } else {
+    // New user, cleared cache, or returning guest -> Default to Guest Mode instantly
+    AuthState.user = { uid: 'guest-' + Date.now(), email: 'khach@suna.local', displayName: 'Khách' };
+    AuthState.isLoggedIn = true;
+    AuthState.isAdmin = false;
+    AuthState.useLocalOnly = true;
+    localStorage.setItem('suna_guest_mode', 'true'); // Persist guest state
+    updateSyncIndicator('offline');
   }
 
-  // 3. Load Firebase SDK (background if cached, blocking if not)
+  // 2. Hide auth screen and show app INSTANTLY
+  hideAuthScreen(true);
+  doAppInit();
+  updateUserDisplay();
+
+  // 3. Load Firebase SDK (background)
   const sdkLoaded = await loadFirebaseSDK();
 
   if (!sdkLoaded) {
-    if (cachedUser) {
-      // SDK failed but we have cached auth — stay with local data
-      updateSyncIndicator('error');
-      return;
-    }
-    if (!AuthState.isLoggedIn) {
-      console.warn('Firebase unavailable — showing auth screen');
-      const errEl = document.getElementById('login-error');
-      if (errEl) {
-        errEl.textContent = 'Không thể kết nối đến máy chủ xác thực. Vui lòng kiểm tra mạng hoặc thử lại sau.';
-        errEl.style.display = 'block';
-      }
+    if (!cachedUser && !isGuestMode && window.toast) {
+      window.toast('Suna Chat đang chạy ở chế độ ngoại tuyến (Dữ liệu lưu cục bộ).', 'info');
     }
     return;
   }
 
-  // 4. Firebase auth listener
+  // 4. Firebase auth listener (upgrades session dynamically)
   return new Promise((resolve) => {
     let resolved = false;
 
     _fb.onAuthStateChanged(_fb.auth, async (user) => {
       if (user) {
+        // Firebase confirmed a real user session. Upgrade from guest if necessary.
         AuthState.user = user;
         AuthState.isLoggedIn = true;
         AuthState.isAdmin = (user.email === 'duyanhblt1@gmail.com' || user.email === 'admin@suna.local');
         AuthState.useLocalOnly = false;
         localStorage.removeItem('suna_guest_mode');
-        cacheAuthUser(user); // Cache for instant load next time
+        cacheAuthUser(user);
 
-        if (cachedUser) {
-          // ⚡ App already showing — SILENT background sync
-          await cloudLoad();
-          if (typeof onUserSignedIn === 'function') onUserSignedIn();
-          updateUserDisplay();
-          updateSyncIndicator('synced');
-        } else {
-          // First login / no cache — brief loading
-          const loadEl = document.getElementById('auth-loading');
-          if (loadEl) loadEl.style.display = 'flex';
-          await cloudLoad();
-          if (loadEl) loadEl.style.display = 'none';
-          hideAuthScreen();
-          doAppInit();
-          updateUserDisplay();
-          updateSyncIndicator('synced');
+        // Silent background sync
+        try { 
+          await cloudLoad(); 
+          initRealtimeSync();
+        } catch(e) { 
+          console.error(e); 
+        } finally { 
+          if (typeof window.onUserSignedIn === 'function') window.onUserSignedIn(); 
+          updateUserDisplay(); 
+          updateSyncIndicator('synced'); 
         }
       } else {
-        if (localStorage.getItem('suna_guest_mode') === 'true') {
-          // Guest mode — do nothing
-        } else if (cachedUser) {
-          // Token expired — force re-login
+        // Firebase says no user.
+        if (cachedUser) {
+          // Token expired. Downgrade them to auth screen to re-authenticate.
+          _syncUnsubscribes.forEach(u => u());
+          _syncUnsubscribes = [];
+          
           clearCachedAuth();
           AuthState.user = null;
           AuthState.isLoggedIn = false;
@@ -533,14 +572,8 @@ async function initAuth() {
           updateUserDisplay();
           updateSyncIndicator('offline');
           if (window.toast) window.toast('Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.', 'info');
-        } else {
-          AuthState.user = null;
-          AuthState.isLoggedIn = false;
-          AuthState.useLocalOnly = false;
-          showAuthScreen();
-          updateUserDisplay();
-          updateSyncIndicator('offline');
         }
+        // If they were already in Guest Mode, they just continue seamlessly.
       }
 
       AuthState.initialized = true;
