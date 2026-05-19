@@ -1,4 +1,4 @@
-﻿// ===== State Management =====
+// ===== State Management =====
 const State = {
   chats: [],
   activeChatId: null,
@@ -2539,3 +2539,35 @@ document.addEventListener('DOMContentLoaded', function() {
   }
   if (typeof initAuthEvents === 'function') initAuthEvents();
 });
+
+// ===== Sidebar Navigation Functions =====
+function toggleSidebar() {
+  const sidebar = document.getElementById('sidebar');
+  const overlay = document.getElementById('sidebar-overlay');
+  if (sidebar) {
+    sidebar.classList.toggle('collapsed');
+    
+    // For mobile overlay logic
+    if (isMobile() && overlay) {
+      if (!sidebar.classList.contains('collapsed')) {
+        overlay.classList.add('active');
+      } else {
+        overlay.classList.remove('active');
+      }
+    }
+  }
+}
+
+function closeSidebar() {
+  const sidebar = document.getElementById('sidebar');
+  const overlay = document.getElementById('sidebar-overlay');
+  if (sidebar) {
+    sidebar.classList.add('collapsed');
+  }
+  if (overlay) {
+    overlay.classList.remove('active');
+  }
+}
+
+window.toggleSidebar = toggleSidebar;
+window.closeSidebar = closeSidebar;
