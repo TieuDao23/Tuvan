@@ -381,12 +381,17 @@ async function handleGoogleLogin() {
     showAuthError('login', 'Firebase chưa sẵn sàng.');
     return;
   }
+  const btnGoogle = document.querySelector('.btn-auth-google');
+  if (btnGoogle) btnGoogle.style.opacity = '0.5';
   try {
     await _fb.signInWithPopup(_fb.auth, _fb.googleProvider);
+    hideAuthScreen();
   } catch (e) {
     console.error('Google login error:', e);
     const form = document.getElementById('login-form').style.display !== 'none' ? 'login' : 'register';
     showAuthError(form, translateFirebaseError(e.code || e.message));
+  } finally {
+    if (btnGoogle) btnGoogle.style.opacity = '1';
   }
 }
 
@@ -425,6 +430,14 @@ window.handleLogout = async function handleLogout() {
     AuthState.isLoggedIn = false;
     AuthState.user = null;
     localStorage.removeItem('suna_guest_mode');
+
+    if (typeof State !== 'undefined') {
+      State.chats = [{ id: 'chat-' + Date.now(), title: 'Chat mới', messages: [], createdAt: Date.now() }];
+      State.activeChatId = State.chats[0].id;
+      if (typeof window.saveLocalStateOnly === 'function') window.saveLocalStateOnly();
+      if (typeof window.onUserSignedIn === 'function') window.onUserSignedIn();
+    }
+
     updateUserDisplay();
     updateSyncIndicator('offline');
     if (window.toast) window.toast('Đã đăng xuất', 'info');
@@ -565,6 +578,9 @@ async function initAuth() {
         localStorage.removeItem('suna_guest_mode');
         cacheAuthUser(user);
 
+        const loading = document.getElementById('auth-loading');
+        if (loading) loading.style.display = 'flex';
+
         // Silent background sync
         try { 
           await cloudLoad(); 
@@ -572,6 +588,7 @@ async function initAuth() {
         } catch(e) { 
           console.error(e); 
         } finally { 
+          if (loading) loading.style.display = 'none';
           hideAuthScreen();
           if (typeof window.onUserSignedIn === 'function') window.onUserSignedIn(); 
           updateUserDisplay(); 

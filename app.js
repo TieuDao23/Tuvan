@@ -229,6 +229,14 @@ async function idbGet(key) {
 }
 
 let _saveTimeout = null;
+window.saveLocalStateOnly = function() {
+  idbSet('suna_chats', State.chats).catch(e => console.error('IndexedDB save error:', e));
+  try {
+    localStorage.setItem('suna_settings', JSON.stringify(State.settings));
+    localStorage.setItem('suna_mode', State.mode);
+  } catch(e) {}
+};
+
 function saveState(forceIndexedDB = false) {
   if (_saveTimeout) clearTimeout(_saveTimeout);
   _saveTimeout = setTimeout(() => {
