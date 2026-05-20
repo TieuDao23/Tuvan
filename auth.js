@@ -120,7 +120,12 @@ function cloudSave(immediate = false) {
       AuthState.isSyncing = false;
     }
   };
-  immediate ? doSave() : (AuthState.syncDebounceTimer = setTimeout(doSave, 2000));
+  if (immediate) {
+    return doSave();
+  } else {
+    AuthState.syncDebounceTimer = setTimeout(doSave, 2000);
+    return Promise.resolve();
+  }
 }
 
 async function cloudLoad() {
@@ -135,6 +140,8 @@ async function cloudLoad() {
       _fb.getDoc(_fb.doc(_fb.db, 'users', uid, 'data', 'chats'))
     ]);
 
+    const isNewAccount = !sSnap.exists() && !mSnap.exists() && !cSnap.exists();
+
     if (sSnap.exists()) { const d = sSnap.data(); delete d.updatedAt; Object.assign(State.settings, d); }
     if (mSnap.exists()) { const d = mSnap.data(); delete d.updatedAt; if (d.facts) State.memory = d; }
     if (cSnap.exists() && cSnap.data().chats) {
@@ -143,6 +150,14 @@ async function cloudLoad() {
         State.chats = cc;
         if (!State.chats.find(c => c.id === State.activeChatId)) State.activeChatId = State.chats[0].id;
       }
+    }
+
+    if (isNewAccount) {
+      // Đăng nhập lần đầu: Tự động đẩy dữ liệu của chế độ Khách lên Cloud
+      cloudSave(true);
+    } else {
+      // Đã có dữ liệu Cloud: Lưu dữ liệu vừa tải về xuống bộ nhớ Offline
+      if (window.saveLocalStateOnly) window.saveLocalStateOnly();
     }
     return true;
   } catch (e) { console.error('Cloud load error:', e); return false; }
@@ -168,6 +183,7 @@ function initRealtimeSync() {
         if (!State.chats.find(c => c.id === State.activeChatId)) State.activeChatId = State.chats[0].id;
         if (typeof window.renderChatList === 'function') window.renderChatList();
         if (typeof window.renderMessages === 'function') window.renderMessages();
+        if (window.saveLocalStateOnly) window.saveLocalStateOnly();
       }
     } catch (e) { console.error('Realtime chat sync error', e); }
   }));
@@ -180,6 +196,7 @@ function initRealtimeSync() {
       if (d.facts) {
         State.memory = d;
         if (typeof window.renderMemoryList === 'function') window.renderMemoryList();
+        if (window.saveLocalStateOnly) window.saveLocalStateOnly();
       }
     } catch (e) {}
   }));
@@ -192,6 +209,7 @@ function initRealtimeSync() {
       Object.assign(State.settings, d);
       if (typeof window.updateUserDisplay === 'function') window.updateUserDisplay();
       if (typeof window.applyTheme === 'function') window.applyTheme();
+      if (window.saveLocalStateOnly) window.saveLocalStateOnly();
     } catch (e) {}
   }));
 }
@@ -401,7 +419,8 @@ window.handleLogout = async function handleLogout() {
     _syncUnsubscribes.forEach(u => u());
     _syncUnsubscribes = [];
     
-    cloudSave(true);
+    // Đợi quá trình lưu lên mạng hoàn tất 100% rồi mới cắt phiên đăng nhập
+    await cloudSave(true);
     await _fb.signOutFn(_fb.auth);
     AuthState.isLoggedIn = false;
     AuthState.user = null;
@@ -553,6 +572,7 @@ async function initAuth() {
         } catch(e) { 
           console.error(e); 
         } finally { 
+          hideAuthScreen();
           if (typeof window.onUserSignedIn === 'function') window.onUserSignedIn(); 
           updateUserDisplay(); 
           updateSyncIndicator('synced'); 
