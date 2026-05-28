@@ -652,23 +652,23 @@ class LofiPlayer {
     this.tracks = {
       calm: {
         title: "Suna Calm Day 🌸",
-        url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3"
+        url: "https://assets.codepen.io/4358584/Anitek_-_01_-_Kisses.mp3"
       },
       excited: {
         title: "Morning Sunshine ☀️",
-        url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3"
+        url: "https://assets.codepen.io/4358584/Anitek_-_02_-_Kisses_II.mp3"
       },
       sad: {
         title: "Rainy Night Tears 🌧️",
-        url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-8.mp3"
+        url: "https://assets.codepen.io/4358584/Anitek_-_03_-_Rain.mp3"
       },
       stressed: {
         title: "Forest Breeze 🍃",
-        url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-12.mp3"
+        url: "https://assets.codepen.io/4358584/Anitek_-_04_-_Wind.mp3"
       },
       creative: {
         title: "Midnight Dream 🌌",
-        url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-6.mp3"
+        url: "https://assets.codepen.io/4358584/Anitek_-_05_-_Dream.mp3"
       }
     };
     
@@ -713,7 +713,7 @@ class LofiPlayer {
     this.audio.addEventListener('error', (e) => {
       console.error("Lofi audio loading error:", e);
       if (window.toast) window.toast("Lỗi tải nhạc Lofi, đang chuyển track dự phòng...", "error");
-      this.audio.src = "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3";
+      this.audio.src = "https://assets.codepen.io/4358584/Anitek_-_01_-_Kisses.mp3";
       if (this.isPlaying) {
         this.audio.play().catch(err => console.error("Playback failed:", err));
       }
