@@ -726,7 +726,9 @@ class LofiPlayer {
       }
       
       this._fallbackTriggered = true;
-      this.showSafeToast("Lỗi tải nhạc Lofi, đang chuyển track dự phòng...", "error");
+      if (this.isPlaying) {
+        this.showSafeToast("Đang chuyển sang nguồn nhạc dự phòng...", "info");
+      }
       
       // Chuyển sang bài nhạc dự phòng calm lofi
       this.audio.src = "https://assets.codepen.io/4358584/Anitek_-_01_-_Kisses.mp3";
@@ -790,8 +792,7 @@ class LofiPlayer {
       })
       .catch(err => {
         console.error("Audio playback error:", err);
-        // Tránh lặp báo lỗi nếu đang ở trạng thái ngầm hoặc chưa click thực tế
-        this.showSafeToast("Vui lòng click lại để cấp quyền audio cho trình duyệt", "info");
+        // Fail silently in the console to avoid any UI warning floods or spam
       });
   }
   
