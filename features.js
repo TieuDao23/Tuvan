@@ -682,6 +682,9 @@ class LofiPlayer {
     this.volumeSlider = null;
     this.trackTitle = null;
     this.visualizer = null;
+    
+    this._lastToastMessage = '';
+    this._lastToastTime = 0;
   }
   
   init() {
@@ -723,7 +726,7 @@ class LofiPlayer {
       }
       
       this._fallbackTriggered = true;
-      if (window.toast) window.toast("Lỗi tải nhạc Lofi, đang chuyển track dự phòng...", "error");
+      this.showSafeToast("Lỗi tải nhạc Lofi, đang chuyển track dự phòng...", "error");
       
       // Chuyển sang bài nhạc dự phòng calm lofi
       this.audio.src = "https://assets.codepen.io/4358584/Anitek_-_01_-_Kisses.mp3";
@@ -734,6 +737,16 @@ class LofiPlayer {
         });
       }
     });
+  }
+  
+  showSafeToast(message, type = 'info') {
+    const now = Date.now();
+    if (this._lastToastMessage === message && now - this._lastToastTime < 3000) {
+      return; // Skip duplicate toasts within 3 seconds
+    }
+    this._lastToastMessage = message;
+    this._lastToastTime = now;
+    if (window.toast) window.toast(message, type);
   }
   
   loadTrack(mood) {
@@ -773,11 +786,12 @@ class LofiPlayer {
         this.isPlaying = true;
         this.playBtn.innerHTML = '<span class="material-icons-round">pause</span>';
         this.visualizer.classList.add('active');
-        if (window.toast) window.toast("Đã bật nhạc Suna Lofi Thư Giãn 🌸", "success");
+        this.showSafeToast("Đã bật nhạc Suna Lofi Thư Giãn 🌸", "success");
       })
       .catch(err => {
         console.error("Audio playback error:", err);
-        if (window.toast) window.toast("Vui lòng click lại để cấp quyền audio cho trình duyệt", "info");
+        // Tránh lặp báo lỗi nếu đang ở trạng thái ngầm hoặc chưa click thực tế
+        this.showSafeToast("Vui lòng click lại để cấp quyền audio cho trình duyệt", "info");
       });
   }
   
@@ -802,8 +816,8 @@ class LofiPlayer {
   changeMood(mood) {
     if (this.tracks[mood] && mood !== this.currentMood) {
       this.loadTrack(mood);
-      if (window.toast && this.isPlaying) {
-        window.toast(`Giai điệu chuyển sang mood ${mood} 🎵`, "info");
+      if (this.isPlaying) {
+        this.showSafeToast(`Giai điệu chuyển sang mood ${mood} 🎵`, "info");
       }
     }
   }
