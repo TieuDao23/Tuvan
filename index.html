@@ -296,6 +296,30 @@
                     </div>
                 </div>
                 <div class="top-bar-right">
+                    <!-- Suna Lofi Player -->
+                    <div id="suna-lofi-player" class="suna-lofi-player">
+                        <button id="lofi-play-btn" class="lofi-control-btn" title="Play/Pause Suna Lofi">
+                            <span class="material-icons-round">play_arrow</span>
+                        </button>
+                        <div class="lofi-track-info">
+                            <div class="lofi-track-title-container">
+                                <div id="lofi-track-title" class="lofi-track-title">Suna Calm Day 🌸</div>
+                            </div>
+                        </div>
+                        <div class="lofi-volume-container">
+                            <span class="material-icons-round lofi-volume-icon">volume_up</span>
+                            <input type="range" id="lofi-volume-slider" class="lofi-volume-slider" min="0" max="1" step="0.05" value="0.5" title="Volume">
+                        </div>
+                        <!-- Glowing wave visualizer bar -->
+                        <div id="lofi-visualizer" class="lofi-visualizer">
+                            <span class="visualizer-bar bar1"></span>
+                            <span class="visualizer-bar bar2"></span>
+                            <span class="visualizer-bar bar3"></span>
+                            <span class="visualizer-bar bar4"></span>
+                            <span class="visualizer-bar bar5"></span>
+                        </div>
+                    </div>
+
                     <!-- User Profile Dropdown -->
                     <div class="top-user-profile" style="position: relative;">
                         <button id="btn-user-menu" class="btn-icon" title="Tài khoản" onclick="document.getElementById('user-dropdown').classList.toggle('active')">
@@ -751,16 +775,29 @@
     </div>
 
     <!-- Artifacts / Code Preview Panel -->
-    <div id="artifacts-panel" class="artifacts-panel">
+    <div id="artifacts-panel" class="artifacts-panel" data-view="split">
         <div class="artifacts-header">
             <div class="artifacts-title"><span class="material-icons-round">code</span> <span id="artifact-title">Live Workspace</span></div>
             <div class="artifacts-actions">
+                <div class="artifact-view-toggle">
+                    <button class="view-toggle-btn active" data-view="split" title="Chế độ chia đôi"><span class="material-icons-round">splitscreen</span><span>Split</span></button>
+                    <button class="view-toggle-btn" data-view="editor" title="Chế độ chỉnh sửa"><span class="material-icons-round">edit</span><span>Editor</span></button>
+                    <button class="view-toggle-btn" data-view="preview" title="Chế độ xem trước"><span class="material-icons-round">visibility</span><span>Preview</span></button>
+                </div>
+                <button id="btn-copy-artifact" class="btn-icon" title="Sao chép code"><span class="material-icons-round">content_copy</span></button>
+                <button id="btn-download-artifact" class="btn-icon" title="Tải xuống HTML"><span class="material-icons-round">download</span></button>
                 <button id="btn-refresh-artifact" class="btn-icon" title="Tải lại"><span class="material-icons-round">refresh</span></button>
-                <button id="btn-close-artifact" class="btn-icon"><span class="material-icons-round">close</span></button>
+                <button id="btn-collab-suna" class="btn-collab" title="Nhờ Suna tối ưu code"><span class="material-icons-round">smart_toy</span><span>Cộng tác với Suna</span></button>
+                <button id="btn-close-artifact" class="btn-icon" title="Đóng"><span class="material-icons-round">close</span></button>
             </div>
         </div>
         <div class="artifacts-content">
-            <iframe id="artifact-iframe" sandbox="allow-scripts allow-same-origin" style="width:100%; height:100%; border:none; background:white;"></iframe>
+            <div class="artifact-editor-container">
+                <textarea id="artifact-editor-textarea" class="artifact-editor-textarea" placeholder="Nhập code HTML/CSS/JS..." spellcheck="false"></textarea>
+            </div>
+            <div class="artifact-preview-container">
+                <iframe id="artifact-iframe" sandbox="allow-scripts" style="width:100%; height:100%; border:none; background:white;"></iframe>
+            </div>
         </div>
     </div>
 

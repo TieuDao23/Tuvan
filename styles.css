@@ -4053,3 +4053,739 @@ body.light-mode ::-webkit-scrollbar-thumb:hover { background: rgba(0, 0, 0, 0.2)
   0%, 100% { box-shadow: 0 0 0 0 rgba(231, 76, 60, 0.5); }
   50% { box-shadow: 0 0 0 10px rgba(231, 76, 60, 0); }
 }
+
+/* ===== Premium Kanban Board Planner ===== */
+.kanban-board {
+  display: flex;
+  gap: 18px;
+  overflow-x: auto;
+  padding: 10px 2px 16px 2px;
+  width: 100%;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+}
+
+.kanban-board::-webkit-scrollbar {
+  height: 6px;
+}
+
+.kanban-board::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.kanban-board::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+}
+
+body.light-mode .kanban-board::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.1);
+}
+
+.kanban-column {
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 16px;
+  width: 290px;
+  min-width: 270px;
+  max-width: 320px;
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+  transition: all 0.3s cubic-bezier(0.165, 0.84, 0.44, 1);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.2);
+}
+
+body.light-mode .kanban-column {
+  background: rgba(0, 0, 0, 0.02);
+  border-color: rgba(0, 0, 0, 0.07);
+  box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.05);
+}
+
+.kanban-column.drag-over {
+  border-color: var(--accent-1, #f5576c);
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 0 20px rgba(245, 87, 108, 0.25), 0 8px 32px 0 rgba(0, 0, 0, 0.25);
+  transform: translateY(-2px);
+}
+
+body.light-mode .kanban-column.drag-over {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.kanban-column-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+body.light-mode .kanban-column-header {
+  border-bottom-color: rgba(0, 0, 0, 0.05);
+}
+
+.kanban-column-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text-primary, #fff);
+  margin: 0;
+  letter-spacing: 0.3px;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.kanban-task-count {
+  font-size: 0.75rem;
+  font-weight: 700;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-secondary, #b3b3b3);
+  padding: 3px 8px;
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+body.light-mode .kanban-task-count {
+  background: rgba(0, 0, 0, 0.05);
+  border-color: rgba(0, 0, 0, 0.02);
+  color: var(--text-secondary, #666);
+}
+
+.kanban-tasks-container {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 120px;
+  flex-grow: 1;
+}
+
+.kanban-card {
+  background: var(--bg-card, rgba(30, 27, 46, 0.6));
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+  padding: 12px 14px;
+  cursor: grab;
+  transition: all 0.25s cubic-bezier(0.165, 0.84, 0.44, 1);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.15);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  position: relative;
+  overflow: hidden;
+}
+
+body.light-mode .kanban-card {
+  background: #ffffff;
+  border-color: rgba(0, 0, 0, 0.08);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.04);
+}
+
+.kanban-card:hover {
+  transform: translateY(-3px) scale(1.02);
+  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.25);
+  border-color: var(--accent-1, #f5576c);
+}
+
+body.light-mode .kanban-card:hover {
+  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.08);
+}
+
+.kanban-card.dragging {
+  opacity: 0.35;
+  transform: scale(0.96);
+  cursor: grabbing;
+  border: 1.5px dashed var(--accent-1, #f5576c);
+}
+
+.kanban-card-content {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.kanban-card-bullet {
+  width: 6px;
+  height: 15px;
+  border-radius: 3px;
+  background: var(--accent-gradient, linear-gradient(135deg, #f5576c 0%, #f093fb 100%));
+  flex-shrink: 0;
+  margin-top: 2px;
+  transition: background 0.25s ease;
+}
+
+.kanban-card-text {
+  font-size: 0.86rem;
+  line-height: 1.45;
+  color: var(--text-primary, #fff);
+  font-weight: 500;
+  transition: all 0.25s ease;
+  user-select: none;
+}
+
+/* Completion state */
+.kanban-card.completed {
+  opacity: 0.65;
+}
+
+.kanban-card.completed .kanban-card-text {
+  text-decoration: line-through;
+  color: var(--text-muted, #7e7a8e);
+}
+
+.kanban-card.completed .kanban-card-bullet {
+  background: #43e97b !important;
+}
+
+/* Execute Action Button */
+.btn-kanban-execute {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: rgba(245, 87, 108, 0.06);
+  border: 1px solid rgba(245, 87, 108, 0.2);
+  border-radius: 8px;
+  padding: 6px 12px;
+  color: var(--accent-1, #f5576c);
+  font-size: 0.74rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  width: 100%;
+}
+
+.btn-kanban-execute .material-icons-round {
+  font-size: 13px;
+  transition: transform 0.25s ease;
+}
+
+.btn-kanban-execute:hover {
+  background: var(--accent-gradient, linear-gradient(135deg, #f5576c 0%, #f093fb 100%));
+  border-color: transparent;
+  color: #fff;
+  box-shadow: 0 4px 12px var(--accent-glow, rgba(245, 87, 108, 0.4));
+  transform: translateY(-1px);
+}
+
+.btn-kanban-execute:hover .material-icons-round {
+  transform: scale(1.2) rotate(15deg);
+}
+
+.btn-kanban-execute:active {
+  transform: translateY(0);
+}
+
+/* =============================================
+   INTERACTIVE CODE SANDBOX SPLIT-SCREEN EDITOR
+   ============================================= */
+.artifacts-panel {
+  position: fixed;
+  top: 0;
+  right: -100%;
+  width: 60%;
+  max-width: 90%;
+  min-width: 320px;
+  height: 100%;
+  background: rgba(20, 18, 32, 0.85);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-left: 1px solid var(--border-color);
+  box-shadow: -8px 0 32px rgba(0, 0, 0, 0.4);
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  transition: right 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.artifacts-panel.active {
+  right: 0;
+}
+
+.artifacts-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border-color);
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.artifacts-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: var(--text-primary);
+}
+
+.artifacts-title .material-icons-round {
+  color: var(--accent-1);
+}
+
+.artifacts-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Glassmorphic Segmented View Toggle */
+.artifact-view-toggle {
+  display: flex;
+  background: rgba(255, 255, 255, 0.05);
+  padding: 3px;
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  margin-right: 4px;
+}
+
+body.light-mode .artifact-view-toggle {
+  background: rgba(0, 0, 0, 0.04);
+  border-color: rgba(0, 0, 0, 0.06);
+}
+
+.view-toggle-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  padding: 6px 14px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  border-radius: 16px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-family: var(--font-main);
+}
+
+.view-toggle-btn .material-icons-round {
+  font-size: 1.05rem;
+}
+
+.view-toggle-btn:hover {
+  color: var(--text-primary);
+}
+
+.view-toggle-btn.active {
+  background: var(--accent-gradient);
+  color: #fff;
+  box-shadow: 0 2px 10px var(--accent-glow);
+}
+
+/* Collab with Suna Button */
+.btn-collab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(232, 168, 124, 0.15);
+  border: 1px solid rgba(232, 168, 124, 0.25);
+  color: var(--accent-1);
+  padding: 6px 14px;
+  border-radius: 18px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  font-family: var(--font-main);
+  margin-right: 4px;
+}
+
+.btn-collab:hover {
+  background: var(--accent-gradient);
+  border-color: transparent;
+  color: #fff;
+  box-shadow: 0 4px 12px var(--accent-glow);
+  transform: translateY(-1px);
+}
+
+.btn-collab .material-icons-round {
+  font-size: 1.1rem;
+}
+
+/* Content & Split View layouts */
+.artifacts-content {
+  display: flex;
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.artifact-editor-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: #120f1e;
+  border-right: 1px solid var(--border-color);
+  transition: width 0.3s ease;
+}
+
+.artifact-editor-textarea {
+  width: 100%;
+  height: 100%;
+  border: none;
+  resize: none;
+  background: transparent;
+  color: #ede8e3;
+  font-family: 'JetBrains Mono', 'Courier New', monospace;
+  font-size: 0.88rem;
+  line-height: 1.6;
+  padding: 16px;
+  outline: none;
+  tab-size: 4;
+  -moz-tab-size: 4;
+}
+
+.artifact-preview-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: #ffffff;
+  transition: width 0.3s ease;
+}
+
+.artifact-preview-container iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+  background: #ffffff;
+}
+
+/* View Mode Attribute Controls */
+.artifacts-panel[data-view="split"] .artifact-editor-container {
+  display: flex;
+  width: 50%;
+}
+
+.artifacts-panel[data-view="split"] .artifact-preview-container {
+  display: flex;
+  width: 50%;
+}
+
+.artifacts-panel[data-view="editor"] .artifact-editor-container {
+  display: flex;
+  width: 100%;
+  border-right: none;
+}
+
+.artifacts-panel[data-view="editor"] .artifact-preview-container {
+  display: none;
+}
+
+.artifacts-panel[data-view="preview"] .artifact-editor-container {
+  display: none;
+}
+
+.artifacts-panel[data-view="preview"] .artifact-preview-container {
+  display: flex;
+  width: 100%;
+}
+
+/* Light Mode Overrides */
+body.light-mode .artifacts-panel {
+  background: rgba(245, 245, 247, 0.9);
+  border-left-color: var(--border-color);
+  box-shadow: -8px 0 32px rgba(0, 0, 0, 0.15);
+}
+
+body.light-mode .artifacts-header {
+  background: rgba(255, 255, 255, 0.4);
+}
+
+body.light-mode .artifact-editor-container {
+  background: #fdfdfd;
+}
+
+body.light-mode .artifact-editor-textarea {
+  color: #1d1d1f;
+}
+
+/* Premium Responsive Viewports */
+@media (max-width: 1024px) {
+  .artifacts-panel {
+    width: 80%;
+  }
+}
+
+@media (max-width: 768px) {
+  .artifacts-panel {
+    width: 100%;
+    max-width: 100%;
+    min-width: 100%;
+    border-left: none;
+  }
+  
+  .artifacts-panel[data-view="split"] .artifacts-content {
+    flex-direction: column;
+  }
+  
+  .artifacts-panel[data-view="split"] .artifact-editor-container {
+    width: 100%;
+    height: 50%;
+    border-right: none;
+    border-bottom: 1px solid var(--border-color);
+  }
+  
+  .artifacts-panel[data-view="split"] .artifact-preview-container {
+    width: 100%;
+    height: 50%;
+  }
+  
+  /* Compact headers on mobile to prevent overflow */
+  .artifacts-header {
+    padding: 10px 12px;
+  }
+  
+  .btn-collab span,
+  .view-toggle-btn span {
+    display: none; /* Icon-only view to save precious space */
+  }
+  
+  .btn-collab {
+    padding: 6px;
+    border-radius: 50%;
+    margin-right: 0;
+  }
+  
+  .artifact-view-toggle {
+    margin-right: 0;
+  }
+  
+  .view-toggle-btn {
+    padding: 6px;
+    border-radius: 50%;
+  }
+}
+
+/* =============================================
+   SUNA LOFI PLAYER & DYNAMIC THEMES
+   ============================================= */
+.suna-lofi-player {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-xl);
+  padding: 6px 14px;
+  backdrop-filter: blur(15px);
+  -webkit-backdrop-filter: blur(15px);
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.2);
+  margin-right: 12px;
+  height: 38px;
+  max-width: 320px;
+  overflow: hidden;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.suna-lofi-player:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: var(--accent-1);
+  box-shadow: 0 4px 20px var(--accent-glow);
+}
+
+.lofi-control-btn {
+  background: var(--accent-gradient);
+  border: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 2px 8px var(--accent-glow);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  flex-shrink: 0;
+}
+
+.lofi-control-btn:hover {
+  transform: scale(1.1);
+  box-shadow: 0 2px 12px var(--accent-glow);
+}
+
+.lofi-control-btn span {
+  font-size: 16px;
+}
+
+.lofi-track-info {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  width: 110px;
+  overflow: hidden;
+  position: relative;
+  flex-shrink: 0;
+}
+
+.lofi-track-title-container {
+  width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.lofi-track-title {
+  display: inline-block;
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  animation: lofiMarquee 10s linear infinite;
+  padding-left: 100%;
+}
+
+@keyframes lofiMarquee {
+  0% { transform: translate3d(0, 0, 0); }
+  100% { transform: translate3d(-100%, 0, 0); }
+}
+
+.lofi-volume-container {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.lofi-volume-icon {
+  font-size: 16px !important;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: color 0.2s ease;
+}
+
+.lofi-volume-icon:hover {
+  color: var(--accent-1);
+}
+
+.lofi-volume-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 50px;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+  transition: background 0.3s ease;
+}
+
+.lofi-volume-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent-1);
+  box-shadow: 0 0 6px var(--accent-glow);
+  cursor: pointer;
+  transition: transform 0.1s ease;
+}
+
+.lofi-volume-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.3);
+}
+
+.lofi-volume-slider::-moz-range-thumb {
+  width: 10px;
+  height: 10px;
+  border: none;
+  border-radius: 50%;
+  background: var(--accent-1);
+  box-shadow: 0 0 6px var(--accent-glow);
+  cursor: pointer;
+  transition: transform 0.1s ease;
+}
+
+.lofi-volume-slider::-moz-range-thumb:hover {
+  transform: scale(1.3);
+}
+
+/* Glowing Wave Visualizer Bar */
+.lofi-visualizer {
+  display: flex;
+  align-items: flex-end;
+  gap: 2.5px;
+  height: 14px;
+  width: 25px;
+  flex-shrink: 0;
+}
+
+.visualizer-bar {
+  width: 3px;
+  height: 3px;
+  background: var(--accent-gradient);
+  border-radius: 1px;
+  transition: height 0.2s ease;
+  box-shadow: 0 0 4px var(--accent-glow);
+}
+
+.lofi-visualizer.active .bar1 {
+  animation: lofiWave 0.8s ease-in-out infinite alternate;
+}
+.lofi-visualizer.active .bar2 {
+  animation: lofiWave 0.5s ease-in-out infinite alternate 0.15s;
+}
+.lofi-visualizer.active .bar3 {
+  animation: lofiWave 0.9s ease-in-out infinite alternate 0.05s;
+}
+.lofi-visualizer.active .bar4 {
+  animation: lofiWave 0.6s ease-in-out infinite alternate 0.2s;
+}
+.lofi-visualizer.active .bar5 {
+  animation: lofiWave 0.7s ease-in-out infinite alternate 0.1s;
+}
+
+@keyframes lofiWave {
+  0% { height: 3px; }
+  100% { height: 14px; }
+}
+
+/* Fluid Moving Background Gradients on Body */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: radial-gradient(circle at 10% 20%, rgba(232, 168, 124, 0.03) 0%, transparent 40%),
+              radial-gradient(circle at 90% 80%, rgba(192, 57, 43, 0.03) 0%, transparent 40%);
+  z-index: -1;
+  pointer-events: none;
+  animation: gradientPulse 15s ease infinite alternate;
+}
+
+@keyframes gradientPulse {
+  0% {
+    filter: hue-rotate(0deg) saturate(1);
+  }
+  50% {
+    filter: hue-rotate(15deg) saturate(1.1);
+  }
+  100% {
+    filter: hue-rotate(0deg) saturate(1);
+  }
+}
+
+/* Extra visual upgrades for active themes */
+body[data-theme="sunset"] .suna-lofi-player { border-color: rgba(240, 147, 251, 0.25); }
+body[data-theme="ocean"] .suna-lofi-player { border-color: rgba(79, 172, 254, 0.25); }
+body[data-theme="forest"] .suna-lofi-player { border-color: rgba(67, 233, 123, 0.25); }
+body[data-theme="midnight"] .suna-lofi-player { border-color: rgba(161, 140, 209, 0.25); }
+
+/* Responsive adjustments for mobile so it fits beautifully */
+@media (max-width: 768px) {
+  .suna-lofi-player {
+    max-width: 140px;
+    padding: 4px 8px;
+    gap: 6px;
+    margin-right: 4px;
+  }
+  .lofi-track-info {
+    width: 60px;
+  }
+  .lofi-volume-container {
+    display: none; /* Hide volume slider on very small screens to fit topbar */
+  }
+}

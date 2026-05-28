@@ -176,6 +176,7 @@ function initRealtimeSync() {
   _syncUnsubscribes.push(_fb.onSnapshot(_fb.doc(_fb.db, 'users', uid, 'data', 'chats'), (doc) => {
     // Ignore updates triggered by this device to prevent UI jitter
     if (!doc.exists() || doc.metadata.hasPendingWrites) return; 
+    if (typeof State !== 'undefined' && State.isGenerating) return;
     try {
       const cc = JSON.parse(doc.data().chats);
       if (cc && cc.length > 0) {
@@ -191,6 +192,7 @@ function initRealtimeSync() {
   // 2. Listen to memory
   _syncUnsubscribes.push(_fb.onSnapshot(_fb.doc(_fb.db, 'users', uid, 'data', 'memory'), (doc) => {
     if (!doc.exists() || doc.metadata.hasPendingWrites) return;
+    if (typeof State !== 'undefined' && State.isGenerating) return;
     try {
       const d = doc.data(); delete d.updatedAt;
       if (d.facts) {
@@ -204,6 +206,7 @@ function initRealtimeSync() {
   // 3. Listen to settings
   _syncUnsubscribes.push(_fb.onSnapshot(_fb.doc(_fb.db, 'users', uid, 'data', 'settings'), (doc) => {
     if (!doc.exists() || doc.metadata.hasPendingWrites) return;
+    if (typeof State !== 'undefined' && State.isGenerating) return;
     try {
       const d = doc.data(); delete d.updatedAt;
       Object.assign(State.settings, d);
@@ -414,6 +417,23 @@ window.handleLogout = async function handleLogout() {
     AuthState.isLoggedIn = false;
     AuthState.useLocalOnly = false;
     localStorage.removeItem('suna_guest_mode');
+    if (typeof State !== 'undefined') {
+      State.settings = {
+        baseUrl: '', apiKey: '', baseUrl2: '', apiKey2: '',
+        currentModel: '', flashModel: '', proModel: '',
+        systemPrompt: '', userPurpose: '', tone: 'friendly', theme: 'aurora',
+        customPersonality: '', fontFamily: "'Inter', sans-serif", fontSize: 15,
+        userName: 'Bạn', userAvatar: ''
+      };
+      State.memory = {
+        facts: [],
+        lastUpdated: 0
+      };
+      State.chats = [{ id: 'chat-' + Date.now(), title: 'Chat mới', messages: [], createdAt: Date.now() }];
+      State.activeChatId = State.chats[0].id;
+      if (typeof window.saveLocalStateOnly === 'function') window.saveLocalStateOnly();
+      if (typeof window.saveMemory === 'function') window.saveMemory();
+    }
     showAuthScreen();
     if (window.toast) window.toast('Đã đăng xuất', 'info');
     return;
@@ -432,9 +452,21 @@ window.handleLogout = async function handleLogout() {
     localStorage.removeItem('suna_guest_mode');
 
     if (typeof State !== 'undefined') {
+      State.settings = {
+        baseUrl: '', apiKey: '', baseUrl2: '', apiKey2: '',
+        currentModel: '', flashModel: '', proModel: '',
+        systemPrompt: '', userPurpose: '', tone: 'friendly', theme: 'aurora',
+        customPersonality: '', fontFamily: "'Inter', sans-serif", fontSize: 15,
+        userName: 'Bạn', userAvatar: ''
+      };
+      State.memory = {
+        facts: [],
+        lastUpdated: 0
+      };
       State.chats = [{ id: 'chat-' + Date.now(), title: 'Chat mới', messages: [], createdAt: Date.now() }];
       State.activeChatId = State.chats[0].id;
       if (typeof window.saveLocalStateOnly === 'function') window.saveLocalStateOnly();
+      if (typeof window.saveMemory === 'function') window.saveMemory();
       if (typeof window.onUserSignedIn === 'function') window.onUserSignedIn();
     }
 

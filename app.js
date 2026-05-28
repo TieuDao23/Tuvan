@@ -363,6 +363,9 @@ function confirmDeleteChat(id) {
 }
 
 function deleteChat(id) {
+  if (State.generatingChatId === id && State.abortController) {
+    State.abortController.abort();
+  }
   State.chats = State.chats.filter(c => c.id !== id);
   if (State.chats.length === 0) {
     const chat = { id: genId(), title: 'Chat mới', messages: [], createdAt: Date.now() };
@@ -634,11 +637,22 @@ function formatMessage(text) {
     if (cleanLang === 'mermaid') {
       return `<div class="mermaid-wrapper"><div class="mermaid">${code}</div></div>`;
     }
+
+    // Feature: Interactive Kanban Board
+    if (cleanLang === 'kanban') {
+      return parseKanban(code);
+    }
     
     // Feature: Live Artifacts Preview (HTML/SVG)
     let artifactBtn = '';
     if (cleanLang === 'html' || cleanLang === 'svg' || cleanLang.includes('xml') || cleanLang === 'javascript') {
-      const b64 = btoa(unescape(encodeURIComponent(code))); // Safe base64 for HTML
+      const decodedCode = code
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'");
+      const b64 = btoa(unescape(encodeURIComponent(decodedCode))); // Safe base64 for HTML
       artifactBtn = `<button class="btn-preview-artifact" onclick="window.openArtifact(decodeURIComponent(escape(atob('${b64}'))))"><span class="material-icons-round">play_arrow</span> Xem trước (Live Preview)</button>`;
     }
 
@@ -746,6 +760,208 @@ function formatMessage(text) {
 
   return html;
 }
+
+function parseKanban(code) {
+  const decodeHtml = (str) => {
+    return str
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'");
+  };
+
+  const lines = code.split('\n');
+  const columns = [];
+  let currentColumn = null;
+
+  for (let line of lines) {
+    line = line.trim();
+    if (!line) continue;
+
+    let isColumn = false;
+    let colTitle = "";
+    
+    const bracketMatch = line.match(/^\[(.*?)\]$/);
+    const hashMatch = line.match(/^#+\s*(.*?)$/);
+    
+    if (bracketMatch) {
+      isColumn = true;
+      colTitle = bracketMatch[1].trim();
+    } else if (hashMatch && !line.startsWith('-') && !line.startsWith('*')) {
+      isColumn = true;
+      colTitle = hashMatch[1].replace(/[\[\]]/g, '').trim();
+    }
+
+    if (isColumn) {
+      currentColumn = {
+        title: colTitle,
+        tasks: []
+      };
+      columns.push(currentColumn);
+    } else {
+      const taskMatch = line.match(/^[-*]\s*\[([ xX]?)\]\s*(.*)$/) || line.match(/^[-*]\s*(.*)$/);
+      if (taskMatch) {
+        if (!currentColumn) {
+          currentColumn = {
+            title: 'Nhiệm vụ',
+            tasks: []
+          };
+          columns.push(currentColumn);
+        }
+        const hasCheckbox = line.includes('[');
+        const isCompleted = hasCheckbox && taskMatch[1] ? (taskMatch[1].toLowerCase() === 'x') : false;
+        const taskText = hasCheckbox ? (taskMatch[2] || '').trim() : (taskMatch[1] || '').trim();
+        if (taskText) {
+          currentColumn.tasks.push({
+            text: taskText,
+            completed: isCompleted
+          });
+        }
+      }
+    }
+  }
+
+  const boardId = 'kanban-' + Math.random().toString(36).substr(2, 9);
+  let boardHtml = `<div class="kanban-board" id="${boardId}">`;
+
+  columns.forEach((col, colIdx) => {
+    const colId = `${boardId}-col-${colIdx}`;
+    boardHtml += `
+      <div class="kanban-column" id="${colId}" ondragover="event.preventDefault(); this.classList.add('drag-over');" ondragleave="this.classList.remove('drag-over');" ondrop="handleKanbanDrop(event, '${colId}')">
+        <div class="kanban-column-header">
+          <h3 class="kanban-column-title">${col.title}</h3>
+          <span class="kanban-task-count">${col.tasks.length}</span>
+        </div>
+        <div class="kanban-tasks-container">`;
+
+    col.tasks.forEach((task, taskIdx) => {
+      const taskId = `${colId}-task-${taskIdx}`;
+      const plainText = decodeHtml(task.text);
+      const completedClass = task.completed ? 'completed' : '';
+      boardHtml += `
+        <div class="kanban-card ${completedClass}" id="${taskId}" draggable="true" ondragstart="handleKanbanDragStart(event, '${taskId}', '${boardId}')" ondragend="handleKanbanDragEnd(event)">
+          <div class="kanban-card-content" onclick="toggleKanbanCardComplete(event, '${taskId}')">
+            <span class="kanban-card-bullet"></span>
+            <span class="kanban-card-text">${task.text}</span>
+          </div>
+          <div class="kanban-card-actions">
+            <button class="btn-kanban-execute" onclick="executeKanbanTask(decodeURIComponent('${encodeURIComponent(plainText)}'))" title="Giao cho Suna thực hiện">
+              <span class="material-icons-round">bolt</span>
+              Giao cho Suna thực hiện
+            </button>
+          </div>
+        </div>`;
+    });
+
+    boardHtml += `
+        </div>
+      </div>`;
+  });
+
+  boardHtml += `</div>`;
+  return boardHtml;
+}
+
+function handleKanbanDragStart(event, cardId, boardId) {
+  event.dataTransfer.setData('text/plain', cardId);
+  event.dataTransfer.setData('board-id', boardId);
+  event.dataTransfer.effectAllowed = 'move';
+  const card = document.getElementById(cardId);
+  if (card) {
+    card.classList.add('dragging');
+  }
+}
+
+function handleKanbanDragEnd(event) {
+  const draggingCard = document.querySelector('.kanban-card.dragging');
+  if (draggingCard) {
+    draggingCard.classList.remove('dragging');
+  }
+  document.querySelectorAll('.kanban-column').forEach(col => {
+    col.classList.remove('drag-over');
+  });
+}
+
+function handleKanbanDrop(event, columnId) {
+  event.preventDefault();
+  const column = document.getElementById(columnId);
+  if (!column) return;
+  
+  column.classList.remove('drag-over');
+  
+  const cardId = event.dataTransfer.getData('text/plain');
+  const boardId = event.dataTransfer.getData('board-id');
+  const card = document.getElementById(cardId);
+  
+  if (!card) return;
+  
+  const targetTasksContainer = column.querySelector('.kanban-tasks-container');
+  if (targetTasksContainer && cardId.startsWith(boardId)) {
+    const afterElement = getDragAfterElement(targetTasksContainer, event.clientY);
+    if (afterElement == null) {
+      targetTasksContainer.appendChild(card);
+    } else {
+      targetTasksContainer.insertBefore(card, afterElement);
+    }
+    
+    updateKanbanCounts(boardId);
+  }
+}
+
+function getDragAfterElement(container, y) {
+  const draggableElements = [...container.querySelectorAll('.kanban-card:not(.dragging)')];
+  
+  return draggableElements.reduce((closest, child) => {
+    const box = child.getBoundingClientRect();
+    const offset = y - box.top - box.height / 2;
+    if (offset < 0 && offset > closest.offset) {
+      return { offset: offset, element: child };
+    } else {
+      return closest;
+    }
+  }, { offset: Number.NEGATIVE_INFINITY }).element;
+}
+
+function updateKanbanCounts(boardId) {
+  const board = document.getElementById(boardId);
+  if (!board) return;
+  
+  const columns = board.querySelectorAll('.kanban-column');
+  columns.forEach(col => {
+    const countEl = col.querySelector('.kanban-task-count');
+    const tasks = col.querySelectorAll('.kanban-card');
+    if (countEl) {
+      countEl.textContent = tasks.length;
+    }
+  });
+}
+
+function toggleKanbanCardComplete(event, cardId) {
+  event.stopPropagation();
+  const card = document.getElementById(cardId);
+  if (card) {
+    card.classList.toggle('completed');
+  }
+}
+
+function executeKanbanTask(taskText) {
+  const input = document.getElementById('message-input');
+  if (!input) return;
+  input.value = `Suna ơi, hãy thực hiện công việc này giúp tôi: ${taskText}. Hãy hoàn thành thật chi tiết và báo cáo kết quả.`;
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  
+  const sendBtn = document.getElementById('btn-send');
+  if (sendBtn) {
+    sendBtn.click();
+  }
+}
+
+window.handleKanbanDragStart = handleKanbanDragStart;
+window.handleKanbanDragEnd = handleKanbanDragEnd;
+window.handleKanbanDrop = handleKanbanDrop;
+window.toggleKanbanCardComplete = toggleKanbanCardComplete;
+window.executeKanbanTask = executeKanbanTask;
 
 function escHtml(s) {
   const d = document.createElement('div');
@@ -1094,6 +1310,52 @@ function populateModelSelects() {
   if (State.settings.proModel) $('#pro-model-select').value = State.settings.proModel;
 }
 
+function classifyIntent(promptText) {
+  if (!promptText) return 'fast';
+  const text = promptText.toLowerCase().trim();
+  
+  // Logic intent: coding, programming, math, logic, reasoning, algorithms, deep thinking, etc.
+  const logicKeywords = [
+    'code', 'lập trình', 'thuật toán', 'sửa lỗi', 'bug', 'tối ưu', 'viết hàm', 'class', 'function',
+    'math', 'toán', 'phương trình', 'chứng minh', 'tính toán', 'logics', 'suy luận', 'phân tích sâu',
+    'algorithm', 'reason', 'explain step by step', 'giải thích từng bước', 'suy nghĩ', 'logic',
+    'viết chương trình', 'develop', 'coding', 'tại sao', 'how to implement', 'tối ưu hóa'
+  ];
+  
+  // Search intent: search, weather, news, current events, search queries, find, lookup, cập nhật, tin tức, hôm nay, thời tiết, ở đâu, khi nào
+  const searchKeywords = [
+    'search', 'tìm kiếm', 'tra cứu', 'tin tức', 'thời tiết', 'news', 'weather', 'cập nhật',
+    'hôm nay', 'tin mới', 'ở đâu', 'khi nào', 'google', 'tìm giúp', 'thông tin mới nhất', 'current events',
+    'bản tin', 'giá vàng', 'tỷ giá', 'kết quả', 'thông tin về'
+  ];
+  
+  const isLogic = logicKeywords.some(kw => text.includes(kw));
+  const isSearch = searchKeywords.some(kw => text.includes(kw));
+  
+  if (isLogic) return 'logic';
+  if (isSearch) return 'search';
+  return 'fast';
+}
+
+function findChamberModel(suffix) {
+  if (!State.models || !State.models.length) return null;
+  const cleanSuffix = suffix.toLowerCase().trim();
+  
+  // Try to find a model ending with cleanSuffix or containing it
+  let found = State.models.find(m => m.toLowerCase().endsWith(cleanSuffix));
+  if (!found) {
+    found = State.models.find(m => m.toLowerCase().includes(cleanSuffix));
+  }
+  // Try variations of '-nothinking search' like '-nothinking'
+  if (!found && cleanSuffix === '-nothinking search') {
+    found = State.models.find(m => m.toLowerCase().endsWith('-nothinking') || m.toLowerCase().includes('-nothinking'));
+  }
+  return found || null;
+}
+
+window.classifyIntent = classifyIntent;
+window.findChamberModel = findChamberModel;
+
 function getActiveModel() {
   return State.mode === 'flash' ? (State.settings.flashModel || State.settings.currentModel) : (State.settings.proModel || State.settings.currentModel);
 }
@@ -1262,10 +1524,13 @@ function buildTextOnlyMessages(chat, systemPrompt) {
   if (systemPrompt) msgs.push({ role: 'system', content: systemPrompt });
   const MAX_HISTORY = 20;
   const messagesToInclude = chat.messages.slice(-MAX_HISTORY);
+  const mostRecentUserMsg = [...messagesToInclude].reverse().find(m => m.role === 'user');
   for (const m of messagesToInclude) {
-        let text = m.content;
-    if (m.fileContent) text += m.fileContent;
-    if (m.linkContext) text += `\n\n[Nội dung từ Web]:\n${m.linkContext}`;
+    let text = m.content;
+    if (m === mostRecentUserMsg) {
+      if (m.fileContent) text += m.fileContent;
+      if (m.linkContext) text += `\n\n[Nội dung từ Web]:\n${m.linkContext}`;
+    }
     if (m.role === 'user' && m.visionDescription) {
       text += `\n\n[Phân tích hình ảnh từ AI Vision]:\n${m.visionDescription}`;
     }
@@ -1384,6 +1649,12 @@ async function sendMessage() {
 
     if (!text && !images.length && !State.pendingFiles.length) return;
 
+  // Sentiment analysis trigger on user message
+  if (text) {
+    const userSentiment = classifySentiment(text);
+    triggerSentimentChange(userSentiment);
+  }
+
   const model = getActiveModel();
   if (!model) { toast('Vui lòng chọn model trong phần cài đặt API', 'error'); return; }
   if (!State.settings.baseUrl || !State.settings.apiKey) { toast('Vui lòng cấu hình Base URL và API Key trong phần API', 'error'); return; }
@@ -1453,6 +1724,40 @@ async function sendMessage() {
   await generateAIResponse();
 }
 
+async function consumeStream(res) {
+  try {
+    if (!res || !res.body) return '';
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let text = '';
+    let buffer = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || !trimmed.startsWith('data:')) continue;
+        const data = trimmed.slice(5).trim();
+        if (data === '[DONE]') continue;
+        try {
+          const parsed = JSON.parse(data);
+          const delta = parsed.choices?.[0]?.delta?.content;
+          if (delta) {
+            text += delta;
+          }
+        } catch(e) {}
+      }
+    }
+    return text;
+  } catch (err) {
+    console.error('Error consuming stream:', err);
+    return '';
+  }
+}
+
 async function generateAIResponse() {
   const model = getActiveModel();
   if (!model) { toast('Vui lòng chọn model trước', 'error'); return; }
@@ -1485,130 +1790,137 @@ async function generateAIResponse() {
   // Build API messages
   const systemPrompt = buildSystemPrompt();
 
-    // --- TỐI ƯU TỐC ĐỘ: Pre-describe images --- 
-    const hasImages = chat.messages.some(m => m.role === 'user' && m.images && m.images.length > 0);
-    const isCurrentVision = isVisionModel(model);
+  // --- TỐI ƯU TỐC ĐỘ: Pre-describe images --- 
+  const hasImages = chat.messages.some(m => m.role === 'user' && m.images && m.images.some(img => img && img !== '__large_image__'));
+  const isCurrentVision = isVisionModel(model);
+  
+  // Hàm xử lý ảnh (chỉ gọi khi thật sự cần)
+  const runVisionTaskIfNeeded = async () => {
+    const msgsNeedVision = chat.messages.filter(m => m.role === 'user' && m.images && m.images.some(img => img && img !== '__large_image__') && !m.visionDescription);
+    if (msgsNeedVision.length === 0) return;
     
-    // Hàm xử lý ảnh (chỉ gọi khi thật sự cần)
-    const runVisionTaskIfNeeded = async () => {
-      const msgsNeedVision = chat.messages.filter(m => m.role === 'user' && m.images && m.images.length && !m.visionDescription);
-      if (msgsNeedVision.length === 0) return;
-      
-      const typingTextEl = typingEl.querySelector('.typing-text');
-      if (typingTextEl) typingTextEl.textContent = 'Đang phân tích ảnh...';
-      
-      try {
-        const CONCURRENT_LIMIT = 3;
-        for (let i = 0; i < msgsNeedVision.length; i += CONCURRENT_LIMIT) {
-          const batch = msgsNeedVision.slice(i, i + CONCURRENT_LIMIT);
-          const results = await Promise.allSettled(
-            batch.map(m => describeImagesWithVision(m.images, m.content))
-          );
-          results.forEach((result, idx) => {
-            if (result.status === 'fulfilled' && result.value) {
-              batch[idx].visionDescription = result.value;
-            } else {
-              console.warn('Vision failed for message:', result.reason?.message);
-            }
-          });
-        }
+    const typingTextEl = typingEl.querySelector('.typing-text');
+    if (typingTextEl) typingTextEl.textContent = 'Đang phân tích ảnh...';
+    
+    try {
+      const CONCURRENT_LIMIT = 3;
+      for (let i = 0; i < msgsNeedVision.length; i += CONCURRENT_LIMIT) {
+        const batch = msgsNeedVision.slice(i, i + CONCURRENT_LIMIT);
+        const results = await Promise.allSettled(
+          batch.map(m => describeImagesWithVision(m.images.filter(img => img && img !== '__large_image__'), m.content))
+        );
+        results.forEach((result, idx) => {
+          if (result.status === 'fulfilled' && result.value) {
+            batch[idx].visionDescription = result.value;
+          } else {
+            console.warn('Vision failed for message:', result.reason?.message);
+          }
+        });
+      }
+      saveState();
+    } catch (visionErr) {
+      console.error('Vision task error:', visionErr);
+    }
+    if (typingTextEl) typingTextEl.textContent = 'Đang suy nghĩ...';
+  };
+
+  // Nếu model hiện tại là text-only, bắt buộc phải phân tích ảnh trước khi gửi API
+  if (hasImages && !isCurrentVision) {
+    await runVisionTaskIfNeeded();
+  }
+
+  // --- Thực hiện Web Search thực tế nếu được bật ---
+  const lastMsg = chat.messages[chat.messages.length - 1];
+  if (State.webSearchEnabled && lastMsg && lastMsg.role === 'user' && !lastMsg.webSearchDone && window.performWebSearch) {
+    const typingTextEl = typingEl.querySelector('.typing-text');
+    if (typingTextEl) typingTextEl.textContent = 'Đang tìm kiếm trực tiếp trên Internet...';
+    try {
+      const searchResults = await window.performWebSearch(lastMsg.content);
+      if (searchResults) {
+        lastMsg.linkContext = (lastMsg.linkContext || '') + `\n\n[Kết quả Web Search trực tiếp]:\n${searchResults}`;
         saveState();
-      } catch (visionErr) {
-        console.error('Vision task error:', visionErr);
       }
-      if (typingTextEl) typingTextEl.textContent = 'Đang suy nghĩ...';
-    };
-
-    // Nếu model hiện tại là text-only, bắt buộc phải phân tích ảnh trước khi gửi API
-    if (hasImages && !isCurrentVision) {
-      await runVisionTaskIfNeeded();
+      lastMsg.webSearchDone = true;
+    } catch(e) {
+      console.error("Web search failed", e);
     }
+    if (typingTextEl) typingTextEl.textContent = 'Đang suy nghĩ...';
+  }
 
-    // --- Thực hiện Web Search thực tế nếu được bật ---
-    const lastMsg = chat.messages[chat.messages.length - 1];
-    if (State.webSearchEnabled && lastMsg && lastMsg.role === 'user' && !lastMsg.webSearchDone && window.performWebSearch) {
-      const typingTextEl = typingEl.querySelector('.typing-text');
-      if (typingTextEl) typingTextEl.textContent = 'Đang tìm kiếm trực tiếp trên Internet...';
-      try {
-        const searchResults = await window.performWebSearch(lastMsg.content);
-        if (searchResults) {
-          lastMsg.linkContext = (lastMsg.linkContext || '') + `\n\n[Kết quả Web Search trực tiếp]:\n${searchResults}`;
-          saveState();
-        }
-        lastMsg.webSearchDone = true;
-      } catch(e) {
-        console.error("Web search failed", e);
-      }
-      if (typingTextEl) typingTextEl.textContent = 'Đang suy nghĩ...';
-    }
-
-    // --- Build API messages with both vision descriptions AND image_url ---
+  // --- Build API messages with both vision descriptions AND image_url ---
   const apiMessages = [];
   if (systemPrompt) apiMessages.push({ role: 'system', content: systemPrompt });
 
-    // Giới hạn ngữ cảnh: Flash nhẹ hơn, Pro sâu hơn
+  // Giới hạn ngữ cảnh: Flash nhẹ hơn, Pro sâu hơn
   const MAX_HISTORY = State.mode === 'flash' ? 10 : 24;
   const messagesToInclude = chat.messages.slice(-MAX_HISTORY);
+  const mostRecentUserMsg = [...messagesToInclude].reverse().find(m => m.role === 'user');
 
   for (const m of messagesToInclude) {
-        let finalContentText = m.content;
-    // Append file content for AI (not displayed in UI)
-    if (m.fileContent) finalContentText += m.fileContent;
-    if (m.linkContext) finalContentText += `\n\n[Nội dung từ Web]:\n${m.linkContext}`;
+    let finalContentText = m.content;
+    
+    // Only include fileContent and linkContext for the most recent user message to prevent prompt bloat
+    if (m === mostRecentUserMsg) {
+      if (m.fileContent) finalContentText += m.fileContent;
+      if (m.linkContext) finalContentText += `\n\n[Nội dung từ Web]:\n${m.linkContext}`;
+    }
+    
     // Append vision description as text context (works for ALL models)
     if (m.role === 'user' && m.visionDescription) {
       finalContentText += `\n\n[Nội dung hình ảnh đính kèm]:\n${m.visionDescription}`;
     }
 
-        if (m.role === 'user' && m.images && m.images.length) {
-          // LUÔN gửi image_url để model vision-capable nhìn thấy ảnh trực tiếp
-          // visionDescription (nếu có) đã được append vào finalContentText ở trên → bổ sung ngữ cảnh text
-          const contentParts = [];
-          if (finalContentText) contentParts.push({ type: 'text', text: finalContentText });
-          for (const img of m.images) {
-            contentParts.push({
-              type: 'image_url',
-              image_url: { url: img, detail: State.mode === 'flash' ? 'low' : 'high' }
-            });
-          }
-          apiMessages.push({ role: 'user', content: contentParts });
-        } else {
-          apiMessages.push({ role: m.role, content: finalContentText });
-        }
+    const validImages = (m.images || []).filter(img => img && img !== '__large_image__');
+    if (m.role === 'user' && validImages.length) {
+      // LUÔN gửi image_url để model vision-capable nhìn thấy ảnh trực tiếp
+      // visionDescription (nếu có) đã được append vào finalContentText ở trên → bổ sung ngữ cảnh text
+      const contentParts = [];
+      if (finalContentText) contentParts.push({ type: 'text', text: finalContentText });
+      for (const img of validImages) {
+        contentParts.push({
+          type: 'image_url',
+          image_url: { url: img, detail: State.mode === 'flash' ? 'low' : 'high' }
+        });
+      }
+      apiMessages.push({ role: 'user', content: contentParts });
+    } else {
+      apiMessages.push({ role: m.role, content: finalContentText });
+    }
   }
 
   let assistantContent = '';
 
   try {
     // --- Helper: send request with proxy fallback ---
-    async function makeApiRequest(messages) {
-      const proxy = getProxyForModel(model);
+    async function makeApiRequest(messages, targetModel) {
+      const modelToUse = targetModel || model;
+      const proxy = getProxyForModel(modelToUse);
       const url = proxy.url + '/chat/completions';
-            const lastUserMessage = [...messages].reverse().find(m => m.role === 'user');
-            const userText = typeof lastUserMessage?.content === 'string' 
-              ? lastUserMessage.content 
-              : (Array.isArray(lastUserMessage?.content) 
-                  ? lastUserMessage.content.map(p => p.text || '').join(' ') 
-                  : '');
-            
-            const requiresUnlimited = /không giới hạn|unlimited|tối đa|hết cỡ|dài|chi tiết|write more|continue|viết tiếp|detailed|long|max/i.test(userText);
+      const lastUserMessage = [...messages].reverse().find(m => m.role === 'user');
+      const userText = typeof lastUserMessage?.content === 'string' 
+        ? lastUserMessage.content 
+        : (Array.isArray(lastUserMessage?.content) 
+            ? lastUserMessage.content.map(p => p.text || '').join(' ') 
+            : '');
+      
+      const requiresUnlimited = /không giới hạn|unlimited|tối đa|hết cỡ|dài|chi tiết|write more|continue|viết tiếp|detailed|long|max/i.test(userText);
 
-            const reqBody = {
-              model, messages, stream: true,
-              temperature: State.mode === 'flash' ? 0.3 : 0.75,
-              ...((State.mode === 'pro' && requiresUnlimited) ? {} : { max_tokens: State.mode === 'flash' ? 1024 : 16384 }),
-              ...(State.mode === 'flash' ? {
-                top_p: 0.85,
-                frequency_penalty: 0.1,
-                presence_penalty: 0.0
-              } : {
-                top_p: 0.95,
-                frequency_penalty: 0.15,
-                presence_penalty: 0.1
-              })
-            };
+      const reqBody = {
+        model: modelToUse, messages, stream: true,
+        temperature: State.mode === 'flash' ? 0.3 : 0.75,
+        ...(requiresUnlimited ? {} : { max_tokens: State.mode === 'flash' ? 1024 : 4096 }),
+        ...(State.mode === 'flash' ? {
+          top_p: 0.85,
+          frequency_penalty: 0.1,
+          presence_penalty: 0.0
+        } : {
+          top_p: 0.95,
+          frequency_penalty: 0.15,
+          presence_penalty: 0.1
+        })
+      };
       let res = null, fetchError = null;
-            try {
+      try {
         res = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${proxy.key}` },
@@ -1639,7 +1951,42 @@ async function generateAIResponse() {
       return { res, fetchError };
     }
 
-    // --- Attempt 1: send with images + text descriptions ---
+    // --- LƯỢT 1 (NGẦM) ---
+    let implicitContext = '';
+    let chamberModel = null;
+    const intent = lastMsg ? classifyIntent(lastMsg.content) : 'fast';
+    if (intent === 'logic' || intent === 'search') {
+      const suffix = intent === 'logic' ? '-maxthinking' : '-search';
+      chamberModel = findChamberModel(suffix);
+      if (chamberModel) {
+        const typingTextEl = typingEl.querySelector('.typing-text');
+        if (typingTextEl) {
+          typingTextEl.textContent = `[Ngầm] Đang xử lý Lượt 1 với ${chamberModel}...`;
+        }
+        try {
+          const { res: luot1Res, fetchError: luot1Err } = await makeApiRequest(apiMessages, chamberModel);
+          if (luot1Res && luot1Res.ok) {
+            implicitContext = await consumeStream(luot1Res);
+          } else {
+            console.warn("Implicit Lượt 1 failed:", luot1Err || (luot1Res ? await luot1Res.text() : ''));
+          }
+        } catch(e) {
+          console.warn("Implicit Lượt 1 failed with error:", e);
+        }
+        if (typingTextEl) {
+          typingTextEl.textContent = `Đang tổng hợp phản hồi với ${model}...`;
+        }
+      }
+    }
+
+    if (implicitContext) {
+      apiMessages.push({
+        role: 'system',
+        content: `[Bối cảnh phân tích từ Lượt 1 - Model: ${chamberModel}]:\n${implicitContext}\n\nHãy sử dụng bối cảnh phân tích trên để trả lời người dùng một cách tối ưu nhất.`
+      });
+    }
+
+    // --- LƯỢT 2 (CHÍNH) ---
     let { res, fetchError } = await makeApiRequest(apiMessages);
 
     // --- Fallback: if HTTP error AND has images, retry text-only (no image_url) ---
@@ -1649,6 +1996,12 @@ async function generateAIResponse() {
       await runVisionTaskIfNeeded();
       
       const textOnlyMessages = buildTextOnlyMessages(chat, systemPrompt);
+      if (implicitContext) {
+        textOnlyMessages.push({
+          role: 'system',
+          content: `[Bối cảnh phân tích từ Lượt 1 - Model: ${chamberModel}]:\n${implicitContext}\n\nHãy sử dụng bối cảnh phân tích trên để trả lời người dùng một cách tối ưu nhất.`
+        });
+      }
       const retry = await makeApiRequest(textOnlyMessages);
       res = retry.res;
       fetchError = retry.fetchError;
@@ -1733,28 +2086,38 @@ async function generateAIResponse() {
       }
     }
 
-        chat.messages.push({ role: 'assistant', content: assistantContent, timestamp: Date.now() });
-      saveState(true); // Ép lưu vào IndexedDB và Cloud khi stream kết thúc
-      if (isStillActiveChat()) renderMessages();
-    
-      // === AI Memory: Trích xuất thông tin từ tin nhắn user gần nhất ===
-      const lastUserMsg = [...chat.messages].reverse().find(m => m.role === 'user');
-      if (lastUserMsg && lastUserMsg.content) {
-        extractMemoryFromMessage(lastUserMsg.content);
-      }
+    chat.messages.push({ role: 'assistant', content: assistantContent, timestamp: Date.now() });
+    saveState(true); // Ép lưu vào IndexedDB và Cloud khi stream kết thúc
+    if (isStillActiveChat()) renderMessages();
+
+    // Classify sentiment of assistant response to adjust theme/particles/lofi mood
+    if (assistantContent) {
+      const assistantSentiment = classifySentiment(assistantContent);
+      triggerSentimentChange(assistantSentiment);
+    }
+  
+    // === AI Memory: Trích xuất thông tin từ tin nhắn user gần nhất ===
+    const lastUserMsg = [...chat.messages].reverse().find(m => m.role === 'user');
+    if (lastUserMsg && lastUserMsg.content) {
+      extractMemoryFromMessage(lastUserMsg.content);
+    }
 
   } catch(e) {
     if (e.name === 'AbortError') {
-      if (typingEl.parentNode) typingEl.remove();
-      if (assistantContent) {
-        chat.messages.push({ role: 'assistant', content: assistantContent + '\n\n*(Đã dừng)*', timestamp: Date.now() });
+      if (typingEl && typingEl.parentNode) typingEl.remove();
+      const currentChat = State.chats.find(c => c.id === generatingChatId);
+      if (currentChat && assistantContent) {
+        currentChat.messages.push({ role: 'assistant', content: assistantContent + '\n\n*(Đã dừng)*', timestamp: Date.now() });
       }
       saveState();
       if (isStillActiveChat()) renderMessages();
       toast('Đã dừng tạo phản hồi.', 'info');
     } else {
-      if (typingEl.parentNode) typingEl.remove();
-      chat.messages.push({ role: 'assistant', content: `⚠️ Lỗi: ${e.message}`, timestamp: Date.now() });
+      if (typingEl && typingEl.parentNode) typingEl.remove();
+      const currentChat = State.chats.find(c => c.id === generatingChatId);
+      if (currentChat) {
+        currentChat.messages.push({ role: 'assistant', content: `⚠️ Lỗi: ${e.message}`, timestamp: Date.now() });
+      }
       saveState();
       if (isStillActiveChat()) renderMessages();
       toast('Lỗi: ' + e.message, 'error');
@@ -1868,46 +2231,153 @@ window.quoteMessage = function(idx) {
   }
 };
 
+// ===== Sentiment Analysis & Dynamic Themes =====
+window.currentSentiment = 'calm';
+
+function classifySentiment(text) {
+  if (!text) return 'calm';
+  const lower = text.toLowerCase();
+  
+  // Emotional keywords in Vietnamese & English
+  const excitedKeywords = ['vui', 'sướng', ' excited', 'tuyệt', 'hay quá', 'quá đã', 'awesome', 'great', 'happy', 'hạnh phúc', 'năng động', 'phấn khích', 'cháy', 'yêu', 'thích', 'haha', 'yêu thích', 'wow'];
+  const sadKeywords = ['buồn', 'khóc', 'tiếc', 'sad', 'tệ', 'cô đơn', 'chán', 'khó khăn', 'mệt mỏi', 'nản', 'thất vọng', 'hụt hẫng', 'khổ', 'khóc nhè', 'lo lắng', 'sợ hãi'];
+  const stressedKeywords = ['áp lực', 'stress', 'lo lắng', 'căng thẳng', 'sợ', 'giận', 'khó chịu', 'bực', 'điên', 'tức', 'mệt', 'hoảng', 'anxious', 'tired', 'chán nản', 'bế tắc'];
+  const creativeKeywords = ['sáng tạo', 'ý tưởng', 'vẽ', 'viết', 'code', 'nghệ thuật', 'thơ', 'nhạc', 'bài hát', 'thiết kế', 'creative', 'idea', 'art', 'design', 'nghĩ ra', 'suy nghĩ', 'độc đáo'];
+  const calmKeywords = ['bình yên', 'nhẹ nhàng', 'thư giãn', 'thiền', 'calm', 'relax', 'chilling', 'chill', 'bình tĩnh', 'yên tĩnh', 'ngủ', 'nhẹ', 'khoan khoái'];
+
+  if (excitedKeywords.some(w => lower.includes(w))) return 'excited';
+  if (sadKeywords.some(w => lower.includes(w))) return 'sad';
+  if (stressedKeywords.some(w => lower.includes(w))) return 'stressed';
+  if (creativeKeywords.some(w => lower.includes(w))) return 'creative';
+  if (calmKeywords.some(w => lower.includes(w))) return 'calm';
+  
+  return 'calm';
+}
+
+function triggerSentimentChange(sentiment) {
+  window.currentSentiment = sentiment;
+  
+  // Mood colors map matching the specific requirements and style presets
+  const moodColors = {
+    calm: { theme: 'aurora', accent1: '#e8a87c', accent2: '#c0392b', glow: 'rgba(232, 168, 124, 0.35)' },
+    excited: { theme: 'sunset', accent1: '#f093fb', accent2: '#f5576c', glow: 'rgba(240, 147, 251, 0.35)' },
+    sad: { theme: 'ocean', accent1: '#4facfe', accent2: '#00f2fe', glow: 'rgba(79, 172, 254, 0.35)' },
+    stressed: { theme: 'forest', accent1: '#43e97b', accent2: '#38f9d7', glow: 'rgba(67, 233, 123, 0.35)' },
+    creative: { theme: 'midnight', accent1: '#a18cd1', accent2: '#fbc2eb', glow: 'rgba(161, 140, 209, 0.35)' }
+  };
+  
+  const colors = moodColors[sentiment] || moodColors.calm;
+  
+  // Set theme attribute on body
+  document.body.setAttribute('data-theme', colors.theme);
+  
+  // Smoothly transition CSS custom variables
+  document.body.style.setProperty('--accent-1', colors.accent1);
+  document.body.style.setProperty('--accent-2', colors.accent2);
+  document.body.style.setProperty('--accent-glow', colors.glow);
+  document.body.style.setProperty('--accent-gradient', `linear-gradient(135deg, ${colors.accent1}, ${colors.accent2})`);
+  
+  // Speed up/change particles matching the mood
+  initParticles();
+  
+  // If the music player is active, change Lofi playlist mood to match the sentiment
+  if (window.sunaLofiPlayer) {
+    window.sunaLofiPlayer.changeMood(sentiment);
+  }
+}
+
 // ===== Particles Effect =====
 let _particleInterval = null;
 function initParticles() {
-const existing = document.getElementById('particles-container');
-if (existing) existing.remove();
-if (_particleInterval) { clearInterval(_particleInterval); _particleInterval = null; }
+  const existing = document.getElementById('particles-container');
+  if (existing) existing.remove();
+  if (_particleInterval) { clearInterval(_particleInterval); _particleInterval = null; }
 
-const container = document.createElement('div');
-container.id = 'particles-container';
-container.style.cssText = 'position: absolute; inset: 0; pointer-events: none; z-index: 0; overflow: hidden;';
-$('#chat-area').appendChild(container);
+  const container = document.createElement('div');
+  container.id = 'particles-container';
+  container.style.cssText = 'position: absolute; inset: 0; pointer-events: none; z-index: 0; overflow: hidden;';
+  $('#chat-area').appendChild(container);
 
-const MAX_PARTICLES = 15;
+  const sentiment = window.currentSentiment || 'calm';
+  
+  let symbol = '🌸';
+  let color = 'var(--accent-1)';
+  let durationMin = 8;
+  let durationMax = 15;
+  let spawnRate = 1500;
+  let maxOpMin = 0.15;
+  let maxOpMax = 0.35;
+  let particleCount = 12;
+
+  if (sentiment === 'sad') {
+    symbol = '❄️'; // blue slow snowflakes
+    color = '#4facfe';
+    durationMin = 14;
+    durationMax = 24;
+    spawnRate = 2200;
+    maxOpMin = 0.1;
+    maxOpMax = 0.3;
+    particleCount = 10;
+  } else if (sentiment === 'creative') {
+    symbol = '⭐'; // glowing Midnight stars
+    color = '#a18cd1';
+    durationMin = 6;
+    durationMax = 12;
+    spawnRate = 1000;
+    maxOpMin = 0.2;
+    maxOpMax = 0.45;
+    particleCount = 20;
+  } else if (sentiment === 'excited') {
+    symbol = '✨'; // warm Ember sparkles moving fast
+    color = '#fa709a';
+    durationMin = 3;
+    durationMax = 6;
+    spawnRate = 600;
+    maxOpMin = 0.25;
+    maxOpMax = 0.5;
+    particleCount = 25;
+  } else if (sentiment === 'stressed') {
+    symbol = '🍃'; // cool Forest leafs moving slowly
+    color = '#43e97b';
+    durationMin = 10;
+    durationMax = 18;
+    spawnRate = 2000;
+    maxOpMin = 0.12;
+    maxOpMax = 0.28;
+    particleCount = 8;
+  } else {
+    // calm
+    symbol = '🌸';
+    color = 'var(--accent-1)';
+    durationMin = 8;
+    durationMax = 15;
+    spawnRate = 1600;
+    maxOpMin = 0.15;
+    maxOpMax = 0.35;
+    particleCount = 12;
+  }
+
   _particleInterval = setInterval(() => {
     if (document.hidden) return;
-    if (container.childElementCount >= MAX_PARTICLES) return;
+    if (container.childElementCount >= particleCount) return;
     const p = document.createElement('div');
-    
-    const theme = State.settings.theme;
-    let symbol = '❄️';
-    if (theme === 'sunset' || theme === 'ember') symbol = '🌸';
-    if (theme === 'forest') symbol = '🍃';
-    if (theme === 'aurora' || theme === 'midnight') symbol = '✨';
-
     p.textContent = symbol;
     
     const size = 10 + Math.random() * 8;
     const startX = Math.random() * 100;
-    const duration = 8 + Math.random() * 10;
+    const duration = durationMin + Math.random() * (durationMax - durationMin);
     const delay = Math.random() * 2;
-    const maxOp = 0.15 + Math.random() * 0.2;
+    const maxOp = maxOpMin + Math.random() * (maxOpMax - maxOpMin);
     
     p.style.cssText = `
       position: absolute;
       top: -20px;
       left: ${startX}%;
       font-size: ${size}px;
+      color: ${color};
       opacity: 0;
       animation: particleFall ${duration}s linear ${delay}s forwards;
-      filter: drop-shadow(0 0 4px var(--accent-1));
+      filter: drop-shadow(0 0 6px ${color});
       --max-opacity: ${maxOp};
     `;
     
@@ -1916,7 +2386,7 @@ const MAX_PARTICLES = 15;
     setTimeout(() => {
       if (p.parentNode) p.remove();
     }, (duration + delay) * 1000);
-  }, 1500);
+  }, spawnRate);
 }
 
 // ===== Mode Toggle =====

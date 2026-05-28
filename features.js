@@ -174,9 +174,28 @@ function initTranslatorMode() {
     const langMap = { 'en': 'en-US', 'ja': 'ja-JP', 'zh': 'zh-CN', 'ko': 'ko-KR', 'es': 'es-ES', 'fr': 'fr-FR' };
     translatorRecog.lang = langCode === 'vi' ? 'vi-VN' : (langMap[targetLangSelect.value] || targetLangSelect.value);
     currentSource = langCode;
-    if (langCode === 'vi') { txtSource.innerText = 'Đang nghe...'; btnMicVi.classList.add('recording'); }
-    else { txtTarget.innerText = 'Đang nghe...'; btnMicTarget.classList.add('recording'); }
-    try { translatorRecog.start(); } catch(e){}
+    if (langCode === 'vi') { 
+      txtSource.innerText = 'Đang nghe...'; 
+      btnMicVi?.classList.add('recording'); 
+    } else { 
+      txtTarget.innerText = 'Đang nghe...'; 
+      btnMicTarget?.classList.add('recording'); 
+    }
+    try { 
+      translatorRecog.start(); 
+    } catch (e) {
+      console.error("Speech recognition start failed:", e);
+      btnMicVi?.classList.remove('recording');
+      btnMicTarget?.classList.remove('recording');
+      if (langCode === 'vi') {
+        txtSource.innerText = 'Nhấn mic hoặc nhập văn bản...';
+      } else {
+        txtTarget.innerText = 'Bản dịch sẽ hiển thị ở đây...';
+      }
+      if (window.toast) {
+        window.toast('Lỗi khởi động micro hoặc chưa cấp quyền!', 'error');
+      }
+    }
   };
   const stopRecog = () => {
     btnMicVi?.classList.remove('recording');
@@ -273,6 +292,50 @@ function initMemoryCabinet() {
 // =============================================
 // 4. LIVE ARTIFACTS WORKSPACE & WEB SEARCH
 // =============================================
+
+// Robust fetch utility with multiple CORS proxy fallbacks: corsproxy.io -> api.allorigins.win -> api.codetabs.com
+window.fetchWithProxy = async function(url) {
+  // 1. Try corsproxy.io first
+  try {
+    const proxyUrl = `https://corsproxy.io/?url=${encodeURIComponent(url)}`;
+    const response = await fetch(proxyUrl);
+    if (response.ok) {
+      const text = await response.text();
+      return new Response(text, { status: response.status, headers: response.headers });
+    }
+  } catch (err) {
+    console.warn('corsproxy.io failed, trying fallback:', err);
+  }
+
+  // 2. Try api.allorigins.win next
+  try {
+    const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
+    const response = await fetch(proxyUrl);
+    if (response.ok) {
+      const data = await response.json();
+      if (data && data.contents !== undefined) {
+        return new Response(data.contents, { status: 200 });
+      }
+    }
+  } catch (err) {
+    console.warn('api.allorigins.win failed, trying fallback:', err);
+  }
+
+  // 3. Try api.codetabs.com next
+  try {
+    const proxyUrl = `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(url)}`;
+    const response = await fetch(proxyUrl);
+    if (response.ok) {
+      const text = await response.text();
+      return new Response(text, { status: response.status, headers: response.headers });
+    }
+  } catch (err) {
+    console.warn('api.codetabs.com failed:', err);
+  }
+
+  throw new Error('All CORS proxies failed to fetch: ' + url);
+};
+
 function initArtifactsAndSearch() {
   const btnSearch = document.getElementById('btn-web-search');
   
@@ -309,33 +372,133 @@ function initArtifactsAndSearch() {
   const btnRefreshArt = document.getElementById('btn-refresh-artifact');
   const iframe = document.getElementById('artifact-iframe');
   
+  const editorTextarea = document.getElementById('artifact-editor-textarea');
+  const btnCopyArt = document.getElementById('btn-copy-artifact');
+  const btnDownloadArt = document.getElementById('btn-download-artifact');
+  const btnCollabSuna = document.getElementById('btn-collab-suna');
+  const viewToggleBtns = document.querySelectorAll('.view-toggle-btn');
+  
   if (btnCloseArt) {
-    btnCloseArt.addEventListener('click', () => artifactsPanel.classList.remove('active'));
+    btnCloseArt.addEventListener('click', () => {
+      if (artifactsPanel) artifactsPanel.classList.remove('active');
+    });
   }
   
-  window.openArtifact = function(b64) {
+  window.openArtifact = function(contentOrB64) {
     if (!artifactsPanel || !iframe) return;
+    let htmlContent = '';
     try {
-      // Decode base64 unicode safely
-      const binString = atob(b64);
-      const bytes = new Uint8Array(binString.length);
-      for (let i = 0; i < binString.length; i++) {
-        bytes[i] = binString.charCodeAt(i);
+      if (!contentOrB64) {
+        htmlContent = '';
+      } else if (contentOrB64.trim().startsWith('<') || /\s/.test(contentOrB64.trim())) {
+        htmlContent = contentOrB64;
+      } else {
+        // Decode base64 unicode safely
+        const binString = atob(contentOrB64);
+        const bytes = new Uint8Array(binString.length);
+        for (let i = 0; i < binString.length; i++) {
+          bytes[i] = binString.charCodeAt(i);
+        }
+        htmlContent = new TextDecoder('utf-8').decode(bytes);
       }
-      const htmlContent = new TextDecoder('utf-8').decode(bytes);
-      
-      iframe.srcdoc = htmlContent;
-      artifactsPanel.classList.add('active');
     } catch(e) {
-      console.error("Artifact decode error:", e);
+      console.warn("Artifact decode error, falling back to raw text:", e);
+      htmlContent = contentOrB64 || '';
     }
+    
+    if (editorTextarea) {
+      editorTextarea.value = htmlContent;
+    }
+    iframe.srcdoc = htmlContent;
+    artifactsPanel.classList.add('active');
   };
+
+  // Sync editor modifications with live preview iframe
+  if (editorTextarea && iframe) {
+    const updatePreview = () => {
+      iframe.srcdoc = editorTextarea.value;
+    };
+    editorTextarea.addEventListener('input', updatePreview);
+    editorTextarea.addEventListener('change', updatePreview);
+  }
+
+  // Handle preview/editor/split view mode transitions
+  viewToggleBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      viewToggleBtns.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const viewMode = btn.dataset.view;
+      if (artifactsPanel) {
+        artifactsPanel.setAttribute('data-view', viewMode);
+      }
+    });
+  });
+
+  // Copy code to clipboard
+  if (btnCopyArt) {
+    btnCopyArt.addEventListener('click', () => {
+      const code = editorTextarea ? editorTextarea.value : (iframe.srcdoc || '');
+      if (!code) {
+        if (window.toast) window.toast('Không có nội dung để copy!', 'info');
+        return;
+      }
+      navigator.clipboard.writeText(code).then(() => {
+        if (window.toast) window.toast('Đã copy toàn bộ mã nguồn!', 'success');
+      }).catch(err => {
+        console.error('Copy failure:', err);
+        if (window.toast) window.toast('Lỗi copy mã nguồn!', 'error');
+      });
+    });
+  }
+
+  // Download HTML file
+  if (btnDownloadArt) {
+    btnDownloadArt.addEventListener('click', () => {
+      const code = editorTextarea ? editorTextarea.value : (iframe.srcdoc || '');
+      if (!code) {
+        if (window.toast) window.toast('Không có nội dung để tải xuống!', 'info');
+        return;
+      }
+      const blob = new Blob([code], { type: 'text/html;charset=utf-8' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'suna-workspace.html';
+      a.click();
+      URL.revokeObjectURL(a.href);
+      if (window.toast) window.toast('Đã tải xuống file suna-workspace.html!', 'success');
+    });
+  }
+
+  // Collab with Suna button handler
+  if (btnCollabSuna) {
+    btnCollabSuna.addEventListener('click', () => {
+      const code = editorTextarea ? editorTextarea.value : (iframe.srcdoc || '');
+      if (!code) {
+        if (window.toast) window.toast('Mã nguồn trống, hãy nhập nội dung trước!', 'info');
+        return;
+      }
+      const chatInput = document.getElementById('message-input');
+      if (chatInput) {
+        const promptText = `Mình có đoạn mã này cần bạn xem lại và tối ưu hoặc chỉnh sửa thêm giúp mình:\n\n\`\`\`html\n${code}\n\`\`\`\n\nHãy phân tích và đưa ra giải pháp tối ưu/nâng cấp mã nguồn này nhé!`;
+        chatInput.value = promptText;
+        chatInput.style.height = 'auto';
+        chatInput.style.height = Math.min(chatInput.scrollHeight, 150) + 'px';
+        chatInput.focus();
+      }
+      if (artifactsPanel) artifactsPanel.classList.remove('active');
+      if (window.toast) window.toast('Đã chuyển mã nguồn vào ô chat với Suna!', 'success');
+    });
+  }
 
   if (btnRefreshArt && iframe) {
     btnRefreshArt.addEventListener('click', () => {
-      const src = iframe.srcdoc;
-      iframe.srcdoc = '';
-      setTimeout(() => iframe.srcdoc = src, 50);
+      if (editorTextarea) {
+        iframe.srcdoc = editorTextarea.value;
+      } else {
+        const src = iframe.srcdoc;
+        iframe.srcdoc = '';
+        setTimeout(() => iframe.srcdoc = src, 50);
+      }
     });
   }
 }
@@ -344,21 +507,35 @@ function initArtifactsAndSearch() {
 window.performWebSearch = async function(query) {
   try {
     const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
-    const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(searchUrl)}`;
     
-    const response = await fetch(proxyUrl);
-    if (!response.ok) return null;
+    // Use the robust fetchWithProxy utility
+    const response = await window.fetchWithProxy(searchUrl);
+    if (!response || !response.ok) return null;
     
-    const data = await response.json();
-    const doc = new DOMParser().parseFromString(data.contents, 'text/html');
+    const htmlText = await response.text();
+    const doc = new DOMParser().parseFromString(htmlText, 'text/html');
     
     const results = [];
     doc.querySelectorAll('.result').forEach(el => {
-      const titleEl = el.querySelector('.result__title');
+      const titleEl = el.querySelector('.result__a') || el.querySelector('.result__title');
       const snippetEl = el.querySelector('.result__snippet');
-      const urlEl = el.querySelector('.result__url');
+      
+      let actualUrl = '';
+      const linkEl = el.querySelector('.result__a');
+      if (linkEl) {
+        const href = linkEl.getAttribute('href') || '';
+        try {
+          const urlObj = new URL(href, 'https://duckduckgo.com');
+          const uddg = urlObj.searchParams.get('uddg');
+          actualUrl = uddg ? decodeURIComponent(uddg) : href;
+        } catch (e) {
+          const match = href.match(/[?&]uddg=([^&]+)/);
+          actualUrl = match ? decodeURIComponent(match[1]) : href;
+        }
+      }
+      
       if (titleEl && snippetEl) {
-        results.push(`Tiêu đề: ${titleEl.textContent.trim()}\nURL: ${urlEl ? urlEl.textContent.trim() : ''}\nTrích dẫn: ${snippetEl.textContent.trim()}`);
+        results.push(`Tiêu đề: ${titleEl.textContent.trim()}\nURL: ${actualUrl}\nTrích dẫn: ${snippetEl.textContent.trim()}`);
       }
     });
     
@@ -467,6 +644,157 @@ b{display:block;margin-bottom:6px;font-size:0.85em;opacity:0.7}p{margin:0;white-
   });
 }
 
+// =============================================
+// 7. SUNA LOFI PLAYER CONTROLLER
+// =============================================
+class LofiPlayer {
+  constructor() {
+    this.tracks = {
+      calm: {
+        title: "Suna Calm Day 🌸",
+        url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3"
+      },
+      excited: {
+        title: "Morning Sunshine ☀️",
+        url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3"
+      },
+      sad: {
+        title: "Rainy Night Tears 🌧️",
+        url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-8.mp3"
+      },
+      stressed: {
+        title: "Forest Breeze 🍃",
+        url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-12.mp3"
+      },
+      creative: {
+        title: "Midnight Dream 🌌",
+        url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-6.mp3"
+      }
+    };
+    
+    this.currentMood = 'calm';
+    this.isPlaying = false;
+    this.audio = new Audio();
+    this.audio.loop = true;
+    this.audio.volume = 0.5;
+    
+    this.playBtn = null;
+    this.volumeSlider = null;
+    this.trackTitle = null;
+    this.visualizer = null;
+  }
+  
+  init() {
+    this.playBtn = document.getElementById('lofi-play-btn');
+    this.volumeSlider = document.getElementById('lofi-volume-slider');
+    this.trackTitle = document.getElementById('lofi-track-title');
+    this.visualizer = document.getElementById('lofi-visualizer');
+    
+    if (!this.playBtn || !this.volumeSlider || !this.trackTitle || !this.visualizer) {
+      console.warn("Suna Lofi Player DOM elements not found. Retrying in 1 second...");
+      setTimeout(() => this.init(), 1000);
+      return;
+    }
+    
+    // Set initial track
+    this.loadTrack(this.currentMood);
+    
+    // Play/Pause Click Handler
+    this.playBtn.addEventListener('click', () => {
+      this.togglePlay();
+    });
+    
+    // Volume Change Handler
+    this.volumeSlider.addEventListener('input', (e) => {
+      this.setVolume(parseFloat(e.target.value));
+    });
+    
+    // Handle audio errors gracefully
+    this.audio.addEventListener('error', (e) => {
+      console.error("Lofi audio loading error:", e);
+      if (window.toast) window.toast("Lỗi tải nhạc Lofi, đang chuyển track dự phòng...", "error");
+      this.audio.src = "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3";
+      if (this.isPlaying) {
+        this.audio.play().catch(err => console.error("Playback failed:", err));
+      }
+    });
+  }
+  
+  loadTrack(mood) {
+    const track = this.tracks[mood] || this.tracks.calm;
+    this.currentMood = mood;
+    
+    const wasPlaying = this.isPlaying;
+    if (this.isPlaying) {
+      this.audio.pause();
+    }
+    
+    this.audio.src = track.url;
+    this.trackTitle.textContent = track.title;
+    
+    // Restart animation for title marquee
+    this.trackTitle.style.animation = 'none';
+    this.trackTitle.offsetHeight; // trigger reflow
+    this.trackTitle.style.animation = '';
+    
+    if (wasPlaying) {
+      this.audio.play().catch(e => console.log("Play failed, needs user interaction first."));
+    }
+  }
+  
+  togglePlay() {
+    if (this.isPlaying) {
+      this.pause();
+    } else {
+      this.play();
+    }
+  }
+  
+  play() {
+    this.audio.play()
+      .then(() => {
+        this.isPlaying = true;
+        this.playBtn.innerHTML = '<span class="material-icons-round">pause</span>';
+        this.visualizer.classList.add('active');
+        if (window.toast) window.toast("Đã bật nhạc Suna Lofi Thư Giãn 🌸", "success");
+      })
+      .catch(err => {
+        console.error("Audio playback error:", err);
+        if (window.toast) window.toast("Vui lòng click lại để cấp quyền audio cho trình duyệt", "info");
+      });
+  }
+  
+  pause() {
+    this.audio.pause();
+    this.isPlaying = false;
+    this.playBtn.innerHTML = '<span class="material-icons-round">play_arrow</span>';
+    this.visualizer.classList.remove('active');
+  }
+  
+  setVolume(vol) {
+    this.audio.volume = vol;
+    const volIcon = document.querySelector('.lofi-volume-icon');
+    if (volIcon) {
+      if (vol === 0) volIcon.textContent = 'volume_off';
+      else if (vol < 0.4) volIcon.textContent = 'volume_mute';
+      else if (vol < 0.7) volIcon.textContent = 'volume_down';
+      else volIcon.textContent = 'volume_up';
+    }
+  }
+  
+  changeMood(mood) {
+    if (this.tracks[mood] && mood !== this.currentMood) {
+      this.loadTrack(mood);
+      if (window.toast && this.isPlaying) {
+        window.toast(`Giai điệu chuyển sang mood ${mood} 🎵`, "info");
+      }
+    }
+  }
+}
+
+// Instantiate and expose globally
+window.sunaLofiPlayer = new LofiPlayer();
+
 // Khởi chạy tất cả features khi tải xong
 document.addEventListener('DOMContentLoaded', () => {
   initTTS();
@@ -474,5 +802,6 @@ document.addEventListener('DOMContentLoaded', () => {
   initMemoryCabinet();
   initArtifactsAndSearch();
   initExportChat();
+  window.sunaLofiPlayer.init();
   // NOTE: Auth events & main init are handled by auth.js + app.js DOMContentLoaded
 });
