@@ -319,6 +319,23 @@ function applyTheme() {
     const meta = document.querySelector('meta[name="theme-color"]');
     if (meta) meta.setAttribute('content', '#0d0b14');
   }
+  
+  // Đồng bộ theme Mermaid với Light/Dark Mode
+  if (window.mermaid) {
+    try {
+      window.mermaid.initialize({
+        startOnLoad: false,
+        theme: State.settings.lightMode ? 'default' : 'dark',
+        securityLevel: 'loose'
+      });
+      // Re-render mermaid diagrams nếu có
+      const mermaidEls = document.querySelectorAll('.mermaid');
+      if (mermaidEls.length > 0) {
+        mermaidEls.forEach(el => { el.removeAttribute('data-processed'); });
+        window.mermaid.init(undefined, mermaidEls);
+      }
+    } catch(e) {}
+  }
 }
 
 // ===== Chat Management =====
@@ -561,8 +578,8 @@ function renderMessages() {
       chatArea.scrollTop = chatArea.scrollHeight;
     }
     
-    // Khởi tạo Mermaid Diagrams nếu có
-    if (window.mermaid && document.querySelector('.mermaid')) {
+    // Khởi tạo Mermaid Diagrams nếu có (chỉ chạy khi đã dừng stream để tránh xung đột)
+    if (!State.isGenerating && window.mermaid && document.querySelector('.mermaid')) {
       try { window.mermaid.init(undefined, document.querySelectorAll('.mermaid')); } catch(e){}
     }
   });
@@ -635,7 +652,20 @@ function formatMessage(text) {
     
     // Feature: Mermaid Diagram
     if (cleanLang === 'mermaid') {
-      return `<div class="mermaid-wrapper"><div class="mermaid">${code}</div></div>`;
+      const decodedMermaid = code
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'");
+      
+      if (State.isGenerating) {
+        return `<div class="mermaid-wrapper skeleton-loading">
+                  <span class="material-icons-round rotate-anim">psychology</span>
+                  <span>Suna đang phác thảo sơ đồ tư duy...</span>
+                </div>`;
+      }
+      return `<div class="mermaid-wrapper"><div class="mermaid">${decodedMermaid}</div></div>`;
     }
 
     // Feature: Interactive Kanban Board
@@ -2128,6 +2158,10 @@ async function generateAIResponse() {
     State.abortController = null;
     updateSendButtonState();
     if (isStillActiveChat()) renderMessages();
+    // Kích hoạt Mermaid render sau khi kết thúc stream
+    if (window.mermaid && document.querySelector('.mermaid')) {
+      try { window.mermaid.init(undefined, document.querySelectorAll('.mermaid')); } catch(e){}
+    }
   }
 }
 

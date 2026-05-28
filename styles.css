@@ -4789,3 +4789,170 @@ body[data-theme="midnight"] .suna-lofi-player { border-color: rgba(161, 140, 209
     display: none; /* Hide volume slider on very small screens to fit topbar */
   }
 }
+
+/* ===== Premium Mermaid Diagram Styles ===== */
+.mermaid-wrapper {
+  background: var(--bg-glass, rgba(255, 255, 255, 0.05));
+  border: 1px solid var(--border-color, rgba(232, 168, 124, 0.1));
+  border-radius: var(--radius-md, 12px);
+  padding: 18px;
+  margin: 18px 0;
+  box-shadow: var(--shadow-md, 0 4px 20px rgba(0, 0, 0, 0.4));
+  transition: all var(--transition, 0.25s cubic-bezier(.4, 0, .2, 1));
+  position: relative;
+  overflow: hidden;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.mermaid-wrapper:hover {
+  border-color: var(--accent-1, #e8a87c);
+  box-shadow: 0 6px 24px rgba(232, 168, 124, 0.15), var(--shadow-md, 0 4px 20px rgba(0, 0, 0, 0.4));
+  transform: translateY(-2px);
+}
+
+.mermaid-wrapper .mermaid {
+  overflow-x: auto;
+  overflow-y: hidden;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding-bottom: 8px; /* space for scrollbar */
+}
+
+.mermaid-wrapper .mermaid svg {
+  display: block;
+  margin: 0 auto;
+  max-width: 100%;
+  height: auto;
+}
+
+/* Custom scrollbar styles for mermaid container */
+.mermaid-wrapper .mermaid::-webkit-scrollbar {
+  height: 6px;
+}
+
+.mermaid-wrapper .mermaid::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.mermaid-wrapper .mermaid::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+  transition: background var(--transition, 0.25s ease);
+}
+
+.mermaid-wrapper .mermaid::-webkit-scrollbar-thumb:hover {
+  background: var(--accent-1, #e8a87c);
+}
+
+/* Light mode specific styling overrides */
+body.light-mode .mermaid-wrapper {
+  background: rgba(0, 0, 0, 0.02);
+  border-color: var(--border-color, rgba(0, 0, 0, 0.08));
+  box-shadow: var(--shadow-sm, 0 2px 8px rgba(0, 0, 0, 0.06));
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+body.light-mode .mermaid-wrapper:hover {
+  border-color: var(--accent-1, #e8a87c);
+  box-shadow: 0 6px 24px rgba(232, 168, 124, 0.08), var(--shadow-md, 0 4px 20px rgba(0, 0, 0, 0.08));
+}
+
+body.light-mode .mermaid-wrapper .mermaid::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+}
+
+body.light-mode .mermaid-wrapper .mermaid::-webkit-scrollbar-thumb:hover {
+  background: var(--accent-1, #e8a87c);
+}
+
+/* Skeleton Wave / Shimmer Animation for active diagram streaming */
+.mermaid-wrapper.skeleton-loading {
+  min-height: 180px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  cursor: wait;
+  position: relative;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.04) 25%,
+    rgba(255, 255, 255, 0.09) 37%,
+    rgba(255, 255, 255, 0.04) 63%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.8s infinite linear;
+}
+
+body.light-mode .mermaid-wrapper.skeleton-loading {
+  background: linear-gradient(
+    90deg,
+    rgba(0, 0, 0, 0.02) 25%,
+    rgba(0, 0, 0, 0.06) 37%,
+    rgba(0, 0, 0, 0.02) 63%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.8s infinite linear;
+}
+
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+/* Skeleton loader loading-text */
+.mermaid-wrapper.skeleton-loading .loading-text {
+  font-size: 0.92rem;
+  color: var(--text-secondary, #b5a99d);
+  font-weight: 500;
+  letter-spacing: 0.5px;
+  animation: pulse-text 1.6s ease-in-out infinite;
+}
+
+@keyframes pulse-text {
+  0%, 100% {
+    opacity: 0.6;
+    transform: scale(0.98);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* Icon rotating animation (rotate-anim) */
+@keyframes rotate-anim {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+.mermaid-wrapper.skeleton-loading i,
+.mermaid-wrapper.skeleton-loading svg,
+.mermaid-wrapper.skeleton-loading .material-icons,
+.mermaid-wrapper.skeleton-loading .material-icons-round,
+.mermaid-wrapper.skeleton-loading .loading-icon {
+  font-size: 32px;
+  width: 32px;
+  height: 32px;
+  line-height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: rotate-anim 2s linear infinite;
+  color: var(--accent-1, #e8a87c);
+  text-shadow: 0 0 10px var(--accent-glow, rgba(232, 168, 124, 0.35));
+}
+

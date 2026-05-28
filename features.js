@@ -652,23 +652,23 @@ class LofiPlayer {
     this.tracks = {
       calm: {
         title: "Suna Calm Day 🌸",
-        url: "https://assets.codepen.io/4358584/Anitek_-_01_-_Kisses.mp3"
+        url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3"
       },
       excited: {
         title: "Morning Sunshine ☀️",
-        url: "https://assets.codepen.io/4358584/Anitek_-_02_-_Kisses_II.mp3"
+        url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3"
       },
       sad: {
         title: "Rainy Night Tears 🌧️",
-        url: "https://assets.codepen.io/4358584/Anitek_-_03_-_Rain.mp3"
+        url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-8.mp3"
       },
       stressed: {
         title: "Forest Breeze 🍃",
-        url: "https://assets.codepen.io/4358584/Anitek_-_04_-_Wind.mp3"
+        url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-12.mp3"
       },
       creative: {
         title: "Midnight Dream 🌌",
-        url: "https://assets.codepen.io/4358584/Anitek_-_05_-_Dream.mp3"
+        url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-6.mp3"
       }
     };
     
@@ -682,9 +682,6 @@ class LofiPlayer {
     this.volumeSlider = null;
     this.trackTitle = null;
     this.visualizer = null;
-    
-    this._lastToastMessage = '';
-    this._lastToastTime = 0;
   }
   
   init() {
@@ -713,46 +710,17 @@ class LofiPlayer {
     });
     
     // Handle audio errors gracefully
-    this._fallbackTriggered = false;
     this.audio.addEventListener('error', (e) => {
       console.error("Lofi audio loading error:", e);
-      
-      // Chống lặp vô hạn nếu tệp dự phòng cũng thất bại
-      if (this._fallbackTriggered) {
-        console.warn("Cả bài hát chính và bài hát dự phòng đều thất bại. Dừng lofi player.");
-        this.pause();
-        this._fallbackTriggered = false;
-        return;
-      }
-      
-      this._fallbackTriggered = true;
+      if (window.toast) window.toast("Lỗi tải nhạc Lofi, đang chuyển track dự phòng...", "error");
+      this.audio.src = "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3";
       if (this.isPlaying) {
-        this.showSafeToast("Đang chuyển sang nguồn nhạc dự phòng...", "info");
-      }
-      
-      // Chuyển sang bài nhạc dự phòng calm lofi
-      this.audio.src = "https://assets.codepen.io/4358584/Anitek_-_01_-_Kisses.mp3";
-      if (this.isPlaying) {
-        this.audio.play().catch(err => {
-          console.error("Playback failed:", err);
-          this.pause();
-        });
+        this.audio.play().catch(err => console.error("Playback failed:", err));
       }
     });
   }
   
-  showSafeToast(message, type = 'info') {
-    const now = Date.now();
-    if (this._lastToastMessage === message && now - this._lastToastTime < 3000) {
-      return; // Skip duplicate toasts within 3 seconds
-    }
-    this._lastToastMessage = message;
-    this._lastToastTime = now;
-    if (window.toast) window.toast(message, type);
-  }
-  
   loadTrack(mood) {
-    this._fallbackTriggered = false; // Reset cờ dự phòng khi chuyển bài hát
     const track = this.tracks[mood] || this.tracks.calm;
     this.currentMood = mood;
     
@@ -788,11 +756,11 @@ class LofiPlayer {
         this.isPlaying = true;
         this.playBtn.innerHTML = '<span class="material-icons-round">pause</span>';
         this.visualizer.classList.add('active');
-        this.showSafeToast("Đã bật nhạc Suna Lofi Thư Giãn 🌸", "success");
+        if (window.toast) window.toast("Đã bật nhạc Suna Lofi Thư Giãn 🌸", "success");
       })
       .catch(err => {
         console.error("Audio playback error:", err);
-        // Fail silently in the console to avoid any UI warning floods or spam
+        if (window.toast) window.toast("Vui lòng click lại để cấp quyền audio cho trình duyệt", "info");
       });
   }
   
@@ -817,8 +785,8 @@ class LofiPlayer {
   changeMood(mood) {
     if (this.tracks[mood] && mood !== this.currentMood) {
       this.loadTrack(mood);
-      if (this.isPlaying) {
-        this.showSafeToast(`Giai điệu chuyển sang mood ${mood} 🎵`, "info");
+      if (window.toast && this.isPlaying) {
+        window.toast(`Giai điệu chuyển sang mood ${mood} 🎵`, "info");
       }
     }
   }
