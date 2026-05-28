@@ -710,17 +710,34 @@ class LofiPlayer {
     });
     
     // Handle audio errors gracefully
+    this._fallbackTriggered = false;
     this.audio.addEventListener('error', (e) => {
       console.error("Lofi audio loading error:", e);
+      
+      // Chống lặp vô hạn nếu tệp dự phòng cũng thất bại
+      if (this._fallbackTriggered) {
+        console.warn("Cả bài hát chính và bài hát dự phòng đều thất bại. Dừng lofi player.");
+        this.pause();
+        this._fallbackTriggered = false;
+        return;
+      }
+      
+      this._fallbackTriggered = true;
       if (window.toast) window.toast("Lỗi tải nhạc Lofi, đang chuyển track dự phòng...", "error");
+      
+      // Chuyển sang bài nhạc dự phòng calm lofi
       this.audio.src = "https://assets.codepen.io/4358584/Anitek_-_01_-_Kisses.mp3";
       if (this.isPlaying) {
-        this.audio.play().catch(err => console.error("Playback failed:", err));
+        this.audio.play().catch(err => {
+          console.error("Playback failed:", err);
+          this.pause();
+        });
       }
     });
   }
   
   loadTrack(mood) {
+    this._fallbackTriggered = false; // Reset cờ dự phòng khi chuyển bài hát
     const track = this.tracks[mood] || this.tracks.calm;
     this.currentMood = mood;
     
