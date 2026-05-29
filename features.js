@@ -651,24 +651,24 @@ class LofiPlayer {
   constructor() {
     this.tracks = {
       calm: {
-        title: "Suna Calm Day 🌸",
-        url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3"
+        title: "Suna Custom Lofi (Calm) 🌸",
+        url: "assets/suna-lofi.mp3"
       },
       excited: {
-        title: "Morning Sunshine ☀️",
-        url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3"
+        title: "Suna Custom Lofi (Excited) ☀️",
+        url: "assets/suna-lofi.mp3"
       },
       sad: {
-        title: "Rainy Night Tears 🌧️",
-        url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-8.mp3"
+        title: "Suna Custom Lofi (Rainy) 🌧️",
+        url: "assets/suna-lofi.mp3"
       },
       stressed: {
-        title: "Forest Breeze 🍃",
-        url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-12.mp3"
+        title: "Suna Custom Lofi (Chill) 🍃",
+        url: "assets/suna-lofi.mp3"
       },
       creative: {
-        title: "Midnight Dream 🌌",
-        url: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-6.mp3"
+        title: "Suna Custom Lofi (Creative) 🌌",
+        url: "assets/suna-lofi.mp3"
       }
     };
     
