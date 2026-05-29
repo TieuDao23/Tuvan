@@ -299,13 +299,59 @@ function toast(msg, type = 'info') {
 window.toast = toast;
 
 // ===== Theme =====
+// ===== Mermaid Diagram Rendering =====
+function renderMermaid() {
+  if (typeof mermaid === 'undefined') return;
+  const mermaidEls = document.querySelectorAll('.mermaid');
+  if (mermaidEls.length === 0) return;
+
+  try {
+    const isLight = State.settings && State.settings.lightMode;
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: isLight ? 'default' : 'dark',
+      securityLevel: 'loose',
+      suppressErrors: true
+    });
+
+    mermaidEls.forEach(el => {
+      el.removeAttribute('data-processed');
+    });
+
+    if (typeof mermaid.run === 'function') {
+      mermaid.run({
+        nodes: mermaidEls,
+        suppressErrors: true
+      }).catch(err => {
+        console.warn("Mermaid run failed, falling back to init:", err);
+        try {
+          if (typeof mermaid.init === 'function') {
+            mermaid.init(undefined, mermaidEls);
+          }
+        } catch (e) {}
+      });
+    } else if (typeof mermaid.init === 'function') {
+      mermaid.init(undefined, mermaidEls);
+    }
+  } catch (e) {
+    console.error("renderMermaid error:", e);
+  }
+}
+window.renderMermaid = renderMermaid;
+
+// ===== Theme =====
 function applyTheme() {
-  document.body.setAttribute('data-theme', State.settings.theme);
-  document.body.style.setProperty('--font-main', State.settings.fontFamily);
-  document.body.style.setProperty('--font-size', State.settings.fontSize + 'px');
+  const theme = (State.settings && State.settings.theme) || 'aurora';
+  const fontFamily = (State.settings && State.settings.fontFamily) || "'Inter', sans-serif";
+  const fontSize = (State.settings && State.settings.fontSize) || 15;
+  const isLight = State.settings && State.settings.lightMode;
+
+  document.body.setAttribute('data-theme', theme);
+  document.body.style.setProperty('--font-main', fontFamily);
+  document.body.style.setProperty('--font-size', fontSize + 'px');
   
   // Light/Dark mode
-  if (State.settings.lightMode) {
+  if (isLight) {
     document.body.classList.add('light-mode');
     const icon = document.getElementById('theme-icon');
     if (icon) icon.textContent = 'dark_mode';
@@ -321,21 +367,7 @@ function applyTheme() {
   }
   
   // Đồng bộ theme Mermaid với Light/Dark Mode
-  if (window.mermaid) {
-    try {
-      window.mermaid.initialize({
-        startOnLoad: false,
-        theme: State.settings.lightMode ? 'default' : 'dark',
-        securityLevel: 'loose'
-      });
-      // Re-render mermaid diagrams nếu có
-      const mermaidEls = document.querySelectorAll('.mermaid');
-      if (mermaidEls.length > 0) {
-        mermaidEls.forEach(el => { el.removeAttribute('data-processed'); });
-        window.mermaid.init(undefined, mermaidEls);
-      }
-    } catch(e) {}
-  }
+  renderMermaid();
 }
 
 // ===== Chat Management =====
@@ -579,8 +611,8 @@ function renderMessages() {
     }
     
     // Khởi tạo Mermaid Diagrams nếu có (chỉ chạy khi đã dừng stream để tránh xung đột)
-    if (!State.isGenerating && window.mermaid && document.querySelector('.mermaid')) {
-      try { window.mermaid.init(undefined, document.querySelectorAll('.mermaid')); } catch(e){}
+    if (!State.isGenerating) {
+      renderMermaid();
     }
   });
 }
@@ -2196,9 +2228,7 @@ async function generateAIResponse() {
     updateSendButtonState();
     if (isStillActiveChat()) renderMessages();
     // Kích hoạt Mermaid render sau khi kết thúc stream
-    if (window.mermaid && document.querySelector('.mermaid')) {
-      try { window.mermaid.init(undefined, document.querySelectorAll('.mermaid')); } catch(e){}
-    }
+    renderMermaid();
   }
 }
 
@@ -2984,10 +3014,16 @@ function initEvents() {
     });
   });
     $('#btn-save-personality').addEventListener('click', () => {
-    State.settings.tone = document.querySelector('.tone-btn.active')?.dataset.tone || 'friendly';
-    State.settings.theme = document.querySelector('.color-theme-btn.active')?.dataset.theme || 'aurora';
-    State.settings.customPersonality = $('#custom-personality').value;
+    const activeToneBtn = document.querySelector('.tone-btn.active');
+    const activeThemeBtn = document.querySelector('.color-theme-btn.active');
+    const customPersonalityInput = document.getElementById('custom-personality');
+
+    State.settings.tone = activeToneBtn ? (activeToneBtn.dataset.tone || 'friendly') : 'friendly';
+    State.settings.theme = activeThemeBtn ? (activeThemeBtn.dataset.theme || 'aurora') : 'aurora';
+    State.settings.customPersonality = customPersonalityInput ? customPersonalityInput.value : '';
+    
     applyTheme();
+    
     // Lưu NGAY LẬP TỨC (bypass debounce)
     try { localStorage.setItem('suna_settings', JSON.stringify(State.settings)); } catch(e) {}
     saveState();
@@ -3039,9 +3075,12 @@ function openModal(id) {
     document.getElementById('api-key-2').value = State.settings.apiKey2 || '';
     if (State.models.length) populateModelSelects();
   } else if (id === 'personality-modal') {
-    document.querySelectorAll('.tone-btn').forEach(b => b.classList.toggle('active', b.dataset.tone === State.settings.tone));
-    document.querySelectorAll('.color-theme-btn').forEach(b => b.classList.toggle('active', b.dataset.theme === State.settings.theme));
-    document.getElementById('custom-personality').value = State.settings.customPersonality || '';
+    const tone = State.settings.tone || 'friendly';
+    const theme = State.settings.theme || 'aurora';
+    document.querySelectorAll('.tone-btn').forEach(b => b.classList.toggle('active', b.dataset.tone === tone));
+    document.querySelectorAll('.color-theme-btn').forEach(b => b.classList.toggle('active', b.dataset.theme === theme));
+    const cp = document.getElementById('custom-personality');
+    if (cp) cp.value = State.settings.customPersonality || '';
   } else if (id === 'font-modal') {
     const fs = document.getElementById('font-family-select');
     if (fs) fs.value = State.settings.fontFamily || "'Inter', sans-serif";
