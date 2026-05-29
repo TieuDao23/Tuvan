@@ -77,7 +77,168 @@ function clearCachedAuth() {
   localStorage.removeItem('suna_cached_user');
 }
 
-// ===== Cloud Sync =====
+// ==========================================
+// ===== CONFLICT MERGE UTILITIES =====
+// ==========================================
+
+function upgradeStateLocal() {
+  if (!State.chats) State.chats = [];
+  if (!State.deletedChats) State.deletedChats = {};
+
+  State.chats = State.chats.map((c, cIdx) => {
+    const chat = { ...c };
+    if (!chat.id) chat.id = 'chat-' + (chat.createdAt || (Date.now() - cIdx * 1000));
+    if (!chat.createdAt) chat.createdAt = Date.now();
+    if (!chat.updatedAt) chat.updatedAt = chat.createdAt;
+    if (chat.deleted === undefined) chat.deleted = false;
+    if (!chat.deletedMessageIds) chat.deletedMessageIds = {};
+    
+    chat.messages = (chat.messages || []).map((m, mIdx) => {
+      const msg = { ...m };
+      if (!msg.id) msg.id = 'msg-' + (msg.timestamp || Date.now()) + '-' + mIdx;
+      if (!msg.updatedAt) msg.updatedAt = msg.timestamp || Date.now();
+      return msg;
+    });
+    return chat;
+  });
+  
+  if (State.settings && !State.settings.updatedAt) {
+    State.settings.updatedAt = Date.now();
+  }
+  if (State.memory) {
+    if (!State.memory.lastUpdated) State.memory.lastUpdated = Date.now();
+    State.memory.facts = (State.memory.facts || []).map(f => {
+      const fact = { ...f };
+      if (!fact.timestamp) fact.timestamp = Date.now();
+      return fact;
+    });
+  }
+}
+
+function mergeChats(localChats, remoteChats) {
+  const mergedMap = new Map();
+  const localDeleted = State.deletedChats || {};
+  
+  for (const c of localChats) {
+    const chat = { ...c };
+    if (!chat.id) continue;
+    mergedMap.set(chat.id, chat);
+  }
+
+  for (const r of remoteChats) {
+    const remoteChat = { ...r };
+    if (!remoteChat.id) continue;
+
+    const localChat = mergedMap.get(remoteChat.id);
+
+    if (!localChat) {
+      const localDelTime = localDeleted[remoteChat.id] || 0;
+      if (localDelTime >= (remoteChat.updatedAt || 0)) {
+        continue; 
+      }
+      mergedMap.set(remoteChat.id, remoteChat);
+    } else {
+      const mergedChat = { ...localChat };
+
+      if ((remoteChat.updatedAt || 0) > (localChat.updatedAt || 0)) {
+        mergedChat.title = remoteChat.title;
+        mergedChat.updatedAt = remoteChat.updatedAt;
+      }
+
+      mergedChat.deletedMessageIds = {
+        ...(localChat.deletedMessageIds || {}),
+        ...(remoteChat.deletedMessageIds || {})
+      };
+
+      const msgMap = new Map();
+      for (const m of (localChat.messages || [])) msgMap.set(m.id, m);
+      
+      for (const rm of (remoteChat.messages || [])) {
+        const lm = msgMap.get(rm.id);
+        if (!lm) {
+          msgMap.set(rm.id, rm);
+        } else {
+          if ((rm.updatedAt || 0) > (lm.updatedAt || 0)) {
+            msgMap.set(rm.id, rm);
+          }
+        }
+      }
+
+      const finalMessages = [];
+      for (const [msgId, msg] of msgMap.entries()) {
+        const delTime = mergedChat.deletedMessageIds[msgId];
+        if (delTime !== undefined && delTime >= (msg.updatedAt || msg.timestamp || 0)) {
+          continue; 
+        }
+        finalMessages.push(msg);
+      }
+
+      finalMessages.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+      mergedChat.messages = finalMessages;
+      mergedChat.updatedAt = Math.max(localChat.updatedAt || 0, remoteChat.updatedAt || 0);
+      mergedMap.set(mergedChat.id, mergedChat);
+    }
+  }
+
+  return Array.from(mergedMap.values())
+    .filter(c => {
+      const isDelLocally = localDeleted[c.id] !== undefined && localDeleted[c.id] >= (c.updatedAt || 0);
+      return !isDelLocally && !c.deleted;
+    })
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+}
+
+function mergeSettings(localSettings, remoteSettings) {
+  if (!localSettings) return remoteSettings || {};
+  if (!remoteSettings) return localSettings || {};
+  
+  const localTime = localSettings.updatedAt || 0;
+  const remoteTime = remoteSettings.updatedAt || 0;
+  
+  if (remoteTime > localTime) {
+    const merged = { ...remoteSettings };
+    if (!merged.apiKey && localSettings.apiKey) merged.apiKey = localSettings.apiKey;
+    if (!merged.baseUrl && localSettings.baseUrl) merged.baseUrl = localSettings.baseUrl;
+    if (!merged.apiKey2 && localSettings.apiKey2) merged.apiKey2 = localSettings.apiKey2;
+    if (!merged.baseUrl2 && localSettings.baseUrl2) merged.baseUrl2 = localSettings.baseUrl2;
+    return merged;
+  }
+  return localSettings;
+}
+
+function mergeMemory(localMemory, remoteMemory) {
+  const mergedFacts = new Map();
+  const factsL = (localMemory && localMemory.facts) || [];
+  const factsR = (remoteMemory && remoteMemory.facts) || [];
+  
+  for (const f of factsL) {
+    if (!f.fact) continue;
+    mergedFacts.set(f.fact.trim().toLowerCase(), { ...f });
+  }
+  
+  for (const f of factsR) {
+    if (!f.fact) continue;
+    const key = f.fact.trim().toLowerCase();
+    const existing = mergedFacts.get(key);
+    if (!existing || (f.timestamp || 0) > (existing.timestamp || 0)) {
+      mergedFacts.set(key, { ...f });
+    }
+  }
+  
+  const sortedFacts = Array.from(mergedFacts.values())
+    .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+    
+  while (sortedFacts.length > 50) {
+    sortedFacts.shift();
+  }
+  
+  return {
+    facts: sortedFacts,
+    lastUpdated: Math.max((localMemory && localMemory.lastUpdated) || 0, (remoteMemory && remoteMemory.lastUpdated) || 0, Date.now())
+  };
+}
+
+// ===== Cloud Sync (Resilient Fetch-Merge-Save) =====
 function cloudSave(immediate = false) {
   if (!AuthState.isLoggedIn || !_fb) return;
   if (AuthState.syncDebounceTimer) clearTimeout(AuthState.syncDebounceTimer);
@@ -87,9 +248,59 @@ function cloudSave(immediate = false) {
     AuthState.isSyncing = true;
     try {
       const uid = AuthState.user.uid;
+      upgradeStateLocal();
+
+      // Retrieve current remote data to perform pre-merge before writing (prevents overwrites)
+      let remoteChats = [];
+      let remoteDeleted = {};
+      let remoteSettings = {};
+      let remoteMemory = { facts: [] };
+
+      try {
+        const [sSnap, mSnap, cSnap] = await Promise.all([
+          _fb.getDoc(_fb.doc(_fb.db, 'users', uid, 'data', 'settings')),
+          _fb.getDoc(_fb.doc(_fb.db, 'users', uid, 'data', 'memory')),
+          _fb.getDoc(_fb.doc(_fb.db, 'users', uid, 'data', 'chats'))
+        ]);
+
+        if (sSnap.exists()) remoteSettings = sSnap.data();
+        if (mSnap.exists()) remoteMemory = mSnap.data();
+        if (cSnap.exists()) {
+          const rawChats = cSnap.data().chats;
+          if (rawChats) remoteChats = JSON.parse(rawChats);
+          const rawDel = cSnap.data().deletedChats;
+          if (rawDel) remoteDeleted = JSON.parse(rawDel);
+        }
+      } catch (err) {
+        console.warn("Failed to fetch remote data for pre-merge (offline-first). Pushing local state directly.", err);
+      }
+
+      // Merge remote deleted chats lists
+      State.deletedChats = {
+        ...(State.deletedChats || {}),
+        ...remoteDeleted
+      };
+
+      // Perform three-way merges
+      const mergedChats = mergeChats(State.chats, remoteChats);
+      const mergedSettings = mergeSettings(State.settings, remoteSettings);
+      const mergedMemory = mergeMemory(State.memory, remoteMemory);
+
+      State.chats = mergedChats;
+      Object.assign(State.settings, mergedSettings);
+      State.memory = mergedMemory;
+
+      if (State.chats.length > 0 && !State.chats.find(c => c.id === State.activeChatId)) {
+        State.activeChatId = State.chats[0].id;
+      }
+
+      // Persist merged data locally first
+      if (window.saveLocalStateOnly) window.saveLocalStateOnly();
+
+      // Clean large images to satisfy 1MB Document quota
       const chatsClean = State.chats.map(c => ({
         ...c,
-        messages: c.messages.map(m => {
+        messages: (c.messages || []).map(m => {
           const copy = { ...m };
           if (copy.images && copy.images.length) {
             copy.images = copy.images.map(img => (img && img.length > 70000) ? '__large_image__' : img);
@@ -98,16 +309,18 @@ function cloudSave(immediate = false) {
         })
       }));
 
-      // Chạy song song các tiến trình lưu trữ để tiết kiệm thời gian
+      // Commit fully merged data to cloud in parallel
       await Promise.all([
-        _fb.setDoc(_fb.doc(_fb.db, 'users', uid, 'data', 'settings'), {
+        _fb.setDoc(_fb.doc(_fb.doc(_fb.db, 'users', uid, 'data', 'settings')), {
           ...State.settings, updatedAt: _fb.serverTimestamp()
         }),
         _fb.setDoc(_fb.doc(_fb.db, 'users', uid, 'data', 'memory'), {
           ...State.memory, updatedAt: _fb.serverTimestamp()
         }),
         _fb.setDoc(_fb.doc(_fb.db, 'users', uid, 'data', 'chats'), {
-          chats: JSON.stringify(chatsClean), updatedAt: _fb.serverTimestamp()
+          chats: JSON.stringify(chatsClean),
+          deletedChats: JSON.stringify(State.deletedChats || {}),
+          updatedAt: _fb.serverTimestamp()
         })
       ]);
 
@@ -120,6 +333,7 @@ function cloudSave(immediate = false) {
       AuthState.isSyncing = false;
     }
   };
+
   if (immediate) {
     return doSave();
   } else {
@@ -133,7 +347,6 @@ async function cloudLoad() {
   try {
     const uid = AuthState.user.uid;
     
-    // Tải dữ liệu song song từ Firestore
     const [sSnap, mSnap, cSnap] = await Promise.all([
       _fb.getDoc(_fb.doc(_fb.db, 'users', uid, 'data', 'settings')),
       _fb.getDoc(_fb.doc(_fb.db, 'users', uid, 'data', 'memory')),
@@ -142,21 +355,48 @@ async function cloudLoad() {
 
     const isNewAccount = !sSnap.exists() && !mSnap.exists() && !cSnap.exists();
 
-    if (sSnap.exists()) { const d = sSnap.data(); delete d.updatedAt; Object.assign(State.settings, d); }
-    if (mSnap.exists()) { const d = mSnap.data(); delete d.updatedAt; if (d.facts) State.memory = d; }
-    if (cSnap.exists() && cSnap.data().chats) {
-      const cc = JSON.parse(cSnap.data().chats);
-      if (cc && cc.length > 0) {
-        State.chats = cc;
-        if (!State.chats.find(c => c.id === State.activeChatId)) State.activeChatId = State.chats[0].id;
-      }
-    }
-
     if (isNewAccount) {
-      // Đăng nhập lần đầu: Tự động đẩy dữ liệu của chế độ Khách lên Cloud
       cloudSave(true);
     } else {
-      // Đã có dữ liệu Cloud: Lưu dữ liệu vừa tải về xuống bộ nhớ Offline
+      upgradeStateLocal();
+
+      if (sSnap.exists()) {
+        const d = sSnap.data(); delete d.updatedAt;
+        const mergedSettings = mergeSettings(State.settings, d);
+        Object.assign(State.settings, mergedSettings);
+      }
+      
+      if (mSnap.exists()) {
+        const d = mSnap.data(); delete d.updatedAt;
+        if (d.facts) {
+          const mergedMemory = mergeMemory(State.memory, d);
+          State.memory = mergedMemory;
+        }
+      }
+
+      if (cSnap.exists()) {
+        const rawChats = cSnap.data().chats;
+        const rawDel = cSnap.data().deletedChats;
+        
+        if (rawDel) {
+          State.deletedChats = {
+            ...(State.deletedChats || {}),
+            ...JSON.parse(rawDel)
+          };
+        }
+        
+        if (rawChats) {
+          const cc = JSON.parse(rawChats);
+          if (cc && cc.length > 0) {
+            const mergedChats = mergeChats(State.chats, cc);
+            State.chats = mergedChats;
+            if (State.chats.length > 0 && !State.chats.find(c => c.id === State.activeChatId)) {
+              State.activeChatId = State.chats[0].id;
+            }
+          }
+        }
+      }
+
       if (window.saveLocalStateOnly) window.saveLocalStateOnly();
     }
     return true;
@@ -168,35 +408,55 @@ function initRealtimeSync() {
   if (!AuthState.isLoggedIn || !_fb || AuthState.useLocalOnly) return;
   const uid = AuthState.user.uid;
   
-  // Clear any existing listeners
   _syncUnsubscribes.forEach(u => u());
   _syncUnsubscribes = [];
 
   // 1. Listen to chats
   _syncUnsubscribes.push(_fb.onSnapshot(_fb.doc(_fb.db, 'users', uid, 'data', 'chats'), (doc) => {
-    // Ignore updates triggered by this device to prevent UI jitter
     if (!doc.exists() || doc.metadata.hasPendingWrites) return; 
-    if (typeof State !== 'undefined' && State.isGenerating) return;
     try {
-      const cc = JSON.parse(doc.data().chats);
-      if (cc && cc.length > 0) {
-        State.chats = cc;
-        if (!State.chats.find(c => c.id === State.activeChatId)) State.activeChatId = State.chats[0].id;
-        if (typeof window.renderChatList === 'function') window.renderChatList();
-        if (typeof window.renderMessages === 'function') window.renderMessages();
-        if (window.saveLocalStateOnly) window.saveLocalStateOnly();
+      const rawChats = doc.data().chats;
+      const rawDel = doc.data().deletedChats;
+      
+      let cc = [];
+      let dc = {};
+      if (rawChats) cc = JSON.parse(rawChats);
+      if (rawDel) dc = JSON.parse(rawDel);
+
+      upgradeStateLocal();
+      
+      State.deletedChats = {
+        ...(State.deletedChats || {}),
+        ...dc
+      };
+
+      const mergedChats = mergeChats(State.chats, cc);
+      const isStreamingActiveChat = typeof State !== 'undefined' && State.isGenerating && State.activeChatId === State.generatingChatId;
+
+      State.chats = mergedChats;
+      if (State.chats.length > 0 && !State.chats.find(c => c.id === State.activeChatId)) {
+        State.activeChatId = State.chats[0].id;
       }
+
+      if (typeof window.renderChatList === 'function') window.renderChatList();
+      
+      // Defer active chat re-rendering if AI is actively streaming to prevent DOM glitches
+      if (typeof window.renderMessages === 'function' && !isStreamingActiveChat) {
+        window.renderMessages();
+      }
+      if (window.saveLocalStateOnly) window.saveLocalStateOnly();
     } catch (e) { console.error('Realtime chat sync error', e); }
   }));
 
   // 2. Listen to memory
   _syncUnsubscribes.push(_fb.onSnapshot(_fb.doc(_fb.db, 'users', uid, 'data', 'memory'), (doc) => {
     if (!doc.exists() || doc.metadata.hasPendingWrites) return;
-    if (typeof State !== 'undefined' && State.isGenerating) return;
     try {
       const d = doc.data(); delete d.updatedAt;
       if (d.facts) {
-        State.memory = d;
+        upgradeStateLocal();
+        const mergedMemory = mergeMemory(State.memory, d);
+        State.memory = mergedMemory;
         if (typeof window.renderMemoryList === 'function') window.renderMemoryList();
         if (window.saveLocalStateOnly) window.saveLocalStateOnly();
       }
@@ -206,17 +466,17 @@ function initRealtimeSync() {
   // 3. Listen to settings
   _syncUnsubscribes.push(_fb.onSnapshot(_fb.doc(_fb.db, 'users', uid, 'data', 'settings'), (doc) => {
     if (!doc.exists() || doc.metadata.hasPendingWrites) return;
-    if (typeof State !== 'undefined' && State.isGenerating) return;
     try {
       const d = doc.data(); delete d.updatedAt;
-      Object.assign(State.settings, d);
+      upgradeStateLocal();
+      const mergedSettings = mergeSettings(State.settings, d);
+      Object.assign(State.settings, mergedSettings);
       if (typeof window.updateUserDisplay === 'function') window.updateUserDisplay();
       if (typeof window.applyTheme === 'function') window.applyTheme();
       if (window.saveLocalStateOnly) window.saveLocalStateOnly();
     } catch (e) {}
   }));
 }
-
 
 function triggerCloudSync() {
   if (AuthState.isLoggedIn) {
@@ -251,11 +511,10 @@ function hideAuthScreen(immediate = false) {
   const el = document.getElementById('auth-screen');
   if (!el) return;
   
-  // Show app immediately underneath the auth screen to prevent any white flash or layout gaps
   const appEl = document.getElementById('app');
   if (appEl) {
     appEl.style.display = 'flex';
-    void appEl.offsetWidth; // force reflow
+    void appEl.offsetWidth; 
   }
   
   if (immediate) {
@@ -263,9 +522,7 @@ function hideAuthScreen(immediate = false) {
     return;
   }
   
-  // Fade out auth screen
   el.style.opacity = '0';
-  
   setTimeout(() => {
     el.style.display = 'none';
   }, 300);
@@ -325,11 +582,9 @@ function translateFirebaseError(code) {
     'auth/unauthorized-domain': 'Tên miền này chưa được cấp phép. Vui lòng vào Firebase Console > Authentication > Settings > Authorized domains và thêm tên miền của bạn (ví dụ: sunachat.vercel.app).'
   };
 
-  // Xử lý các lỗi có chứa chuỗi api-key-not-valid
   if (code && code.includes('api-key-not-valid')) {
     return 'CHÚ Ý: Bạn chưa điền Firebase API Key! Vui lòng mở file auth.js và thay "placeholder" bằng Key thật của bạn.';
   }
-
   return map[code] || `Lỗi: ${code || 'Không xác định'}`;
 }
 
@@ -351,7 +606,6 @@ async function handleRegister() {
     const cred = await _fb.createUser(_fb.auth, email, pass);
     await _fb.updateProfile(cred.user, { displayName: name });
     if (typeof State !== 'undefined') State.settings.userName = name;
-    // onAuthStateChanged sẽ tự động handle login flow
   } catch (e) {
     console.error('Register error:', e);
     showAuthError('register', translateFirebaseError(e.code || e.message));
@@ -365,7 +619,6 @@ async function handleLogin() {
   clearAuthErrors();
   if (!email) { showAuthError('login', 'Vui lòng nhập email'); return; }
   if (!pass) { showAuthError('login', 'Vui lòng nhập mật khẩu'); return; }
-
   if (!_fb) { showAuthError('login', 'Firebase chưa sẵn sàng. Kiểm tra kết nối mạng.'); return; }
 
   setAuthLoading('login', true);
@@ -429,7 +682,8 @@ window.handleLogout = async function handleLogout() {
         facts: [],
         lastUpdated: 0
       };
-      State.chats = [{ id: 'chat-' + Date.now(), title: 'Chat mới', messages: [], createdAt: Date.now() }];
+      State.chats = [{ id: 'chat-' + Date.now(), title: 'Chat mới', messages: [], createdAt: Date.now(), updatedAt: Date.now() }];
+      State.deletedChats = {};
       State.activeChatId = State.chats[0].id;
       if (typeof window.saveLocalStateOnly === 'function') window.saveLocalStateOnly();
       if (typeof window.saveMemory === 'function') window.saveMemory();
@@ -444,7 +698,6 @@ window.handleLogout = async function handleLogout() {
     _syncUnsubscribes.forEach(u => u());
     _syncUnsubscribes = [];
     
-    // Đợi quá trình lưu lên mạng hoàn tất 100% rồi mới cắt phiên đăng nhập
     await cloudSave(true);
     await _fb.signOutFn(_fb.auth);
     AuthState.isLoggedIn = false;
@@ -463,7 +716,8 @@ window.handleLogout = async function handleLogout() {
         facts: [],
         lastUpdated: 0
       };
-      State.chats = [{ id: 'chat-' + Date.now(), title: 'Chat mới', messages: [], createdAt: Date.now() }];
+      State.chats = [{ id: 'chat-' + Date.now(), title: 'Chat mới', messages: [], createdAt: Date.now(), updatedAt: Date.now() }];
+      State.deletedChats = {};
       State.activeChatId = State.chats[0].id;
       if (typeof window.saveLocalStateOnly === 'function') window.saveLocalStateOnly();
       if (typeof window.saveMemory === 'function') window.saveMemory();
@@ -488,7 +742,6 @@ function handleGuestLogin() {
     AuthState.isAdmin = false;
     AuthState.useLocalOnly = true;
     
-    // Lưu trạng thái guest vào localStorage để không phải đăng nhập lại khi F5
     localStorage.setItem('suna_guest_mode', 'true');
     
     hideAuthScreen();
@@ -503,7 +756,6 @@ function handleGuestLogin() {
   }, 600);
 }
 
-
 // ===== Sidebar User Display =====
 function updateUserDisplay() {
   const el = document.getElementById('sidebar-user-info');
@@ -512,8 +764,6 @@ function updateUserDisplay() {
     const u = AuthState.user;
     const name = u.displayName || (typeof State !== 'undefined' ? State.settings.userName : '') || 'Người dùng';
     const avatar = u.photoURL || '';
-
-    // Check Admin
     const isAdmin = AuthState.isAdmin;
 
     el.innerHTML = `
@@ -532,7 +782,6 @@ function updateUserDisplay() {
           <span class="material-icons-round">logout</span>
         </button>
       </div>`;
-    // document.getElementById('btn-logout')?.addEventListener('click', handleLogout);
   } else {
     el.innerHTML = `
       <button class="btn-sign-in-sidebar" onclick="showAuthScreen()">
@@ -547,7 +796,6 @@ let _appInited = false;
 
 function doAppInit() {
   if (_appInited) {
-    // Đã init rồi — chỉ refresh UI
     if (typeof window.onUserSignedIn === 'function') window.onUserSignedIn();
     return;
   }
@@ -557,36 +805,28 @@ function doAppInit() {
 
 // ===== Main Auth Init (Optimized: Zero-Friction / Offline First) =====
 async function initAuth() {
-  // 1. ⚡ INSTANT APP DISPLAY (Optimistic UI)
-  // We NEVER block the user with a login screen on first load.
-  // Everyone gets immediate access. Data is saved to IndexedDB.
-  
   const cachedUser = getCachedAuthUser();
   const isGuestMode = localStorage.getItem('suna_guest_mode') === 'true';
 
   if (cachedUser) {
-    // Returning logged-in user
     AuthState.user = cachedUser;
     AuthState.isLoggedIn = true;
     AuthState.isAdmin = (cachedUser.email === 'duyanhblt1@gmail.com' || cachedUser.email === 'admin@suna.local');
     AuthState.useLocalOnly = false;
-    updateSyncIndicator('syncing'); // Indicate background sync
+    updateSyncIndicator('syncing'); 
   } else {
-    // New user, cleared cache, or returning guest -> Default to Guest Mode instantly
     AuthState.user = { uid: 'guest-' + Date.now(), email: 'khach@suna.local', displayName: 'Khách' };
     AuthState.isLoggedIn = true;
     AuthState.isAdmin = false;
     AuthState.useLocalOnly = true;
-    localStorage.setItem('suna_guest_mode', 'true'); // Persist guest state
+    localStorage.setItem('suna_guest_mode', 'true'); 
     updateSyncIndicator('offline');
   }
 
-  // 2. Hide auth screen and show app INSTANTLY
   hideAuthScreen(true);
   doAppInit();
   updateUserDisplay();
 
-  // 3. Load Firebase SDK (background)
   const sdkLoaded = await loadFirebaseSDK();
 
   if (!sdkLoaded) {
@@ -596,13 +836,11 @@ async function initAuth() {
     return;
   }
 
-  // 4. Firebase auth listener (upgrades session dynamically)
   return new Promise((resolve) => {
     let resolved = false;
 
     _fb.onAuthStateChanged(_fb.auth, async (user) => {
       if (user) {
-        // Firebase confirmed a real user session. Upgrade from guest if necessary.
         AuthState.user = user;
         AuthState.isLoggedIn = true;
         AuthState.isAdmin = (user.email === 'duyanhblt1@gmail.com' || user.email === 'admin@suna.local');
@@ -613,7 +851,6 @@ async function initAuth() {
         const loading = document.getElementById('auth-loading');
         if (loading) loading.style.display = 'flex';
 
-        // Silent background sync
         try { 
           await cloudLoad(); 
           initRealtimeSync();
@@ -627,9 +864,7 @@ async function initAuth() {
           updateSyncIndicator('synced'); 
         }
       } else {
-        // Firebase says no user.
         if (cachedUser) {
-          // Token expired. Downgrade them to auth screen to re-authenticate.
           _syncUnsubscribes.forEach(u => u());
           _syncUnsubscribes = [];
           
@@ -642,7 +877,6 @@ async function initAuth() {
           updateSyncIndicator('offline');
           if (window.toast) window.toast('Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.', 'info');
         }
-        // If they were already in Guest Mode, they just continue seamlessly.
       }
 
       AuthState.initialized = true;
@@ -653,7 +887,6 @@ async function initAuth() {
 
 // ===== Init Auth Event Listeners =====
 function initAuthEvents() {
-  // Đóng dropdown khi click ra ngoài
   document.addEventListener('click', (e) => {
     const btn = document.getElementById('btn-user-menu');
     const drop = document.getElementById('user-dropdown');
@@ -662,27 +895,20 @@ function initAuthEvents() {
     }
   });
 
-  // Tab switching
   document.querySelectorAll('.auth-tab-btn').forEach(btn =>
     btn.addEventListener('click', () => switchAuthTab(btn.dataset.tab))
   );
-  // Login
   document.getElementById('login-submit-btn')?.addEventListener('click', handleLogin);
   document.getElementById('login-form')?.addEventListener('keydown', e => { if (e.key === 'Enter') handleLogin(); });
-  // Register
   document.getElementById('register-submit-btn')?.addEventListener('click', handleRegister);
   document.getElementById('register-form')?.addEventListener('keydown', e => { if (e.key === 'Enter') handleRegister(); });
-  // Google — cả 2 form đều có nút Google
   document.querySelectorAll('.btn-auth-google').forEach(btn =>
     btn.addEventListener('click', handleGoogleLogin)
   );
-  // Guest login
   document.querySelectorAll('.btn-auth-guest').forEach(btn =>
     btn.addEventListener('click', handleGuestLogin)
   );
-  // Forgot password
   document.getElementById('btn-forgot-password')?.addEventListener('click', handleForgotPassword);
-  // Password visibility
   document.querySelectorAll('.btn-toggle-password').forEach(btn => {
     btn.addEventListener('click', () => {
       const input = document.getElementById(btn.dataset.target);

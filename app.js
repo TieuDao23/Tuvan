@@ -1,6 +1,7 @@
 // ===== State Management =====
 const State = {
   chats: [],
+  deletedChats: {}, // Map of chatId -> deletion timestamp (prevents ghost resurrection)
   activeChatId: null,
   mode: 'flash',
   models: [],
@@ -234,6 +235,7 @@ window.saveLocalStateOnly = function() {
   try {
     localStorage.setItem('suna_settings', JSON.stringify(State.settings));
     localStorage.setItem('suna_mode', State.mode);
+    localStorage.setItem('suna_deleted_chats', JSON.stringify(State.deletedChats || {}));
   } catch(e) {}
 };
 
@@ -243,6 +245,7 @@ function saveState(forceIndexedDB = false) {
     try {
       localStorage.setItem('suna_settings', JSON.stringify(State.settings));
       localStorage.setItem('suna_mode', State.mode);
+      localStorage.setItem('suna_deleted_chats', JSON.stringify(State.deletedChats || {}));
       
       // Tối ưu hiệu suất: Không ghi IndexedDB liên tục khi AI đang stream chữ
       // Trừ khi bị ép buộc lưu (forceIndexedDB) khi kết thúc
@@ -265,6 +268,9 @@ async function loadState() {
   try {
     const s = localStorage.getItem('suna_settings');
     const m = localStorage.getItem('suna_mode');
+    const dc = localStorage.getItem('suna_deleted_chats');
+    if (dc) State.deletedChats = JSON.parse(dc);
+    else State.deletedChats = {};
     
     // Migrate old chats from localStorage if they exist
     const oldChatsStr = localStorage.getItem('suna_chats');
@@ -385,7 +391,7 @@ function createChat() {
     return currentChat;
   }
 
-  const chat = { id: genId(), title: 'Chat mới', messages: [], createdAt: Date.now() };
+  const chat = { id: genId(), title: 'Chat mới', messages: [], createdAt: Date.now(), updatedAt: Date.now() };
   State.chats.unshift(chat);
   State.activeChatId = chat.id;
   saveState();
@@ -420,15 +426,18 @@ function deleteChat(id) {
   if (State.generatingChatId === id && State.abortController) {
     State.abortController.abort();
   }
+  if (!State.deletedChats) State.deletedChats = {};
+  State.deletedChats[id] = Date.now(); // Log the deletion to sync it
+
   State.chats = State.chats.filter(c => c.id !== id);
   if (State.chats.length === 0) {
-    const chat = { id: genId(), title: 'Chat mới', messages: [], createdAt: Date.now() };
+    const chat = { id: genId(), title: 'Chat mới', messages: [], createdAt: Date.now(), updatedAt: Date.now() };
     State.chats.push(chat);
     State.activeChatId = chat.id;
   } else if (State.activeChatId === id) {
     State.activeChatId = State.chats[0].id;
   }
-  saveState();
+  saveState(true); // Force push deletions immediately
   renderChatList();
   renderMessages();
 }
@@ -1801,15 +1810,18 @@ async function sendMessage() {
 
     // Add user message - store display text and file content separately
   const userMsg = { 
+    id: genId(),
     role: 'user', 
     content: text,
     fileContent: fileContentText || '',
     images: compressedImages, 
     files: files.map(f => ({ name: f.name, ext: f.ext, lang: f.lang, size: f.size })),
-    timestamp: Date.now() 
+    timestamp: Date.now(),
+    updatedAt: Date.now()
   };
   if (linkContext) userMsg.linkContext = linkContext;
   chat.messages.push(userMsg);
+  chat.updatedAt = Date.now(); // Parent chat updated
 
   // Auto-title
   if (chat.messages.length === 1 && text) {
@@ -2191,7 +2203,8 @@ async function generateAIResponse() {
       }
     }
 
-    chat.messages.push({ role: 'assistant', content: assistantContent, timestamp: Date.now() });
+    chat.messages.push({ id: genId(), role: 'assistant', content: assistantContent, timestamp: Date.now(), updatedAt: Date.now() });
+    chat.updatedAt = Date.now(); // Parent chat updated
     saveState(true); // Ép lưu vào IndexedDB và Cloud khi stream kết thúc
     if (isStillActiveChat()) renderMessages();
 
@@ -2212,18 +2225,20 @@ async function generateAIResponse() {
       if (typingEl && typingEl.parentNode) typingEl.remove();
       const currentChat = State.chats.find(c => c.id === generatingChatId);
       if (currentChat && assistantContent) {
-        currentChat.messages.push({ role: 'assistant', content: assistantContent + '\n\n*(Đã dừng)*', timestamp: Date.now() });
+        currentChat.messages.push({ id: genId(), role: 'assistant', content: assistantContent + '\n\n*(Đã dừng)*', timestamp: Date.now(), updatedAt: Date.now() });
+        currentChat.updatedAt = Date.now(); // Parent chat updated
       }
-      saveState();
+      saveState(true);
       if (isStillActiveChat()) renderMessages();
       toast('Đã dừng tạo phản hồi.', 'info');
     } else {
       if (typingEl && typingEl.parentNode) typingEl.remove();
       const currentChat = State.chats.find(c => c.id === generatingChatId);
       if (currentChat) {
-        currentChat.messages.push({ role: 'assistant', content: `⚠️ Lỗi: ${e.message}`, timestamp: Date.now() });
+        currentChat.messages.push({ id: genId(), role: 'assistant', content: `⚠️ Lỗi: ${e.message}`, timestamp: Date.now(), updatedAt: Date.now() });
+        currentChat.updatedAt = Date.now(); // Parent chat updated
       }
-      saveState();
+      saveState(true);
       if (isStillActiveChat()) renderMessages();
       toast('Lỗi: ' + e.message, 'error');
     }
@@ -2256,8 +2271,16 @@ window.submitEdit = async function(idx) {
   
   State.editingIdx = null;
   chat.messages[idx].content = text;
+  chat.messages[idx].updatedAt = Date.now(); // Mark message as edited
+  
   // Truncate messages after this index
+  const truncated = chat.messages.slice(idx + 1);
+  if (!chat.deletedMessageIds) chat.deletedMessageIds = {};
+  for (const tm of truncated) {
+    if (tm.id) chat.deletedMessageIds[tm.id] = Date.now(); // Log truncated messages as deleted
+  }
   chat.messages = chat.messages.slice(0, idx + 1);
+  chat.updatedAt = Date.now(); // Parent chat updated
   saveState();
   renderMessages();
   await generateAIResponse();
@@ -2267,7 +2290,13 @@ window.reloadMessage = async function(idx) {
   const chat = getActiveChat();
   if(!chat) return;
   // Truncate from idx onwards (which is the AI message to reload)
+  const truncated = chat.messages.slice(idx);
+  if (!chat.deletedMessageIds) chat.deletedMessageIds = {};
+  for (const tm of truncated) {
+    if (tm.id) chat.deletedMessageIds[tm.id] = Date.now(); // Log truncated messages as deleted
+  }
   chat.messages = chat.messages.slice(0, idx);
+  chat.updatedAt = Date.now(); // Parent chat updated
   saveState();
   renderMessages();
   await generateAIResponse();
@@ -2276,8 +2305,16 @@ window.reloadMessage = async function(idx) {
 window.deleteMessage = function(idx) {
   const chat = getActiveChat();
   if(!chat) return;
+  
+  const msg = chat.messages[idx];
+  if (msg && msg.id) {
+    if (!chat.deletedMessageIds) chat.deletedMessageIds = {};
+    chat.deletedMessageIds[msg.id] = Date.now(); // Log message deletion
+  }
+
   chat.messages.splice(idx, 1);
-  saveState();
+  chat.updatedAt = Date.now(); // Parent chat updated
+  saveState(true);
   renderMessages();
 }
 
@@ -2974,6 +3011,7 @@ function initEvents() {
       const chat = State.chats.find(c => c.id === State.pendingRenameId);
       if (chat) {
         chat.title = newTitle;
+        chat.updatedAt = Date.now(); // Mark modified for sync
         saveState();
         renderChatList();
         toast('Đã đổi tên đoạn chat', 'success');
