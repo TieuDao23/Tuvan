@@ -615,40 +615,25 @@ function formatMessage(text) {
   let html = escHtml(text);
 
   // === PLACEHOLDER SYSTEM ===
-  // KaTeX output chứa các ký tự đặc biệt (*, ^, ~, _, etc.) mà Markdown regex sẽ phá hỏng.
-  // Giải pháp: thay KaTeX output bằng placeholder tạm, xử lý Markdown xong mới khôi phục.
-  const mathPlaceholders = [];
-  function saveMath(html) {
-    const id = mathPlaceholders.length;
-    mathPlaceholders.push(html);
-    return '%%MATH_' + id + '%%';
+  // Hệ thống registry placeholder thống nhất để bảo vệ:
+  // - Fenced Code Blocks (Standard Code, Mermaid, Kanban)
+  // - KaTeX Math Blocks (Block/Inline)
+  // - Inline Code (kẹp trong dấu backtick `...`)
+  // Khỏi bị biến dạng bởi các luật Markdown và bộ chuyển đổi ngắt dòng (\n -> <br>) bên dưới.
+  const placeholders = {};
+  let placeholderCount = 0;
+
+  function savePlaceholder(content) {
+    const token = `%%SUNA_PLACEHOLDER_${placeholderCount++}%%`;
+    placeholders[token] = content;
+    return token;
   }
 
-  // Block math: $$...$$ or \[...\]
-  html = html.replace(/(?:\$\$|\\\[)([\s\S]*?)(?:\$\$|\\\])/g, (_, math) => {
-    const rendered = renderKatex(math, true);
-    if (rendered) return saveMath('<div class="math-block">' + rendered + '</div>');
-    return '<div class="math-block"><code>' + math.trim() + '</code></div>';
-  });
-
-  // Inline math: $...$ — nhưng không bắt $$ (đã xử lý ở trên)
-  html = html.replace(/(?<!\$)\$([^\$\n]+?)\$(?!\$)/g, (_, math) => {
-    const rendered = renderKatex(math, false);
-    if (rendered) return saveMath('<span class="math-inline-rendered">' + rendered + '</span>');
-    return '<code class="math-inline">' + math.trim() + '</code>';
-  });
-
-  // \(...\) inline math
-  html = html.replace(/\\\(([\s\S]*?)\\\)/g, (_, math) => {
-    const rendered = renderKatex(math, false);
-    if (rendered) return saveMath('<span class="math-inline-rendered">' + rendered + '</span>');
-    return '<code class="math-inline">' + math.trim() + '</code>';
-  });
-
-  // Code blocks with language (Hỗ trợ các ngôn ngữ đặc biệt như c++, c#, html)
+  // === BƯỚC 1: TOKEN HÓA FENCED CODE BLOCKS (Standard, Mermaid, Kanban) ===
   html = html.replace(/```([^\n]*)\n([\s\S]*?)```/g, (_, lang, code) => {
     const cleanLang = lang.trim().toLowerCase();
     const safeCode = encodeURIComponent(code);
+    let renderedHtml = '';
     
     // Feature: Mermaid Diagram
     if (cleanLang === 'mermaid') {
@@ -660,43 +645,78 @@ function formatMessage(text) {
         .replace(/&#39;/g, "'");
       
       if (State.isGenerating) {
-        return `<div class="mermaid-wrapper skeleton-loading">
+        renderedHtml = `<div class="mermaid-wrapper skeleton-loading">
                   <span class="material-icons-round rotate-anim">psychology</span>
                   <span>Suna đang phác thảo sơ đồ tư duy...</span>
                 </div>`;
+      } else {
+        renderedHtml = `<div class="mermaid-wrapper"><div class="mermaid">${decodedMermaid}</div></div>`;
       }
-      return `<div class="mermaid-wrapper"><div class="mermaid">${decodedMermaid}</div></div>`;
     }
-
     // Feature: Interactive Kanban Board
-    if (cleanLang === 'kanban') {
-      return parseKanban(code);
+    else if (cleanLang === 'kanban') {
+      renderedHtml = parseKanban(code);
     }
-    
-    // Feature: Live Artifacts Preview (HTML/SVG)
-    let artifactBtn = '';
-    if (cleanLang === 'html' || cleanLang === 'svg' || cleanLang.includes('xml') || cleanLang === 'javascript') {
-      const decodedCode = code
-        .replace(/&amp;/g, '&')
-        .replace(/&lt;/g, '<')
-        .replace(/&gt;/g, '>')
-        .replace(/&quot;/g, '"')
-        .replace(/&#39;/g, "'");
-      const b64 = btoa(unescape(encodeURIComponent(decodedCode))); // Safe base64 for HTML
-      artifactBtn = `<button class="btn-preview-artifact" onclick="window.openArtifact(decodeURIComponent(escape(atob('${b64}'))))"><span class="material-icons-round">play_arrow</span> Xem trước (Live Preview)</button>`;
+    // Feature: Standard Code & Live Preview Artifacts
+    else {
+      let artifactBtn = '';
+      if (cleanLang === 'html' || cleanLang === 'svg' || cleanLang.includes('xml') || cleanLang === 'javascript') {
+        const decodedCode = code
+          .replace(/&amp;/g, '&')
+          .replace(/&lt;/g, '<')
+          .replace(/&gt;/g, '>')
+          .replace(/&quot;/g, '"')
+          .replace(/&#39;/g, "'");
+        const b64 = btoa(unescape(encodeURIComponent(decodedCode))); // Safe base64 for HTML
+        artifactBtn = `<button class="btn-preview-artifact" onclick="window.openArtifact(decodeURIComponent(escape(atob('${b64}'))))"><span class="material-icons-round">play_arrow</span> Xem trước (Live Preview)</button>`;
+      }
+
+      const label = cleanLang ? `<div class="code-lang">${cleanLang}</div>` : '';
+      renderedHtml = `<div class="code-block-wrapper">
+                ${label}
+                <button class="btn-copy-code" onclick="copyText(decodeURIComponent('${safeCode}'))" title="Sao chép code"><span class="material-icons-round">content_copy</span></button>
+                <pre><code>${code}</code></pre>
+                ${artifactBtn}
+              </div>`;
     }
 
-    const label = cleanLang ? `<div class="code-lang">${cleanLang}</div>` : '';
-    return `<div class="code-block-wrapper">
-              ${label}
-              <button class="btn-copy-code" onclick="copyText(decodeURIComponent('${safeCode}'))" title="Sao chép code"><span class="material-icons-round">content_copy</span></button>
-              <pre><code>${code}</code></pre>
-              ${artifactBtn}
-            </div>`;
+    return savePlaceholder(renderedHtml);
   });
-  // Inline code
-  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
 
+  // === BƯỚC 2: TOKEN HÓA KATEX MATH BLOCKS ===
+  // Block math: $$...$$ or \[...\]
+  html = html.replace(/(?:\$\$|\\\[)([\s\S]*?)(?:\$\$|\\\[)/g, (_, math) => {
+    const rendered = renderKatex(math, true);
+    const content = rendered 
+      ? '<div class="math-block">' + rendered + '</div>' 
+      : '<div class="math-block"><code>' + math.trim() + '</code></div>';
+    return savePlaceholder(content);
+  });
+
+  // Inline math: $...$ (tránh bắt nhầm $$)
+  html = html.replace(/(?<!\$)\$([^\$\n]+?)\$(?!\$)/g, (_, math) => {
+    const rendered = renderKatex(math, false);
+    const content = rendered 
+      ? '<span class="math-inline-rendered">' + rendered + '</span>' 
+      : '<code class="math-inline">' + math.trim() + '</code>';
+    return savePlaceholder(content);
+  });
+
+  // Inline math: \(...\)
+  html = html.replace(/\\\(([\s\S]*?)\\\)/g, (_, math) => {
+    const rendered = renderKatex(math, false);
+    const content = rendered 
+      ? '<span class="math-inline-rendered">' + rendered + '</span>' 
+      : '<code class="math-inline">' + math.trim() + '</code>';
+    return savePlaceholder(content);
+  });
+
+  // === BƯỚC 3: TOKEN HÓA INLINE CODE (Dấu backtick `...`) ===
+  html = html.replace(/`([^`]+)`/g, (_, code) => {
+    return savePlaceholder(`<code>${code}</code>`);
+  });
+
+  // === BƯỚC 4: CHẠY CÁC LUẬT MARKDOWN TRÊN PHẦN TEXT ĐÃ ĐƯỢC BẢO VỆ ===
   // Headings (### h3, ## h2, # h1) — only at start of line
   html = html.replace(/^### (.+)$/gm, '<h4 class="msg-heading">$1</h4>');
   html = html.replace(/^## (.+)$/gm, '<h3 class="msg-heading">$1</h3>');
@@ -714,7 +734,7 @@ function formatMessage(text) {
   html = html.replace(/\^([^\^]+)\^/g, '<sup>$1</sup>');
   html = html.replace(/~([^~]+)~/g, '<sub>$1</sub>');
 
-    // Links [text](url) - Advanced XSS Protection
+  // Links [text](url) - Advanced XSS Protection
   html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, text, url) => {
     let cleanUrl = url.trim();
     // Chặn triệt để các pseudo-protocol độc hại (javascript:, data:, vbscript:)
@@ -756,7 +776,7 @@ function formatMessage(text) {
     return '<ol class="msg-list">' + items + '</ol>';
   });
 
-    // Tables
+  // Tables
   html = html.replace(/(?:^|\n)(\|.*\|\n\|[-:| ]+\|\n(?:\|.*\|(?:\n|$))+)/g, (match, table) => {
     const rows = table.trim().split('\n');
     let tableHtml = '<table>';
@@ -781,12 +801,29 @@ function formatMessage(text) {
 
   // Line breaks (bỏ qua những cái đã nằm trong HTML tags như bảng)
   html = html.replace(/\n/g, '<br>');
-    // Dọn dẹp lỗi thẻ BR dư thừa bên trong table do line-break
-  html = html.replace(/<br>\s*<\/td>/g, '</td>').replace(/<br>\s*<\/th>/g, '</th>').replace(/<br>\s*<tr>/g, '<tr>').replace(/<\/tr>\s*<br>/g, '</tr>').replace(/<br>\s*<table>/g, '<table>').replace(/<\/table>\s*<br>/g, '</table>');
+  // Dọn dẹp lỗi thẻ BR dư thừa bên trong table do line-break
+  html = html.replace(/<br>\s*<\/td>/g, '</td>')
+             .replace(/<br>\s*<\/th>/g, '</th>')
+             .replace(/<br>\s*<tr>/g, '<tr>')
+             .replace(/<\/tr>\s*<br>/g, '</tr>')
+             .replace(/<br>\s*<table>/g, '<table>')
+             .replace(/<\/table>\s*<br>/g, '</table>');
 
-  // === KHÔI PHỤC MATH PLACEHOLDERS ===
-  // Đặt lại toàn bộ KaTeX HTML đã render vào đúng vị trí (sau khi Markdown xử lý xong)
-  html = html.replace(/%%MATH_(\d+)%%/g, (_, id) => mathPlaceholders[parseInt(id)] || '');
+  // === BƯỚC 5: KHÔI PHỤC HOÀN TOÀN CÁC PLACEHOLDER THEO THỨ TỰ NGƯỢC ===
+  // Khôi phục đệ quy để hỗ trợ các placeholder lồng nhau nếu có
+  let restored = true;
+  while (restored) {
+    restored = false;
+    html = html.replace(/%%SUNA_PLACEHOLDER_(\d+)%%/g, (match) => {
+      if (placeholders.hasOwnProperty(match)) {
+        restored = true;
+        const val = placeholders[match];
+        delete placeholders[match]; // Tránh lặp vô hạn
+        return val;
+      }
+      return match;
+    });
+  }
 
   return html;
 }
