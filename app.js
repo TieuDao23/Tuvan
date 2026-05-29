@@ -315,6 +315,11 @@ function renderMermaid() {
     });
 
     mermaidEls.forEach(el => {
+      // Khôi phục mã nguồn sơ đồ gốc từ data-content trước khi chạy biên dịch
+      const rawContent = el.getAttribute('data-content');
+      if (rawContent) {
+        el.textContent = decodeURIComponent(rawContent);
+      }
       el.removeAttribute('data-processed');
     });
 
@@ -682,7 +687,8 @@ function formatMessage(text) {
                   <span>Suna đang phác thảo sơ đồ tư duy...</span>
                 </div>`;
       } else {
-        renderedHtml = `<div class="mermaid-wrapper"><div class="mermaid">${decodedMermaid}</div></div>`;
+        // Lưu trữ mã nguồn gốc vào data-content để re-render không bị lỗi cú pháp trên SVG
+        renderedHtml = `<div class="mermaid-wrapper"><div class="mermaid" data-content="${encodeURIComponent(decodedMermaid)}">${decodedMermaid}</div></div>`;
       }
     }
     // Feature: Interactive Kanban Board
