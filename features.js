@@ -4,6 +4,7 @@
 // 1. BEST FEMALE VOICE & TTS
 // =============================================
 let selectedVoice = null;
+window.activeUtterances = []; // Prevent Chromium garbage collection cut-offs
 
 function initTTS() {
   const loadVoices = () => {
@@ -33,19 +34,29 @@ window.speakText = function(text, lang = 'vi-VN') {
   window.speechSynthesis.cancel();
   
   const msg = new SpeechSynthesisUtterance(text);
-  if (lang.includes('vi') && selectedVoice) {
-    msg.voice = selectedVoice;
+  if (lang.includes('vi')) {
+    if (selectedVoice && selectedVoice.lang.includes('vi')) {
+      msg.voice = selectedVoice;
+    } else {
+      msg.voice = null;
+    }
   } else {
     const voices = window.speechSynthesis.getVoices();
     const langVoices = voices.filter(v => v.lang.includes(lang));
     const femaleLangVoice = langVoices.find(v => v.name.toLowerCase().includes('female') || v.name.includes('Zira') || v.name.includes('Google'));
-    msg.voice = femaleLangVoice || langVoices[0] || voices[0];
+    msg.voice = femaleLangVoice || langVoices[0] || null;
   }
   
   // Năng động, diễn cảm: rate vừa phải để không bị nuốt chữ, pitch nhỉnh hơn chút để có giọng nữ tính, ngọt ngào
   msg.rate = 1.0; // Tốc độ chuẩn để đọc rõ tiếng Việt
   msg.pitch = 1.15; // Giọng hơi cao một chút để tạo sự tinh nghịch, dễ thương
   msg.lang = lang;
+  
+  // Garbage collection protection
+  window.activeUtterances.push(msg);
+  msg.onend = msg.onerror = () => {
+    window.activeUtterances = window.activeUtterances.filter(u => u !== msg);
+  };
   
   window.speechSynthesis.speak(msg);
 };
@@ -106,6 +117,9 @@ function initTranslatorMode() {
   // --- Text input translate button ---
   if (btnTranslate) {
     btnTranslate.addEventListener('click', () => {
+      if (window.speechSynthesis) {
+        window.speechSynthesis.speak(new SpeechSynthesisUtterance(''));
+      }
       const viText = inputSource?.value.trim();
       const targetText = inputTarget?.value.trim();
       if (viText) {
@@ -168,9 +182,30 @@ function initTranslatorMode() {
 
   translatorRecog = new SpeechRecognition();
   translatorRecog.interimResults = true;
+  window.translatorRecog = translatorRecog; // Expose globally for coordination
+
+  translatorRecog.onerror = (e) => {
+    console.error("Speech recognition error:", e.error);
+    stopRecog();
+    let msg = 'Lỗi nhận dạng giọng nói.';
+    if (e.error === 'not-allowed') {
+      msg = 'Không được phép truy cập micro. Vui lòng cấp quyền!';
+    } else if (e.error === 'no-speech') {
+      msg = 'Không nhận dạng được giọng nói (hết thời gian chờ)!';
+    } else if (e.error === 'network') {
+      msg = 'Lỗi kết nối mạng khi nhận dạng giọng nói!';
+    }
+    if (window.toast) window.toast(msg, 'error');
+  };
 
   const startRecog = (langCode) => {
     if (isTranslating) return;
+    // Cancel SpeechSynthesis to prevent acoustic feedback
+    if (window.speechSynthesis) window.speechSynthesis.cancel();
+    // Stop any competing main chat voice recording
+    if (window.mainChatRecog && typeof window.mainChatRecog.stop === 'function') {
+      try { window.mainChatRecog.stop(); } catch(e){}
+    }
     const langMap = { 'en': 'en-US', 'ja': 'ja-JP', 'zh': 'zh-CN', 'ko': 'ko-KR', 'es': 'es-ES', 'fr': 'fr-FR' };
     translatorRecog.lang = langCode === 'vi' ? 'vi-VN' : (langMap[targetLangSelect.value] || targetLangSelect.value);
     currentSource = langCode;
@@ -203,8 +238,18 @@ function initTranslatorMode() {
     try { translatorRecog.stop(); } catch(e){}
   };
 
-  btnMicVi?.addEventListener('click', () => { btnMicVi.classList.contains('recording') ? stopRecog() : startRecog('vi'); });
-  btnMicTarget?.addEventListener('click', () => { btnMicTarget.classList.contains('recording') ? stopRecog() : startRecog('target'); });
+  btnMicVi?.addEventListener('click', () => {
+    if (window.speechSynthesis) {
+      window.speechSynthesis.speak(new SpeechSynthesisUtterance(''));
+    }
+    btnMicVi.classList.contains('recording') ? stopRecog() : startRecog('vi');
+  });
+  btnMicTarget?.addEventListener('click', () => {
+    if (window.speechSynthesis) {
+      window.speechSynthesis.speak(new SpeechSynthesisUtterance(''));
+    }
+    btnMicTarget.classList.contains('recording') ? stopRecog() : startRecog('target');
+  });
 
   translatorRecog.onresult = (e) => {
     let transcript = '';
@@ -715,7 +760,13 @@ class LofiPlayer {
       if (window.toast) window.toast("Lỗi tải nhạc Lofi, đang chuyển track dự phòng...", "error");
       this.audio.src = "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3";
       if (this.isPlaying) {
-        this.audio.play().catch(err => console.error("Playback failed:", err));
+        this.audio.play().catch(err => {
+          console.error("Playback failed:", err);
+          this.pause();
+          if (err.name === 'NotAllowedError') {
+            if (window.toast) window.toast("Vui lòng click lại để cấp quyền audio cho trình duyệt", "info");
+          }
+        });
       }
     });
   }
@@ -738,7 +789,13 @@ class LofiPlayer {
     this.trackTitle.style.animation = '';
     
     if (wasPlaying) {
-      this.audio.play().catch(e => console.log("Play failed, needs user interaction first."));
+      this.audio.play().catch(e => {
+        console.log("Play failed, needs user interaction first.", e);
+        this.pause();
+        if (e.name === 'NotAllowedError') {
+          if (window.toast) window.toast("Vui lòng click lại để cấp quyền audio cho trình duyệt", "info");
+        }
+      });
     }
   }
   
@@ -760,7 +817,10 @@ class LofiPlayer {
       })
       .catch(err => {
         console.error("Audio playback error:", err);
-        if (window.toast) window.toast("Vui lòng click lại để cấp quyền audio cho trình duyệt", "info");
+        this.pause();
+        if (err.name === 'NotAllowedError') {
+          if (window.toast) window.toast("Vui lòng click lại để cấp quyền audio cho trình duyệt", "info");
+        }
       });
   }
   
@@ -784,7 +844,22 @@ class LofiPlayer {
   
   changeMood(mood) {
     if (this.tracks[mood] && mood !== this.currentMood) {
-      this.loadTrack(mood);
+      const currentUrl = this.tracks[this.currentMood]?.url;
+      const newUrl = this.tracks[mood]?.url;
+      
+      if (currentUrl === newUrl) {
+        this.currentMood = mood;
+        const track = this.tracks[mood];
+        this.trackTitle.textContent = track.title;
+        
+        // Restart animation for title marquee
+        this.trackTitle.style.animation = 'none';
+        this.trackTitle.offsetHeight; // trigger reflow
+        this.trackTitle.style.animation = '';
+      } else {
+        this.loadTrack(mood);
+      }
+      
       if (window.toast && this.isPlaying) {
         window.toast(`Giai điệu chuyển sang mood ${mood} 🎵`, "info");
       }

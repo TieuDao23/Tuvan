@@ -311,7 +311,7 @@ function cloudSave(immediate = false) {
 
       // Commit fully merged data to cloud in parallel
       await Promise.all([
-        _fb.setDoc(_fb.doc(_fb.doc(_fb.db, 'users', uid, 'data', 'settings')), {
+        _fb.setDoc(_fb.doc(_fb.db, 'users', uid, 'data', 'settings'), {
           ...State.settings, updatedAt: _fb.serverTimestamp()
         }),
         _fb.setDoc(_fb.doc(_fb.db, 'users', uid, 'data', 'memory'), {
@@ -763,6 +763,7 @@ function updateUserDisplay() {
   if (AuthState.isLoggedIn && AuthState.user) {
     const u = AuthState.user;
     const name = u.displayName || (typeof State !== 'undefined' ? State.settings.userName : '') || 'Người dùng';
+    const escName = name.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     const avatar = u.photoURL || '';
     const isAdmin = AuthState.isAdmin;
 
@@ -773,7 +774,7 @@ function updateUserDisplay() {
         </div>
         <div class="sidebar-user-text">
           <div class="sidebar-user-name" style="display:flex; align-items:center; gap:6px;">
-            ${name} 
+            ${escName} 
             ${isAdmin ? '<span style="background: linear-gradient(135deg, #e8a87c, #c0392b); color: white; font-size: 0.6rem; padding: 2px 6px; border-radius: 6px; font-weight: bold; letter-spacing: 0.5px;">ADMIN</span>' : ''}
           </div>
           <div class="sidebar-user-email">${u.email || ''}</div>
@@ -827,6 +828,7 @@ async function initAuth() {
   doAppInit();
   updateUserDisplay();
 
+  window.addEventListener('online', () => { if (!_fb) initAuth(); });
   const sdkLoaded = await loadFirebaseSDK();
 
   if (!sdkLoaded) {
@@ -852,23 +854,29 @@ async function initAuth() {
         if (loading) loading.style.display = 'flex';
 
         try { 
-          await cloudLoad(); 
+          const success = await cloudLoad(); 
+          if (success) {
+            updateSyncIndicator('synced');
+          } else {
+            updateSyncIndicator('error');
+          }
           initRealtimeSync();
         } catch(e) { 
           console.error(e); 
+          updateSyncIndicator('error');
         } finally { 
           if (loading) loading.style.display = 'none';
           hideAuthScreen();
           if (typeof window.onUserSignedIn === 'function') window.onUserSignedIn(); 
           updateUserDisplay(); 
-          updateSyncIndicator('synced'); 
         }
       } else {
+        _syncUnsubscribes.forEach(u => u());
+        _syncUnsubscribes = [];
+        
+        clearCachedAuth();
+        
         if (cachedUser) {
-          _syncUnsubscribes.forEach(u => u());
-          _syncUnsubscribes = [];
-          
-          clearCachedAuth();
           AuthState.user = null;
           AuthState.isLoggedIn = false;
           AuthState.useLocalOnly = false;

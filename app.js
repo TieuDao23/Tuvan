@@ -553,7 +553,13 @@ function renderMessages() {
       m._lastRawContent = m.content;
       let formatted = '';
       if (m.images && m.images.length) {
-        formatted += m.images.map(img => `<img src="${img}" alt="image">`).join('');
+        formatted += m.images.map(img => {
+          if (img === '__large_image__') {
+            return `<div class="large-image-placeholder" title="Ảnh kích thước lớn chỉ lưu trữ cục bộ trên thiết bị gửi"><span class="material-icons-round">cloud_off</span><span>Ảnh lớn (Lưu cục bộ)</span></div>`;
+          } else {
+            return `<img src="${img}" alt="image">`;
+          }
+        }).join('');
       }
       if (m.files && m.files.length) {
         formatted += '<div class="msg-files-container">' + m.files.map(f => {
@@ -640,7 +646,7 @@ function renderKatex(math, displayMode) {
         displayMode: displayMode,
         throwOnError: false,
         strict: false,
-        trust: true,
+        trust: (context) => context.protocol === 'http' || context.protocol === 'https' || context.protocol === '_relative',
         macros: {
           '\\R': '\\mathbb{R}',
           '\\N': '\\mathbb{N}',
@@ -697,7 +703,8 @@ function formatMessage(text) {
                 </div>`;
       } else {
         // Lưu trữ mã nguồn gốc vào data-content để re-render không bị lỗi cú pháp trên SVG
-        renderedHtml = `<div class="mermaid-wrapper"><div class="mermaid" data-content="${encodeURIComponent(decodedMermaid)}">${decodedMermaid}</div></div>`;
+        const safeDisplay = escHtml(decodedMermaid);
+        renderedHtml = `<div class="mermaid-wrapper"><div class="mermaid" data-content="${encodeURIComponent(decodedMermaid)}">${safeDisplay}</div></div>`;
       }
     }
     // Feature: Interactive Kanban Board
@@ -784,10 +791,8 @@ function formatMessage(text) {
   // Links [text](url) - Advanced XSS Protection
   html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, text, url) => {
     let cleanUrl = url.trim();
-    // Chặn triệt để các pseudo-protocol độc hại (javascript:, data:, vbscript:)
-    if (/^(?:javascript|data|vbscript):/i.test(cleanUrl)) {
-      cleanUrl = '#';
-    }
+    const isSafeUrl = /^(https?:\/\/|mailto:|tel:)/i.test(cleanUrl) || cleanUrl.startsWith('#') || cleanUrl.startsWith('/');
+    if (!isSafeUrl) cleanUrl = '#';
     return `<a href="${cleanUrl}" target="_blank" rel="noopener noreferrer" class="msg-link">${text}</a>`;
   });
 
@@ -1304,8 +1309,9 @@ async function processFileForInput(file) {
   let fileContent = '';
   
   if (isTextFile(file)) {
-    fileContent = await readTextFile(file);
     const MAX_CHARS = 50000;
+    const slicedFile = file.slice(0, MAX_CHARS * 2);
+    fileContent = await readTextFile(slicedFile);
     if (fileContent.length > MAX_CHARS) {
       fileContent = fileContent.substring(0, MAX_CHARS) + '\n\n... [File quá dài, chỉ lấy ' + MAX_CHARS + ' ký tự đầu]';
     }
@@ -2203,8 +2209,9 @@ async function generateAIResponse() {
       }
     }
 
-    chat.messages.push({ id: genId(), role: 'assistant', content: assistantContent, timestamp: Date.now(), updatedAt: Date.now() });
-    chat.updatedAt = Date.now(); // Parent chat updated
+    const activeChat = State.chats.find(c => c.id === generatingChatId) || chat;
+    activeChat.messages.push({ id: genId(), role: 'assistant', content: assistantContent, timestamp: Date.now(), updatedAt: Date.now() });
+    activeChat.updatedAt = Date.now(); // Parent chat updated
     saveState(true); // Ép lưu vào IndexedDB và Cloud khi stream kết thúc
     if (isStillActiveChat()) renderMessages();
 
@@ -2215,7 +2222,7 @@ async function generateAIResponse() {
     }
   
     // === AI Memory: Trích xuất thông tin từ tin nhắn user gần nhất ===
-    const lastUserMsg = [...chat.messages].reverse().find(m => m.role === 'user');
+    const lastUserMsg = [...activeChat.messages].reverse().find(m => m.role === 'user');
     if (lastUserMsg && lastUserMsg.content) {
       extractMemoryFromMessage(lastUserMsg.content);
     }
@@ -2265,6 +2272,7 @@ window.cancelEdit = function() {
 }
 
 window.submitEdit = async function(idx) {
+  if (State.isGenerating) { toast('Đang xử lý phản hồi, vui lòng dừng hoặc chờ kết thúc!', 'warning'); return; }
   const chat = getActiveChat();
   const text = document.getElementById(`edit-input-${idx}`).value.trim();
   if (!text) return;
@@ -2287,6 +2295,7 @@ window.submitEdit = async function(idx) {
 }
 
 window.reloadMessage = async function(idx) {
+  if (State.isGenerating) { toast('Đang xử lý phản hồi, vui lòng dừng hoặc chờ kết thúc!', 'warning'); return; }
   const chat = getActiveChat();
   if(!chat) return;
   // Truncate from idx onwards (which is the AI message to reload)
@@ -2399,6 +2408,7 @@ function classifySentiment(text) {
 }
 
 function triggerSentimentChange(sentiment) {
+  if (window.currentSentiment === sentiment) return;
   window.currentSentiment = sentiment;
   
   // Mood colors map matching the specific requirements and style presets
@@ -2413,7 +2423,8 @@ function triggerSentimentChange(sentiment) {
   const colors = moodColors[sentiment] || moodColors.calm;
   
   // Set theme attribute on body
-  document.body.setAttribute('data-theme', colors.theme);
+  const userPreferredTheme = (State.settings && State.settings.theme) || 'aurora';
+  if (userPreferredTheme === 'aurora') { document.body.setAttribute('data-theme', colors.theme); } else { document.body.setAttribute('data-theme', userPreferredTheme); }
   
   // Smoothly transition CSS custom variables
   document.body.style.setProperty('--accent-1', colors.accent1);
@@ -2777,28 +2788,40 @@ function initEvents() {
   const dndOverlay = $('#drag-drop-overlay');
   let dragCounter = 0;
   
-  function preventDefaults(e) { e.preventDefault(); e.stopPropagation(); }
+  // Khắc phục lỗi Shimeji (Not available): Chỉ chặn mặc định nếu người dùng đang kéo FILE
   ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(evt => {
-    window.addEventListener(evt, preventDefaults);
+    window.addEventListener(evt, e => {
+      if (e.dataTransfer && e.dataTransfer.types && e.dataTransfer.types.includes('Files')) {
+        e.preventDefault();
+        // Xóa e.stopPropagation() để các extension khác (như Shimeji) không bị mù sự kiện
+      }
+    });
   });
   
   if (dndOverlay) {
     window.addEventListener('dragenter', (e) => {
-      if (e.dataTransfer && e.dataTransfer.types.includes('Files')) {
+      if (e.dataTransfer && e.dataTransfer.types && e.dataTransfer.types.includes('Files')) {
         dragCounter++;
         dndOverlay.classList.add('active');
       }
     });
     
     window.addEventListener('dragleave', (e) => {
-      dragCounter--;
-      if (dragCounter === 0) dndOverlay.classList.remove('active');
+      if (e.dataTransfer && e.dataTransfer.types && e.dataTransfer.types.includes('Files')) {
+        dragCounter--;
+        if (dragCounter <= 0) {
+          dragCounter = 0;
+          dndOverlay.classList.remove('active');
+        }
+      }
     });
     
     window.addEventListener('drop', (e) => {
-      dragCounter = 0;
-      dndOverlay.classList.remove('active');
-      handleDrop(e);
+      if (e.dataTransfer && e.dataTransfer.types && e.dataTransfer.types.includes('Files')) {
+        dragCounter = 0;
+        dndOverlay.classList.remove('active');
+        handleDrop(e);
+      }
     });
   }
   
@@ -2995,12 +3018,45 @@ function initEvents() {
   $('#user-avatar-input').addEventListener('change', async e => {
     const file = e.target.files[0];
     if (!file) return;
-    const dataUrl = await fileToBase64(file);
-    State.settings.userAvatar = dataUrl;
-    $('#user-avatar-preview').src = dataUrl;
-    saveState();
-    renderMessages();
-    toast('Đã cập nhật avatar', 'success');
+    try {
+      const dataUrl = await fileToBase64(file);
+      
+      const compressedDataUrl = await new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          canvas.width = 128;
+          canvas.height = 128;
+          const ctx = canvas.getContext('2d');
+          
+          let sx = 0, sy = 0, sWidth = img.width, sHeight = img.height;
+          if (img.width > img.height) {
+            sx = (img.width - img.height) / 2;
+            sWidth = img.height;
+            sHeight = img.height;
+          } else {
+            sy = (img.height - img.width) / 2;
+            sWidth = img.width;
+            sHeight = img.width;
+          }
+          
+          ctx.drawImage(img, sx, sy, sWidth, sHeight, 0, 0, 128, 128);
+          resolve(canvas.toDataURL('image/jpeg', 0.7));
+        };
+        img.onerror = reject;
+        img.src = dataUrl;
+      });
+
+      State.settings.userAvatar = compressedDataUrl;
+      $('#user-avatar-preview').src = compressedDataUrl;
+      localStorage.setItem('suna_settings', JSON.stringify(State.settings));
+      saveState();
+      renderMessages();
+      toast('Đã cập nhật avatar', 'success');
+    } catch (err) {
+      console.error('Lỗi khi nén avatar:', err);
+      toast('Lỗi khi xử lý hình ảnh avatar', 'error');
+    }
     e.target.value = '';
   });
 
