@@ -1540,7 +1540,7 @@ function buildMindmapSrcdoc(code, accent1, accent2, accentGlow, isLight) {
 </html>`;
 }
 
-function formatMessage(text) {
+function formatMessage(text, isStreaming = false) {
   if (!text) return '';
   // Strip tool call tags and their contents to prevent raw tags showing in UI
   let cleanText = text.replace(/<suna_tool_call>[\s\S]*?<\/suna_tool_call>/g, '');
@@ -1571,7 +1571,7 @@ function formatMessage(text) {
     
     // Feature: Mindmap Diagram
     if (cleanLang === 'mindmap') {
-      if (State.isGenerating) {
+      if (isStreaming) {
         renderedHtml = `<div class="mindmap-wrapper skeleton-loading">
                   <span class="material-icons-round rotate-anim">psychology</span>
                   <span>Suna đang phác thảo sơ đồ tư duy...</span>
@@ -1589,7 +1589,7 @@ function formatMessage(text) {
         .replace(/&quot;/g, '"')
         .replace(/&#39;/g, "'");
       
-      if (State.isGenerating) {
+      if (isStreaming) {
         renderedHtml = `<div class="mermaid-wrapper skeleton-loading">
                   <span class="material-icons-round rotate-anim">psychology</span>
                   <span>Suna đang phác thảo sơ đồ tư duy...</span>
@@ -3100,7 +3100,7 @@ async function generateAIResponse() {
                 bubbleEl._renderPending = true;
                 requestAnimationFrame(() => {
                   const displayContent = parser ? parser.filteredText : assistantContent;
-                  bubbleEl.innerHTML = formatMessage(displayContent);
+                  bubbleEl.innerHTML = formatMessage(displayContent, true);
                   const chatArea = $('#chat-area');
                   const isNearBottom = chatArea.scrollHeight - chatArea.scrollTop - chatArea.clientHeight < 150;
                   if (isNearBottom) chatArea.scrollTop = chatArea.scrollHeight;
@@ -3124,7 +3124,7 @@ async function generateAIResponse() {
       if (!assistantEl.parentNode && assistantContent) {
         container.appendChild(assistantEl);
         const displayContent = parser ? parser.filteredText : assistantContent;
-        bubbleEl.innerHTML = formatMessage(displayContent);
+        bubbleEl.innerHTML = formatMessage(displayContent, true);
       }
     }
 
@@ -3227,6 +3227,16 @@ async function generateAIResponse() {
       State.generatingChatId = null;
       State.abortController = null;
       updateSendButtonState();
+      
+      // Xóa cache tin nhắn cuối cùng của assistant để force re-render từ skeleton-loading sang iframe thực tế
+      const currentChat = getActiveChat();
+      if (currentChat && currentChat.messages.length) {
+        const lastMsg = currentChat.messages[currentChat.messages.length - 1];
+        if (lastMsg && lastMsg.role === 'assistant') {
+          lastMsg.htmlCache = null;
+        }
+      }
+      
       if (isStillActiveChat()) renderMessages();
       // Kích hoạt Mermaid render sau khi kết thúc stream
       renderMermaid();
