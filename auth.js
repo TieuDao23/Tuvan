@@ -21,9 +21,11 @@ const AuthState = {
   initialized: false,
   isAdmin: false
 };
+window.AuthState = AuthState;
 
 // ===== Firebase SDK =====
 let _fb = null;
+window._fb = null;
 
 async function loadFirebaseSDK() {
   if (_fb) return true;
@@ -49,6 +51,7 @@ async function loadFirebaseSDK() {
       onSnapshot: dbMod.onSnapshot,
       serverTimestamp: dbMod.serverTimestamp
     };
+    window._fb = _fb;
     return true;
   } catch (e) {
     console.warn('Firebase SDK load failed:', e);
@@ -765,19 +768,23 @@ function updateUserDisplay() {
     const name = u.displayName || (typeof State !== 'undefined' ? State.settings.userName : '') || 'Người dùng';
     const escName = name.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     const avatar = u.photoURL || '';
+    // Validate URL protocol to prevent javascript: XSS injection
+    const safeAvatar = (avatar && /^https?:\/\//i.test(avatar)) ? avatar : '';
+    const escAvatar = safeAvatar.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    const escEmail = (u.email || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     const isAdmin = AuthState.isAdmin;
 
     el.innerHTML = `
       <div class="sidebar-user-row">
         <div class="sidebar-user-avatar">
-          ${avatar ? `<img src="${avatar}" alt="">` : '<span class="material-icons-round">account_circle</span>'}
+          ${escAvatar ? `<img src="${escAvatar}" alt="">` : '<span class="material-icons-round">account_circle</span>'}
         </div>
         <div class="sidebar-user-text">
           <div class="sidebar-user-name" style="display:flex; align-items:center; gap:6px;">
             ${escName} 
             ${isAdmin ? '<span style="background: linear-gradient(135deg, #e8a87c, #c0392b); color: white; font-size: 0.6rem; padding: 2px 6px; border-radius: 6px; font-weight: bold; letter-spacing: 0.5px;">ADMIN</span>' : ''}
           </div>
-          <div class="sidebar-user-email">${u.email || ''}</div>
+          <div class="sidebar-user-email">${escEmail}</div>
         </div>
         <button id="btn-logout" class="btn-logout" title="Đăng xuất" onclick="handleLogout()">
           <span class="material-icons-round">logout</span>

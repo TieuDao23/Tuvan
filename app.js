@@ -361,6 +361,41 @@ function applyTheme() {
   document.body.style.setProperty('--font-main', fontFamily);
   document.body.style.setProperty('--font-size', fontSize + 'px');
   
+  if (theme !== 'aurora') {
+    // Clear inline variables so static theme CSS variables in stylesheet are respected
+    document.body.style.removeProperty('--accent-1');
+    document.body.style.removeProperty('--accent-2');
+    document.body.style.removeProperty('--accent-glow');
+    document.body.style.removeProperty('--accent-gradient');
+    
+    // Clean up particles under static themes
+    const existing = document.getElementById('particles-container');
+    if (existing) existing.remove();
+    if (window._particleInterval) { 
+      clearInterval(window._particleInterval); 
+      window._particleInterval = null; 
+    }
+  } else {
+    // If the theme is aurora, restore the current sentiment accent styles and particles
+    const moodColors = {
+      calm: { theme: 'aurora', accent1: '#e8a87c', accent2: '#c0392b', glow: 'rgba(232, 168, 124, 0.35)' },
+      excited: { theme: 'sunset', accent1: '#f093fb', accent2: '#f5576c', glow: 'rgba(240, 147, 251, 0.35)' },
+      sad: { theme: 'ocean', accent1: '#4facfe', accent2: '#00f2fe', glow: 'rgba(79, 172, 254, 0.35)' },
+      stressed: { theme: 'forest', accent1: '#43e97b', accent2: '#38f9d7', glow: 'rgba(67, 233, 123, 0.35)' },
+      creative: { theme: 'midnight', accent1: '#a18cd1', accent2: '#fbc2eb', glow: 'rgba(161, 140, 209, 0.35)' }
+    };
+    const sentiment = window.currentSentiment || 'calm';
+    const colors = moodColors[sentiment] || moodColors.calm;
+    
+    document.body.setAttribute('data-theme', colors.theme);
+    document.body.style.setProperty('--accent-1', colors.accent1);
+    document.body.style.setProperty('--accent-2', colors.accent2);
+    document.body.style.setProperty('--accent-glow', colors.glow);
+    document.body.style.setProperty('--accent-gradient', `linear-gradient(135deg, ${colors.accent1}, ${colors.accent2})`);
+    
+    initParticles();
+  }
+  
   // Light/Dark mode
   if (isLight) {
     document.body.classList.add('light-mode');
@@ -527,8 +562,9 @@ function renderMessages() {
 
   let htmlContent = chat.messages.map((m, idx) => {
     const isUser = m.role === 'user';
-    const userAvatarHtml = State.settings.userAvatar
-      ? `<img src="${State.settings.userAvatar}" alt="User">`
+    const safeAvatar = (State.settings.userAvatar || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    const userAvatarHtml = safeAvatar
+      ? `<img src="${safeAvatar}" alt="User">`
       : '<span class="material-icons-round" style="font-size:18px;">person</span>';
 
     if (State.editingIdx === idx) {
@@ -570,7 +606,7 @@ function renderMessages() {
         
         // Feature: Interactive Document Analyzer
         if (isUser) {
-          formatted += `<button class="btn-analyze-doc" onclick="analyzeDocument('${m.files[0].name}')"><span class="material-icons-round">analytics</span> Phân tích tài liệu</button>`;
+          formatted += `<button class="btn-analyze-doc" onclick="analyzeDocumentMessage(${idx})"><span class="material-icons-round">analytics</span> Phân tích tài liệu</button>`;
         }
       }
       formatted += formatMessage(m.content);
@@ -581,11 +617,11 @@ function renderMessages() {
     
     const actionHtml = `
       <div class="message-actions">
-        <button class="action-btn" onclick="copyText(decodeURIComponent('${encodeURIComponent(m.content)}'))" title="Sao chép"><span class="material-icons-round">content_copy</span></button>
+        <button class="action-btn" onclick="copyMessage(${idx})" title="Sao chép"><span class="material-icons-round">content_copy</span></button>
         ${isUser 
           ? `<button class="action-btn" onclick="editMessage(${idx})" title="Chỉnh sửa"><span class="material-icons-round">edit</span></button>` 
           : `<button class="action-btn" onclick="quoteMessage(${idx})" title="Trích dẫn/Trả lời"><span class="material-icons-round">reply</span></button>
-             <button class="action-btn" onclick="readAloud(decodeURIComponent('${encodeURIComponent(m.content)}'))" title="Đọc văn bản"><span class="material-icons-round">volume_up</span></button>
+             <button class="action-btn" onclick="readAloudMessage(${idx})" title="Đọc văn bản"><span class="material-icons-round">volume_up</span></button>
              <button class="action-btn" onclick="reloadMessage(${idx})" title="Tải lại"><span class="material-icons-round">refresh</span></button>`
         }
         <button class="action-btn delete-btn" onclick="deleteMessage(${idx})" title="Xóa"><span class="material-icons-round">delete_outline</span></button>
@@ -664,7 +700,11 @@ function renderKatex(math, displayMode) {
 
 function formatMessage(text) {
   if (!text) return '';
-  let html = escHtml(text);
+  // Strip tool call tags and their contents to prevent raw tags showing in UI
+  let cleanText = text.replace(/<suna_tool_call>[\s\S]*?<\/suna_tool_call>/g, '');
+  cleanText = cleanText.replace(/<suna_tool_call\s+[^>]*>[\s\S]*?<\/suna_tool_call>/g, '');
+  
+  let html = escHtml(cleanText);
 
   // === PLACEHOLDER SYSTEM ===
   // Hệ thống registry placeholder thống nhất để bảo vệ:
@@ -715,20 +755,13 @@ function formatMessage(text) {
     else {
       let artifactBtn = '';
       if (cleanLang === 'html' || cleanLang === 'svg' || cleanLang.includes('xml') || cleanLang === 'javascript') {
-        const decodedCode = code
-          .replace(/&amp;/g, '&')
-          .replace(/&lt;/g, '<')
-          .replace(/&gt;/g, '>')
-          .replace(/&quot;/g, '"')
-          .replace(/&#39;/g, "'");
-        const b64 = btoa(unescape(encodeURIComponent(decodedCode))); // Safe base64 for HTML
-        artifactBtn = `<button class="btn-preview-artifact" onclick="window.openArtifact(decodeURIComponent(escape(atob('${b64}'))))"><span class="material-icons-round">play_arrow</span> Xem trước (Live Preview)</button>`;
+        artifactBtn = `<button class="btn-preview-artifact" onclick="window.openArtifactFromCodeBlock(this)"><span class="material-icons-round">play_arrow</span> Xem trước (Live Preview)</button>`;
       }
 
       const label = cleanLang ? `<div class="code-lang">${cleanLang}</div>` : '';
       renderedHtml = `<div class="code-block-wrapper">
                 ${label}
-                <button class="btn-copy-code" onclick="copyText(decodeURIComponent('${safeCode}'))" title="Sao chép code"><span class="material-icons-round">content_copy</span></button>
+                <button class="btn-copy-code" onclick="copyCodeBlock(this)" title="Sao chép code"><span class="material-icons-round">content_copy</span></button>
                 <pre><code>${code}</code></pre>
                 ${artifactBtn}
               </div>`;
@@ -1758,6 +1791,7 @@ function isPotentialJailbreakOrNSFW(text) {
 }
 
 async function sendMessage() {
+  State.agentRecursionDepth = 0;
   const input = $('#message-input');
   const text = input.value.trim();
   const images = [...State.pendingImages];
@@ -1882,6 +1916,9 @@ async function consumeStream(res) {
 }
 
 async function generateAIResponse() {
+  if (State.agentRecursionDepth === undefined) State.agentRecursionDepth = 0;
+  let hasPendingRecursiveTurn = false;
+
   const model = getActiveModel();
   if (!model) { toast('Vui lòng chọn model trước', 'error'); return; }
   if (!State.settings.baseUrl || !State.settings.apiKey) { toast('Vui lòng cấu hình API', 'error'); return; }
@@ -1893,6 +1930,16 @@ async function generateAIResponse() {
   State.isGenerating = true;
   State.generatingChatId = generatingChatId;
   State.abortController = new AbortController();
+  
+  // Reset SunaAgent engine and hook abort listener to signal
+  if (window.SunaAgent) {
+    window.SunaAgent.reset();
+    State.abortController.signal.addEventListener('abort', () => {
+      window.isAgentAborted = true;
+      window.SunaAgent.abort();
+    });
+  }
+  
   updateSendButtonState();
   const isStillActiveChat = () => State.activeChatId === generatingChatId;
 
@@ -2012,6 +2059,7 @@ async function generateAIResponse() {
   }
 
   let assistantContent = '';
+  const parser = window.SunaAgent ? new window.SunaAgent.StreamParser() : null;
 
   try {
     // --- Helper: send request with proxy fallback ---
@@ -2169,6 +2217,9 @@ async function generateAIResponse() {
           const delta = parsed.choices?.[0]?.delta?.content;
           if (delta) {
             assistantContent += delta;
+            if (parser) {
+              parser.parseChunk(delta);
+            }
             if (!typingRemoved) {
               typingRemoved = true;
               if (typingEl.parentNode) typingEl.remove();
@@ -2186,7 +2237,8 @@ async function generateAIResponse() {
               if (!bubbleEl._renderPending) {
                 bubbleEl._renderPending = true;
                 requestAnimationFrame(() => {
-                  bubbleEl.innerHTML = formatMessage(assistantContent);
+                  const displayContent = parser ? parser.filteredText : assistantContent;
+                  bubbleEl.innerHTML = formatMessage(displayContent);
                   const chatArea = $('#chat-area');
                   const isNearBottom = chatArea.scrollHeight - chatArea.scrollTop - chatArea.clientHeight < 150;
                   if (isNearBottom) chatArea.scrollTop = chatArea.scrollHeight;
@@ -2199,13 +2251,18 @@ async function generateAIResponse() {
       }
     }
 
+    if (parser) {
+      parser.flush();
+    }
+
     if (isStillActiveChat()) {
       if (typingEl.parentNode) typingEl.remove();
       const restoreTyping = document.getElementById('restore-typing');
       if (restoreTyping) restoreTyping.remove();
       if (!assistantEl.parentNode && assistantContent) {
         container.appendChild(assistantEl);
-        bubbleEl.innerHTML = formatMessage(assistantContent);
+        const displayContent = parser ? parser.filteredText : assistantContent;
+        bubbleEl.innerHTML = formatMessage(displayContent);
       }
     }
 
@@ -2227,6 +2284,52 @@ async function generateAIResponse() {
       extractMemoryFromMessage(lastUserMsg.content);
     }
 
+    // === SunaAgent: Check and execute local tool calls ===
+    const toolCalls = parser ? parser.toolCalls : [];
+    if (toolCalls && toolCalls.length > 0 && !window.isAgentAborted) {
+      if ((State.agentRecursionDepth || 0) >= window.SunaAgent.MAX_RECURSION_DEPTH) {
+        console.warn("SunaAgent: Recursion depth limit reached (4). Stopping.");
+        activeChat.messages.push({
+          id: genId(),
+          role: 'system',
+          content: `⚠️ Lỗi: Đã đạt giới hạn số lần gọi công cụ liên tiếp (4). Để bảo vệ tài nguyên, cuộc gọi đã bị dừng.`,
+          timestamp: Date.now(),
+          updatedAt: Date.now()
+        });
+        saveState(true);
+        if (isStillActiveChat()) renderMessages();
+      } else {
+        State.agentRecursionDepth = (State.agentRecursionDepth || 0) + 1;
+        hasPendingRecursiveTurn = true;
+        
+        if (isStillActiveChat()) {
+          container.appendChild(typingEl);
+          const statusText = typingEl.querySelector('.message-header span:last-child');
+          if (statusText) statusText.textContent = 'Suna đang chạy công cụ...';
+          const chatArea = $('#chat-area');
+          chatArea.scrollTop = chatArea.scrollHeight;
+        }
+        
+        window.SunaAgent.handleToolCalls(toolCalls).then((observationBlock) => {
+          if (observationBlock && !window.isAgentAborted) {
+            activeChat.messages.push({
+              id: genId(),
+              role: 'user',
+              content: observationBlock,
+              timestamp: Date.now(),
+              updatedAt: Date.now()
+            });
+            saveState(true);
+            if (isStillActiveChat()) renderMessages();
+            generateAIResponse();
+          }
+        }).catch((err) => {
+          console.error("SunaAgent tool calls execution error:", err);
+        });
+        return;
+      }
+    }
+
   } catch(e) {
     if (e.name === 'AbortError') {
       if (typingEl && typingEl.parentNode) typingEl.remove();
@@ -2235,6 +2338,13 @@ async function generateAIResponse() {
         currentChat.messages.push({ id: genId(), role: 'assistant', content: assistantContent + '\n\n*(Đã dừng)*', timestamp: Date.now(), updatedAt: Date.now() });
         currentChat.updatedAt = Date.now(); // Parent chat updated
       }
+      
+      // Ensure SunaAgent also aborts if abort controller was triggered
+      window.isAgentAborted = true;
+      if (window.SunaAgent && window.SunaAgent.abort) {
+        window.SunaAgent.abort();
+      }
+      
       saveState(true);
       if (isStillActiveChat()) renderMessages();
       toast('Đã dừng tạo phản hồi.', 'info');
@@ -2250,13 +2360,15 @@ async function generateAIResponse() {
       toast('Lỗi: ' + e.message, 'error');
     }
   } finally {
-    State.isGenerating = false;
-    State.generatingChatId = null;
-    State.abortController = null;
-    updateSendButtonState();
-    if (isStillActiveChat()) renderMessages();
-    // Kích hoạt Mermaid render sau khi kết thúc stream
-    renderMermaid();
+    if (!hasPendingRecursiveTurn) {
+      State.isGenerating = false;
+      State.generatingChatId = null;
+      State.abortController = null;
+      updateSendButtonState();
+      if (isStillActiveChat()) renderMessages();
+      // Kích hoạt Mermaid render sau khi kết thúc stream
+      renderMermaid();
+    }
   }
 }
 
@@ -2273,6 +2385,7 @@ window.cancelEdit = function() {
 
 window.submitEdit = async function(idx) {
   if (State.isGenerating) { toast('Đang xử lý phản hồi, vui lòng dừng hoặc chờ kết thúc!', 'warning'); return; }
+  State.agentRecursionDepth = 0;
   const chat = getActiveChat();
   const text = document.getElementById(`edit-input-${idx}`).value.trim();
   if (!text) return;
@@ -2296,6 +2409,7 @@ window.submitEdit = async function(idx) {
 
 window.reloadMessage = async function(idx) {
   if (State.isGenerating) { toast('Đang xử lý phản hồi, vui lòng dừng hoặc chờ kết thúc!', 'warning'); return; }
+  State.agentRecursionDepth = 0;
   const chat = getActiveChat();
   if(!chat) return;
   // Truncate from idx onwards (which is the AI message to reload)
@@ -2312,6 +2426,7 @@ window.reloadMessage = async function(idx) {
 }
 
 window.deleteMessage = function(idx) {
+  if (State.isGenerating) { toast('Đang xử lý phản hồi, vui lòng dừng hoặc chờ kết thúc!', 'warning'); return; }
   const chat = getActiveChat();
   if(!chat) return;
   
@@ -2345,6 +2460,49 @@ window.copyText = function(text) {
       toast('Trình duyệt không hỗ trợ sao chép', 'error');
     }
     document.body.removeChild(textArea);
+  }
+};
+
+window.copyMessage = function(idx) {
+  const chat = getActiveChat();
+  if (!chat || !chat.messages[idx]) return;
+  copyText(chat.messages[idx].content);
+};
+
+window.copyCodeBlock = function(button) {
+  const wrapper = button.closest('.code-block-wrapper');
+  if (!wrapper) return;
+  const codeEl = wrapper.querySelector('pre code');
+  if (!codeEl) return;
+  copyText(codeEl.textContent);
+};
+
+window.openArtifactFromCodeBlock = function(button) {
+  const wrapper = button.closest('.code-block-wrapper');
+  if (!wrapper) return;
+  const codeEl = wrapper.querySelector('pre code');
+  if (!codeEl) return;
+  if (window.openArtifact) {
+    window.openArtifact(codeEl.textContent);
+  } else {
+    toast('Tính năng Xem trước không khả dụng', 'error');
+  }
+};
+
+window.readAloudMessage = function(idx) {
+  const chat = getActiveChat();
+  if (!chat || !chat.messages[idx]) return;
+  readAloud(chat.messages[idx].content);
+};
+
+window.analyzeDocumentMessage = function(idx) {
+  const chat = getActiveChat();
+  if (!chat || !chat.messages[idx] || !chat.messages[idx].files || !chat.messages[idx].files.length) return;
+  const fileName = chat.messages[idx].files[0].name;
+  if (window.analyzeDocument) {
+    window.analyzeDocument(fileName);
+  } else {
+    toast('Tính năng Phân tích tài liệu không khả dụng', 'error');
   }
 };
 
@@ -2424,16 +2582,35 @@ function triggerSentimentChange(sentiment) {
   
   // Set theme attribute on body
   const userPreferredTheme = (State.settings && State.settings.theme) || 'aurora';
-  if (userPreferredTheme === 'aurora') { document.body.setAttribute('data-theme', colors.theme); } else { document.body.setAttribute('data-theme', userPreferredTheme); }
-  
-  // Smoothly transition CSS custom variables
-  document.body.style.setProperty('--accent-1', colors.accent1);
-  document.body.style.setProperty('--accent-2', colors.accent2);
-  document.body.style.setProperty('--accent-glow', colors.glow);
-  document.body.style.setProperty('--accent-gradient', `linear-gradient(135deg, ${colors.accent1}, ${colors.accent2})`);
-  
-  // Speed up/change particles matching the mood
-  initParticles();
+  if (userPreferredTheme === 'aurora') { 
+    document.body.setAttribute('data-theme', colors.theme); 
+    
+    // Smoothly transition CSS custom variables ONLY under dynamic 'aurora' theme
+    document.body.style.setProperty('--accent-1', colors.accent1);
+    document.body.style.setProperty('--accent-2', colors.accent2);
+    document.body.style.setProperty('--accent-glow', colors.glow);
+    document.body.style.setProperty('--accent-gradient', `linear-gradient(135deg, ${colors.accent1}, ${colors.accent2})`);
+    
+    // Speed up/change particles matching the mood
+    initParticles();
+  } else { 
+    // Respect the user's selected static theme
+    document.body.setAttribute('data-theme', userPreferredTheme); 
+    
+    // Clear inline custom variable styles to respect static theme CSS declarations in stylesheet
+    document.body.style.removeProperty('--accent-1');
+    document.body.style.removeProperty('--accent-2');
+    document.body.style.removeProperty('--accent-glow');
+    document.body.style.removeProperty('--accent-gradient');
+    
+    // Clean up particles
+    const existing = document.getElementById('particles-container');
+    if (existing) existing.remove();
+    if (window._particleInterval) { 
+      clearInterval(window._particleInterval); 
+      window._particleInterval = null; 
+    }
+  }
   
   // If the music player is active, change Lofi playlist mood to match the sentiment
   if (window.sunaLofiPlayer) {
@@ -2442,11 +2619,17 @@ function triggerSentimentChange(sentiment) {
 }
 
 // ===== Particles Effect =====
-let _particleInterval = null;
+window._particleInterval = null;
 function initParticles() {
   const existing = document.getElementById('particles-container');
   if (existing) existing.remove();
-  if (_particleInterval) { clearInterval(_particleInterval); _particleInterval = null; }
+  if (window._particleInterval) { 
+    clearInterval(window._particleInterval); 
+    window._particleInterval = null; 
+  }
+
+  const userPreferredTheme = (State.settings && State.settings.theme) || 'aurora';
+  if (userPreferredTheme !== 'aurora') return; // Do not spawn particles under static themes
 
   const container = document.createElement('div');
   container.id = 'particles-container';
@@ -2512,7 +2695,7 @@ function initParticles() {
     particleCount = 12;
   }
 
-  _particleInterval = setInterval(() => {
+  window._particleInterval = setInterval(() => {
     if (document.hidden) return;
     if (container.childElementCount >= particleCount) return;
     const p = document.createElement('div');

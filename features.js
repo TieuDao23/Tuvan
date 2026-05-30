@@ -141,9 +141,13 @@ function initTranslatorMode() {
     btnCopy.addEventListener('click', () => {
       const text = txtTarget.innerText;
       if (!text || text.includes('hiển thị ở đây')) return;
-      navigator.clipboard.writeText(text).then(() => {
-        if (window.toast) window.toast('Đã copy bản dịch!', 'success');
-      });
+      if (window.copyText) {
+        window.copyText(text);
+      } else {
+        navigator.clipboard.writeText(text).then(() => {
+          if (window.toast) window.toast('Đã copy bản dịch!', 'success');
+        });
+      }
     });
   }
   if (btnToChat) {
@@ -291,11 +295,17 @@ function initMemoryCabinet() {
       return;
     }
 
+    const localEscHtml = (s) => {
+      if (!s) return '';
+      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    };
+
     mems.forEach((m, idx) => {
       const el = document.createElement('div');
       el.className = 'memory-chip';
       // m is an object {fact, category, timestamp}
       const factText = (typeof m === 'object' && m.fact) ? m.fact : String(m);
+      const safeFactText = localEscHtml(factText);
       const factLower = factText.toLowerCase();
       let catHtml = '';
       if (factLower.includes('tên') || factLower.includes('tuổi')) catHtml = '<span class="mem-cat">👤 Cá nhân</span>';
@@ -304,7 +314,7 @@ function initMemoryCabinet() {
       else catHtml = '<span class="mem-cat">📌 Chung</span>';
 
       el.innerHTML = `
-        <div class="mem-content">${factText}</div>
+        <div class="mem-content">${safeFactText}</div>
         ${catHtml}
         <button class="btn-delete-mem" data-idx="${idx}"><span class="material-icons-round">delete</span></button>
       `;
@@ -487,12 +497,16 @@ function initArtifactsAndSearch() {
         if (window.toast) window.toast('Không có nội dung để copy!', 'info');
         return;
       }
-      navigator.clipboard.writeText(code).then(() => {
-        if (window.toast) window.toast('Đã copy toàn bộ mã nguồn!', 'success');
-      }).catch(err => {
-        console.error('Copy failure:', err);
-        if (window.toast) window.toast('Lỗi copy mã nguồn!', 'error');
-      });
+      if (window.copyText) {
+        window.copyText(code);
+      } else {
+        navigator.clipboard.writeText(code).then(() => {
+          if (window.toast) window.toast('Đã copy toàn bộ mã nguồn!', 'success');
+        }).catch(err => {
+          console.error('Copy failure:', err);
+          if (window.toast) window.toast('Lỗi copy mã nguồn!', 'error');
+        });
+      }
     });
   }
 
@@ -843,6 +857,11 @@ class LofiPlayer {
   }
   
   changeMood(mood) {
+    const ALLOWED_MOODS = ['calm', 'excited', 'sad', 'stressed', 'creative'];
+    if (!ALLOWED_MOODS.includes(mood)) {
+      console.warn(`[Security Warning] Invalid lofi mood requested: ${mood}`);
+      return;
+    }
     if (this.tracks[mood] && mood !== this.currentMood) {
       const currentUrl = this.tracks[this.currentMood]?.url;
       const newUrl = this.tracks[mood]?.url;
