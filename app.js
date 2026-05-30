@@ -698,6 +698,848 @@ function renderKatex(math, displayMode) {
   return null;
 }
 
+function renderMindmapIframe(code) {
+  const bodyStyle = getComputedStyle(document.body);
+  const accent1 = (bodyStyle.getPropertyValue('--accent-1') || '#e8a87c').trim();
+  const accent2 = (bodyStyle.getPropertyValue('--accent-2') || '#c0392b').trim();
+  const accentGlow = (bodyStyle.getPropertyValue('--accent-glow') || 'rgba(232, 168, 124, 0.35)').trim();
+  const isLight = document.body.classList.contains('light-mode');
+  
+  return `<div class="mindmap-container-wrapper">
+    <iframe 
+      class="mindmap-iframe" 
+      srcdoc="${escHtml(buildMindmapSrcdoc(code, accent1, accent2, accentGlow, isLight))}"
+      sandbox="allow-scripts"
+      scrolling="no">
+    </iframe>
+  </div>`;
+}
+
+function buildMindmapSrcdoc(code, accent1, accent2, accentGlow, isLight) {
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Material+Icons+Round&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --accent-1: ${accent1};
+      --accent-2: ${accent2};
+      --accent-glow: ${accentGlow};
+      --bg-color: ${isLight ? '#f9f9fb' : '#0d0b14'};
+      --text-color: ${isLight ? '#1f2937' : '#f3f4f6'};
+      --panel-bg: ${isLight ? 'rgba(255, 255, 255, 0.75)' : 'rgba(20, 18, 30, 0.65)'};
+      --panel-border: ${isLight ? 'rgba(0, 0, 0, 0.08)' : 'rgba(255, 255, 255, 0.08)'};
+      --node-bg: ${isLight ? 'rgba(255, 255, 255, 0.9)' : 'rgba(255, 255, 255, 0.06)'};
+      --node-border: ${isLight ? 'rgba(0, 0, 0, 0.08)' : 'rgba(255, 255, 255, 0.08)'};
+      --node-text: ${isLight ? '#1f2937' : '#e5e7eb'};
+      --icon-color: ${isLight ? '#4b5563' : '#9ca3af'};
+    }
+    
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body, html {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      font-family: 'Inter', -apple-system, sans-serif;
+      background: transparent;
+      color: var(--text-color);
+    }
+    #app {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      background: var(--bg-color);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      overflow: hidden;
+      user-select: none;
+    }
+    #canvas {
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      overflow: visible;
+    }
+    #zoom-wrapper {
+      position: absolute;
+      width: 0;
+      height: 0;
+      top: 50%;
+      left: 50%;
+      transform-origin: center center;
+    }
+    #html-nodes {
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      top: 0;
+      left: 0;
+      pointer-events: none;
+      z-index: 2;
+    }
+    
+    /* Nodes Styling */
+    .node {
+      position: absolute;
+      transform: translate(-50%, -50%);
+      transition: left 0.3s cubic-bezier(0.4, 0, 0.2, 1), 
+                  top 0.3s cubic-bezier(0.4, 0, 0.2, 1), 
+                  opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1), 
+                  transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      background: var(--node-bg);
+      border: 1px solid var(--node-border);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border-radius: 20px;
+      padding: 8px 16px;
+      color: var(--node-text);
+      cursor: pointer;
+      pointer-events: auto;
+      font-size: 13px;
+      font-weight: 500;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      user-select: none;
+      white-space: normal;
+      max-width: 220px;
+      line-height: 1.4;
+      text-align: center;
+    }
+    
+    .node:hover {
+      background: ${isLight ? 'rgba(255, 255, 255, 0.98)' : 'rgba(255, 255, 255, 0.12)'};
+      border-color: ${isLight ? 'rgba(0, 0, 0, 0.15)' : 'rgba(255, 255, 255, 0.25)'};
+      transform: translate(-50%, -50%) scale(1.04);
+      box-shadow: 0 6px 25px rgba(0, 0, 0, 0.25);
+    }
+    
+    .node.root {
+      background: linear-gradient(135deg, var(--accent-1), var(--accent-2));
+      border: none;
+      font-weight: 600;
+      font-size: 15px;
+      color: #fff;
+      box-shadow: 0 4px 25px var(--accent-glow);
+    }
+    .node.root:hover {
+      transform: translate(-50%, -50%) scale(1.04);
+      box-shadow: 0 6px 30px var(--accent-glow);
+    }
+    
+    .node.level-1 {
+      border: 1.5px solid var(--accent-2);
+      font-weight: 600;
+      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
+    }
+    
+    .node-collapse-icon {
+      font-size: 16px;
+      opacity: 0.7;
+      transition: transform 0.2s, opacity 0.2s;
+    }
+    .node:hover .node-collapse-icon {
+      opacity: 1;
+    }
+    .node.collapsed .node-collapse-icon {
+      transform: rotate(45deg);
+    }
+    
+    /* Toolbar styling */
+    #toolbar {
+      position: absolute;
+      bottom: 20px;
+      right: 20px;
+      background: var(--panel-bg);
+      border: 1px solid var(--panel-border);
+      backdrop-filter: blur(15px);
+      -webkit-backdrop-filter: blur(15px);
+      border-radius: 12px;
+      padding: 6px;
+      display: flex;
+      gap: 6px;
+      z-index: 10;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+    }
+    .tool-btn {
+      background: transparent;
+      border: none;
+      color: var(--node-text);
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.2s, transform 0.1s;
+    }
+    .tool-btn:hover {
+      background: ${isLight ? 'rgba(0,0,0,0.06)' : 'rgba(255, 255, 255, 0.1)'};
+      transform: scale(1.05);
+    }
+    .tool-btn:active {
+      transform: scale(0.95);
+    }
+    .tool-btn span {
+      font-size: 20px;
+      color: var(--icon-color);
+    }
+    .tool-btn:hover span {
+      color: var(--node-text);
+    }
+    
+    /* Connection line styling */
+    .connection-line {
+      stroke-linecap: round;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    
+    .connection-line.draw-animate {
+      stroke-dasharray: 1000;
+      stroke-dashoffset: 1000;
+      animation: drawLine 1.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+    }
+    
+    @keyframes drawLine {
+      to {
+        stroke-dashoffset: 0;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div id="toolbar">
+      <button class="tool-btn" onclick="zoomIn()" title="Phóng to">
+        <span class="material-icons-round">zoom_in</span>
+      </button>
+      <button class="tool-btn" onclick="zoomOut()" title="Thu nhỏ">
+        <span class="material-icons-round">zoom_out</span>
+      </button>
+      <button class="tool-btn" onclick="fitScreen()" title="Đặt vừa màn hình">
+        <span class="material-icons-round">fit_screen</span>
+      </button>
+      <button class="tool-btn" onclick="exportSVG()" title="Xuất file ảnh SVG">
+        <span class="material-icons-round">insert_photo</span>
+      </button>
+      <button class="tool-btn" onclick="exportPNG()" title="Xuất file ảnh PNG">
+        <span class="material-icons-round">image</span>
+      </button>
+    </div>
+    
+    <div id="canvas">
+      <div id="zoom-wrapper">
+        <svg id="svg-connections" style="position:absolute; width:100%; height:100%; top:0; left:0; overflow:visible; z-index:1;">
+          <defs>
+            <linearGradient id="root-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stop-color="var(--accent-1)" stop-opacity="0.8" />
+              <stop offset="100%" stop-color="var(--accent-2)" stop-opacity="0.6" />
+            </linearGradient>
+            <linearGradient id="branch-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stop-color="var(--accent-2)" stop-opacity="0.6" />
+              <stop offset="100%" stop-color="rgba(255, 255, 255, 0.15)" stop-opacity="0.2" />
+            </linearGradient>
+          </defs>
+        </svg>
+        <div id="html-nodes"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const rawMarkdown = decodeURIComponent("${encodeURIComponent(code)}");
+    let treeRoot = parseMarkdownToTree(rawMarkdown);
+    let initialRender = true;
+    
+    // Zoom and pan state
+    let panX = 0;
+    let panY = 0;
+    let zoom = 1.0;
+    let isDragging = false;
+    let startX, startY;
+    
+    const app = document.getElementById('app');
+    const zoomWrapper = document.getElementById('zoom-wrapper');
+    
+    function parseMarkdownToTree(text) {
+      const lines = text.split('\\n');
+      const root = { name: "Mindmap", children: [], collapsed: false, id: "root" };
+      const path = [root];
+      const indents = [-1];
+      let nodeCount = 0;
+
+      for (let line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        const indent = line.search(/\\S/);
+        const cleanName = trimmed.replace(/^([-*+]+|\\d+\\.|#+)\\s+/, '').trim();
+        
+        nodeCount++;
+        const node = { 
+          name: cleanName, 
+          children: [], 
+          collapsed: false, 
+          id: "node_" + nodeCount 
+        };
+        
+        while (path.length > 1 && indent <= indents[indents.length - 1]) {
+          path.pop();
+          indents.pop();
+        }
+        
+        path[path.length - 1].children.push(node);
+        path.push(node);
+        indents.push(indent);
+      }
+      
+      return root.children.length > 0 ? root.children[0] : root;
+    }
+    
+    let yCounter = 0;
+    function layoutTree(root) {
+      if (!root) return;
+      
+      yCounter = 0;
+      
+      const children = root.children || [];
+      if (children.length === 0) {
+        root.x = 0;
+        root.y = 0;
+        return;
+      }
+      
+      const leftBranches = [];
+      const rightBranches = [];
+      children.forEach((child, i) => {
+        if (i % 2 === 0) {
+          rightBranches.push(child);
+        } else {
+          leftBranches.push(child);
+        }
+      });
+      
+      leftBranches.forEach(branch => {
+        layoutSide(branch, 1, -1);
+      });
+      
+      rightBranches.forEach(branch => {
+        layoutSide(branch, 1, 1);
+      });
+      
+      function layoutSide(node, depth, direction) {
+        if (node.collapsed || !node.children || node.children.length === 0) {
+          node.x = direction * depth * 220;
+          node.y = yCounter * 80;
+          yCounter++;
+        } else {
+          node.children.forEach(child => layoutSide(child, depth + 1, direction));
+          node.x = direction * depth * 220;
+          const firstY = node.children[0].y;
+          const lastY = node.children[node.children.length - 1].y;
+          node.y = (firstY + lastY) / 2;
+        }
+      }
+      
+      root.x = 0;
+      const firstChildY = children[0].y;
+      const lastChildY = children[children.length - 1].y;
+      root.y = (firstChildY + lastChildY) / 2;
+    }
+    
+    function drawConnections() {
+      const svg = document.getElementById('svg-connections');
+      svg.innerHTML = svg.innerHTML.split('<defs>')[0] + svg.innerHTML.substring(svg.innerHTML.indexOf('</defs>') + 7);
+      
+      // Select defs
+      const defs = svg.querySelector('defs');
+      
+      function traverse(node) {
+        if (node.collapsed || !node.children) return;
+        
+        node.children.forEach(child => {
+          const px = node.x;
+          const py = node.y;
+          const cx = child.x;
+          const cy = child.y;
+          
+          const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+          const dx = Math.abs(cx - px) * 0.5;
+          const c1x = cx > px ? px + dx : px - dx;
+          const c2x = cx > px ? cx - dx : cx + dx;
+          
+          const d = \`M \${px} \${py} C \${c1x} \${py}, \${c2x} \${cy}, \${cx} \${cy}\`;
+          
+          path.setAttribute('d', d);
+          path.setAttribute('fill', 'none');
+          
+          let strokeColor = 'rgba(255, 255, 255, 0.2)';
+          let strokeWidth = '2';
+          
+          if (node.id === 'root') {
+            strokeColor = 'url(#root-grad)';
+            strokeWidth = '3.5';
+          } else {
+            strokeColor = 'url(#branch-grad)';
+            strokeWidth = '2';
+          }
+          
+          path.setAttribute('stroke', strokeColor);
+          path.setAttribute('stroke-width', strokeWidth);
+          
+          if (initialRender) {
+            path.setAttribute('class', 'connection-line draw-animate');
+          } else {
+            path.setAttribute('class', 'connection-line');
+          }
+          
+          svg.appendChild(path);
+          traverse(child);
+        });
+      }
+      
+      traverse(treeRoot);
+    }
+    
+    function renderNodes() {
+      const container = document.getElementById('html-nodes');
+      
+      const activeNodes = [];
+      function collectActive(node, parentCollapsed = false) {
+        if (parentCollapsed) return;
+        activeNodes.push(node);
+        
+        const isCollapsed = node.collapsed;
+        if (node.children) {
+          node.children.forEach(child => collectActive(child, isCollapsed));
+        }
+      }
+      collectActive(treeRoot);
+      
+      const existingIds = new Set(activeNodes.map(n => n.id));
+      const renderedElements = container.querySelectorAll('.node');
+      renderedElements.forEach(el => {
+        if (!existingIds.has(el.dataset.id)) {
+          el.style.opacity = '0';
+          el.style.transform = 'translate(-50%, -50%) scale(0.5)';
+          setTimeout(() => el.remove(), 300);
+        }
+      });
+      
+      activeNodes.forEach(node => {
+        let el = container.querySelector(\`[data-id="\${node.id}"]\`);
+        const isNew = !el;
+        
+        if (isNew) {
+          el = document.createElement('div');
+          el.dataset.id = node.id;
+          
+          el.addEventListener('click', (e) => {
+            if (node.children && node.children.length > 0) {
+              node.collapsed = !node.collapsed;
+              renderAll();
+            }
+          });
+          
+          container.appendChild(el);
+          
+          const parentNode = findParentNode(treeRoot, node.id);
+          if (parentNode) {
+            el.style.left = \`\${parentNode.x}px\`;
+            el.style.top = \`\${parentNode.y}px\`;
+            el.style.opacity = '0';
+            el.style.transform = 'translate(-50%, -50%) scale(0.3)';
+          } else {
+            el.style.left = \`\${node.x}px\`;
+            el.style.top = \`\${node.y}px\`;
+          }
+        }
+        
+        el.textContent = '';
+        const nameSpan = document.createElement('span');
+        nameSpan.textContent = node.name;
+        el.appendChild(nameSpan);
+        
+        if (node.children && node.children.length > 0) {
+          const iconSpan = document.createElement('span');
+          iconSpan.className = 'material-icons-round node-collapse-icon';
+          iconSpan.textContent = node.collapsed ? 'add_circle' : 'remove_circle';
+          el.appendChild(iconSpan);
+        }
+        
+        const depth = getNodeDepth(treeRoot, node.id);
+        el.className = 'node';
+        if (node.id === 'root') el.classList.add('root');
+        else el.classList.add(\`level-\${depth}\`);
+        if (node.collapsed) el.classList.add('collapsed');
+        
+        requestAnimationFrame(() => {
+          el.style.left = \`\${node.x}px\`;
+          el.style.top = \`\${node.y}px\`;
+          el.style.opacity = '1';
+          el.style.transform = 'translate(-50%, -50%) scale(1)';
+        });
+      });
+    }
+    
+    function findParentNode(current, targetId) {
+      if (!current || !current.children) return null;
+      for (let child of current.children) {
+        if (child.id === targetId) return current;
+        const found = findParentNode(child, targetId);
+        if (found) return found;
+      }
+      return null;
+    }
+
+    function getNodeDepth(current, targetId, depth = 0) {
+      if (current.id === targetId) return depth;
+      if (!current.children) return -1;
+      for (let child of current.children) {
+        const foundDepth = getNodeDepth(child, targetId, depth + 1);
+        if (foundDepth !== -1) return foundDepth;
+      }
+      return -1;
+    }
+    
+    function escapeHtml(s) {
+      const d = document.createElement('div');
+      d.textContent = s;
+      return d.innerHTML;
+    }
+    
+    function renderAll() {
+      layoutTree(treeRoot);
+      renderNodes();
+      
+      const duration = 300;
+      const start = performance.now();
+      function step(now) {
+        drawConnections();
+        if (now - start < duration) {
+          requestAnimationFrame(step);
+        } else {
+          drawConnections();
+          initialRender = false;
+        }
+      }
+      requestAnimationFrame(step);
+    }
+    
+    function updateTransform() {
+      zoomWrapper.style.transform = \`translate(\${panX}px, \${panY}px) scale(\${zoom})\`;
+    }
+    
+    function zoomIn() {
+      zoom = Math.min(zoom * 1.2, 3.0);
+      updateTransform();
+    }
+    
+    function zoomOut() {
+      zoom = Math.max(zoom / 1.2, 0.35);
+      updateTransform();
+    }
+    
+    function fitScreen() {
+      const containerWidth = app.clientWidth;
+      const containerHeight = app.clientHeight;
+      if (containerWidth === 0 || containerHeight === 0) return;
+      
+      const activeNodes = [];
+      function collectActive(node) {
+        activeNodes.push(node);
+        if (!node.collapsed && node.children) {
+          node.children.forEach(collectActive);
+        }
+      }
+      collectActive(treeRoot);
+      if (activeNodes.length === 0) return;
+      
+      let minX = Infinity, maxX = -Infinity;
+      let minY = Infinity, maxY = -Infinity;
+      activeNodes.forEach(node => {
+        const w = 180;
+        const h = 50;
+        minX = Math.min(minX, node.x - w / 2);
+        maxX = Math.max(maxX, node.x + w / 2);
+        minY = Math.min(minY, node.y - h / 2);
+        maxY = Math.max(maxY, node.y + h / 2);
+      });
+      
+      const contentWidth = maxX - minX;
+      const contentHeight = maxY - minY;
+      const scaleX = (containerWidth * 0.8) / contentWidth;
+      const scaleY = (containerHeight * 0.8) / contentHeight;
+      zoom = Math.max(0.4, Math.min(scaleX, scaleY, 1.1));
+      
+      const centerX = (minX + maxX) / 2;
+      const centerY = (minY + maxY) / 2;
+      
+      panX = -centerX * zoom;
+      panY = -centerY * zoom;
+      updateTransform();
+    }
+    
+    function getExportSVGString() {
+      const activeNodes = [];
+      function collectActive(node) {
+        activeNodes.push(node);
+        if (!node.collapsed && node.children) {
+          node.children.forEach(collectActive);
+        }
+      }
+      collectActive(treeRoot);
+      
+      let minX = Infinity, maxX = -Infinity;
+      let minY = Infinity, maxY = -Infinity;
+      activeNodes.forEach(node => {
+        minX = Math.min(minX, node.x - 130);
+        maxX = Math.max(maxX, node.x + 130);
+        minY = Math.min(minY, node.y - 50);
+        maxY = Math.max(maxY, node.y + 50);
+      });
+      
+      const width = maxX - minX;
+      const height = maxY - minY;
+      
+      let svgStr = \`<svg xmlns="http://www.w3.org/2000/svg" viewBox="\${minX} \${minY} \${width} \${height}" width="\${width}" height="\${height}">\`;
+      svgStr += \`<style>
+        svg { background: #0d0b14; }
+        path { stroke-linecap: round; }
+        .node-rect { fill: rgba(255, 255, 255, 0.08); stroke: rgba(255, 255, 255, 0.15); stroke-width: 1px; }
+        .node-rect-root { fill: #e8a87c; stroke: none; }
+        .node-rect-level-1 { fill: rgba(255, 255, 255, 0.08); stroke: #c0392b; stroke-width: 1.5px; }
+        .node-text { fill: #ffffff; font-family: -apple-system, BlinkMacSystemFont, sans-serif; font-size: 13px; font-weight: 500; text-anchor: middle; dominant-baseline: middle; }
+        .node-text-root { fill: #0d0b14; font-size: 14px; font-weight: bold; }
+      </style>\`;
+      
+      svgStr += \`<defs>
+        <linearGradient id="root-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+          <stop offset="0%" stop-color="${accent1}" stop-opacity="0.9" />
+          <stop offset="100%" stop-color="${accent2}" stop-opacity="0.7" />
+        </linearGradient>
+        <linearGradient id="branch-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+          <stop offset="0%" stop-color="${accent2}" stop-opacity="0.7" />
+          <stop offset="100%" stop-color="rgba(255, 255, 255, 0.15)" stop-opacity="0.3" />
+        </linearGradient>
+      </defs>\`;
+      
+      const svgConnections = document.getElementById('svg-connections');
+      const paths = svgConnections.querySelectorAll('path');
+      paths.forEach(p => {
+        svgStr += p.outerHTML;
+      });
+      
+      activeNodes.forEach(node => {
+        const isRoot = node.id === 'root';
+        const depth = getNodeDepth(treeRoot, node.id);
+        
+        let rectClass = 'node-rect';
+        let textClass = 'node-text';
+        
+        if (isRoot) {
+          rectClass = 'node-rect-root';
+          textClass = 'node-text node-text-root';
+        } else if (depth === 1) {
+          rectClass = 'node-rect-level-1';
+        }
+        
+        const textLen = node.name.length;
+        const w = Math.max(100, textLen * 8 + 30);
+        const h = 34;
+        const rx = 17;
+        
+        svgStr += \`<rect class="\${rectClass}" x="\${node.x - w/2}" y="\${node.y - h/2}" width="\${w}" height="\${h}" rx="\${rx}"/>\`;
+        svgStr += \`<text class="\${textClass}" x="\${node.x}" y="\${node.y + 1}">\${escapeHtml(node.name)}</text>\`;
+      });
+      
+      svgStr += '</svg>';
+      return svgStr;
+    }
+    
+    function exportSVG() {
+      const svgStr = getExportSVGString();
+      const blob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'suna-mindmap.svg';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+    
+    function exportPNG() {
+      const svgStr = getExportSVGString();
+      const blob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      
+      const activeNodes = [];
+      function collectActive(node) {
+        activeNodes.push(node);
+        if (!node.collapsed && node.children) {
+          node.children.forEach(collectActive);
+        }
+      }
+      collectActive(treeRoot);
+      
+      let minX = Infinity, maxX = -Infinity;
+      let minY = Infinity, maxY = -Infinity;
+      activeNodes.forEach(node => {
+        minX = Math.min(minX, node.x - 130);
+        maxX = Math.max(maxX, node.x + 130);
+        minY = Math.min(minY, node.y - 50);
+        maxY = Math.max(maxY, node.y + 50);
+      });
+      
+      const width = maxX - minX;
+      const height = maxY - minY;
+      
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = width * 2;
+        canvas.height = height * 2;
+        const ctx = canvas.getContext('2d');
+        
+        ctx.scale(2, 2);
+        ctx.drawImage(img, 0, 0);
+        
+        canvas.toBlob((pngBlob) => {
+          const pngUrl = URL.createObjectURL(pngBlob);
+          const a = document.createElement('a');
+          a.href = pngUrl;
+          a.download = 'suna-mindmap.png';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(pngUrl);
+        }, 'image/png');
+        
+        URL.revokeObjectURL(url);
+      };
+      img.src = url;
+    }
+    
+    app.addEventListener('mousedown', (e) => {
+      if (e.target.closest('.node') || e.target.closest('#toolbar')) return;
+      isDragging = true;
+      startX = e.clientX - panX;
+      startY = e.clientY - panY;
+      app.style.cursor = 'grabbing';
+    });
+    
+    window.addEventListener('mousemove', (e) => {
+      if (!isDragging) return;
+      panX = e.clientX - startX;
+      panY = e.clientY - startY;
+      updateTransform();
+    });
+    
+    window.addEventListener('mouseup', () => {
+      if (isDragging) {
+        isDragging = false;
+        app.style.cursor = 'default';
+      }
+    });
+    
+    app.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const zoomFactor = 1.08;
+      const oldZoom = zoom;
+      
+      if (e.deltaY < 0) {
+        zoom = Math.min(zoom * zoomFactor, 3.0);
+      } else {
+        zoom = Math.max(zoom / zoomFactor, 0.35);
+      }
+      
+      const rect = app.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+      
+      panX = mouseX - (mouseX - panX) * (zoom / oldZoom);
+      panY = mouseY - (mouseY - panY) * (zoom / oldZoom);
+      
+      updateTransform();
+    }, { passive: false });
+    
+    let touchStartX = 0;
+    let touchStartY = 0;
+    let lastTouchDistance = 0;
+    
+    app.addEventListener('touchstart', (e) => {
+      if (e.target.closest('.node') || e.target.closest('#toolbar')) return;
+      if (e.touches.length === 1) {
+        isDragging = true;
+        touchStartX = e.touches[0].clientX - panX;
+        touchStartY = e.touches[0].clientY - panY;
+      } else if (e.touches.length === 2) {
+        isDragging = false;
+        lastTouchDistance = getTouchDistance(e);
+      }
+    });
+    
+    app.addEventListener('touchmove', (e) => {
+      if (isDragging && e.touches.length === 1) {
+        panX = e.touches[0].clientX - touchStartX;
+        panY = e.touches[0].clientY - touchStartY;
+        updateTransform();
+      } else if (e.touches.length === 2) {
+        const newDistance = getTouchDistance(e);
+        if (lastTouchDistance > 0) {
+          const zoomFactor = newDistance / lastTouchDistance;
+          const oldZoom = zoom;
+          zoom = Math.max(0.35, Math.min(3.0, zoom * zoomFactor));
+          
+          const touchCenterX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+          const touchCenterY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+          const rect = app.getBoundingClientRect();
+          const relativeX = touchCenterX - rect.left;
+          const relativeY = touchCenterY - rect.top;
+          
+          panX = relativeX - (relativeX - panX) * (zoom / oldZoom);
+          panY = relativeY - (relativeY - panY) * (zoom / oldZoom);
+          
+          updateTransform();
+        }
+        lastTouchDistance = newDistance;
+      }
+    });
+    
+    app.addEventListener('touchend', () => {
+      isDragging = false;
+      lastTouchDistance = 0;
+    });
+    
+    function getTouchDistance(e) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      return Math.sqrt(dx * dx + dy * dy);
+    }
+    
+    renderAll();
+    setTimeout(() => {
+      fitScreen();
+    }, 100);
+    
+    window.addEventListener('resize', () => {
+      fitScreen();
+    });
+  </script>
+</body>
+</html>`;
+}
+
 function formatMessage(text) {
   if (!text) return '';
   // Strip tool call tags and their contents to prevent raw tags showing in UI
@@ -727,8 +1569,19 @@ function formatMessage(text) {
     const safeCode = encodeURIComponent(code);
     let renderedHtml = '';
     
+    // Feature: Mindmap Diagram
+    if (cleanLang === 'mindmap') {
+      if (State.isGenerating) {
+        renderedHtml = `<div class="mindmap-wrapper skeleton-loading">
+                  <span class="material-icons-round rotate-anim">psychology</span>
+                  <span>Suna đang phác thảo sơ đồ tư duy...</span>
+                </div>`;
+      } else {
+        renderedHtml = renderMindmapIframe(code);
+      }
+    }
     // Feature: Mermaid Diagram
-    if (cleanLang === 'mermaid') {
+    else if (cleanLang === 'mermaid') {
       const decodedMermaid = code
         .replace(/&amp;/g, '&')
         .replace(/&lt;/g, '<')
@@ -1752,7 +2605,16 @@ function buildSystemPrompt() {
 
   // Formatting & Premium features
   parts.push(`[ĐỊNH DẠNG ĐẶC BIỆT]:
-1. [Sơ đồ tư duy]: Nếu người dùng yêu cầu vẽ sơ đồ hoặc mind map, hãy trả về CHỈ mã \`\`\`mermaid ... \`\`\` hợp lệ. KHÔNG giải thích dài dòng.
+1. [Sơ đồ tư duy (Mindmap)]: Nếu người dùng yêu cầu vẽ sơ đồ tư duy, mindmap, brain map hoặc sơ đồ phân cấp kiến thức trực quan, hãy trả về một khối mã \`\`\`mindmap ... \`\`\` duy nhất chứa cấu trúc phân cấp bằng danh sách thụt lề đầu dòng (nested bullet points). Ví dụ:
+\`\`\`mindmap
+- Chủ đề trung tâm
+  - Ý chính 1
+    - Chi tiết 1.1
+    - Chi tiết 1.2
+  - Ý chính 2
+    - Chi tiết 2.1
+\`\`\`
+Nếu là sơ đồ quy trình phức tạp, lược đồ luồng dữ liệu hoặc biểu đồ dạng khác, hãy tiếp tục sử dụng mã \`\`\`mermaid ... \`\`\` hợp lệ. KHÔNG giải thích dài dòng.
 2. [Giao diện/Live Workspace]: Nếu yêu cầu thiết kế giao diện web, vẽ SVG, hoặc lập trình Front-end (HTML/CSS/JS), hãy trả về MỘT khối \`\`\`html ... \`\`\` HOẶC \`\`\`svg ... \`\`\` duy nhất, bao gồm đầy đủ CSS/JS bên trong để có thể chạy được (Live Preview).
 3. [Kế hoạch/Task List]: Khi lập lịch trình, lộ trình học, to-do list, hãy sử dụng Markdown Checklist định dạng \`- [ ] \` để hệ thống tự động render thành Interactive Dashboard Planner.
 4. [Tài liệu]: Nếu người dùng đính kèm tài liệu, hãy sử dụng tính năng "Phân tích tài liệu" (Document Analyzer) để đọc hiểu sâu, tóm tắt hoặc dịch thuật đoạn văn bản đó.`);

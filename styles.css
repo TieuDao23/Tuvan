@@ -5230,3 +5230,52 @@ body.light-mode .mermaid-wrapper.skeleton-loading {
   }
 }
 
+/* =============================================
+   MINDMAP - Premium Glassmorphic Sandbox
+   ============================================= */
+.mindmap-container-wrapper {
+  position: relative;
+  width: 100%;
+  height: 480px;
+  margin: 16px 0;
+  border-radius: 16px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+}
+
+.light-mode .mindmap-container-wrapper {
+  background: rgba(0, 0, 0, 0.015);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.05);
+}
+
+.mindmap-iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+  display: block;
+}
+
+/* Skeleton Loading for Mindmap generation state */
+.mindmap-wrapper.skeleton-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  height: 200px;
+  border-radius: 12px;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.light-mode .mindmap-wrapper.skeleton-loading {
+  background: rgba(0, 0, 0, 0.015);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+}
+
