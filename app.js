@@ -1057,10 +1057,10 @@ function buildMindmapSrcdoc(code, accent1, accent2, accentGlow, isLight) {
     
     function drawConnections() {
       const svg = document.getElementById('svg-connections');
-      svg.innerHTML = svg.innerHTML.split('<defs>')[0] + svg.innerHTML.substring(svg.innerHTML.indexOf('</defs>') + 7);
       
-      // Select defs
-      const defs = svg.querySelector('defs');
+      // Clear only existing connection path elements, preserving defs gradients intact
+      const existingPaths = svg.querySelectorAll('path');
+      existingPaths.forEach(path => path.remove());
       
       function traverse(node) {
         if (node.collapsed || !node.children) return;
