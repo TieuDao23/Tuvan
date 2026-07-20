@@ -5305,3 +5305,53 @@ body.light-mode .artifact-resizer {
   background: rgba(0, 0, 0, 0.06);
 }
 
+/* Live Preview Action Button */
+.btn-preview-artifact {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 16px;
+  background: rgba(232, 168, 124, 0.06);
+  border: none;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  color: var(--accent-1, #e8a87c);
+  font-family: var(--font-main, inherit);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-preview-artifact:hover {
+  background: var(--accent-gradient, linear-gradient(135deg, #e8a87c, #c0392b));
+  color: #fff;
+  box-shadow: 0 -2px 10px rgba(232, 168, 124, 0.1);
+}
+
+.btn-preview-artifact:active {
+  filter: brightness(0.9);
+}
+
+.btn-preview-artifact .material-icons-round {
+  font-size: 1.1rem;
+}
+
+/* Light mode overrides */
+body.light-mode .btn-preview-artifact {
+  background: rgba(0, 0, 0, 0.015);
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+  color: var(--accent-2, #c0392b);
+}
+
+body.light-mode .btn-preview-artifact:hover {
+  background: var(--accent-gradient, linear-gradient(135deg, #e8a87c, #c0392b));
+  color: #fff;
+}
+
+/* Ensure code block margin inside wrapper matches layout */
+.code-block-wrapper pre {
+  margin-bottom: 0 !important;
+}
+
