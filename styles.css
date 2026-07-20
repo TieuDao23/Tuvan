@@ -5279,3 +5279,29 @@ body.light-mode .mermaid-wrapper.skeleton-loading {
   border: 1px solid rgba(0, 0, 0, 0.06);
 }
 
+/* Live Workspace Resizer Splitter */
+.artifact-resizer {
+  width: 6px;
+  background: var(--border-color, rgba(255, 255, 255, 0.08));
+  cursor: col-resize;
+  transition: background 0.2s, box-shadow 0.2s;
+  z-index: 100;
+  position: relative;
+  flex-shrink: 0;
+}
+
+.artifact-resizer:hover,
+.artifact-resizer.active {
+  background: var(--accent-1, #e8a87c);
+  box-shadow: 0 0 10px var(--accent-glow, rgba(232, 168, 124, 0.35));
+}
+
+.artifacts-panel[data-view="editor"] .artifact-resizer,
+.artifacts-panel[data-view="preview"] .artifact-resizer {
+  display: none !important;
+}
+
+body.light-mode .artifact-resizer {
+  background: rgba(0, 0, 0, 0.06);
+}
+

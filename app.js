@@ -1415,6 +1415,62 @@ function initArtifactsAndSearch() {
     };
     editorTextarea.addEventListener('input', updatePreview);
     editorTextarea.addEventListener('change', updatePreview);
+
+    // Support Tab key indentation inside the editor textarea
+    editorTextarea.addEventListener('keydown', (e) => {
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        const start = editorTextarea.selectionStart;
+        const end = editorTextarea.selectionEnd;
+        const value = editorTextarea.value;
+        
+        editorTextarea.value = value.substring(0, start) + "  " + value.substring(end);
+        editorTextarea.selectionStart = editorTextarea.selectionEnd = start + 2;
+        
+        updatePreview();
+      }
+    });
+  }
+
+  // Interactive Resizer logic for Live Workspace Split View
+  const resizer = document.getElementById('artifact-resizer');
+  const editorContainer = document.getElementById('artifact-editor-container');
+  const previewContainer = document.getElementById('artifact-preview-container');
+  const artifactsContent = document.querySelector('.artifacts-content');
+
+  if (resizer && editorContainer && previewContainer && artifactsContent) {
+    let isResizing = false;
+    
+    resizer.addEventListener('mousedown', (e) => {
+      isResizing = true;
+      resizer.classList.add('active');
+      document.body.style.cursor = 'col-resize';
+      previewContainer.style.pointerEvents = 'none'; // Prevent iframe from swallowing mouse events
+      e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (!isResizing) return;
+      const contentRect = artifactsContent.getBoundingClientRect();
+      const relativeX = e.clientX - contentRect.left;
+      const totalWidth = contentRect.width;
+      
+      let percentage = (relativeX / totalWidth) * 100;
+      percentage = Math.max(10, Math.min(percentage, 95)); // Bounds check
+      
+      editorContainer.style.width = `${percentage}%`;
+      previewContainer.style.width = `${100 - percentage}%`;
+      artifactsContent.dataset.splitPercent = percentage;
+    });
+
+    document.addEventListener('mouseup', () => {
+      if (isResizing) {
+        isResizing = false;
+        resizer.classList.remove('active');
+        document.body.style.cursor = 'default';
+        previewContainer.style.pointerEvents = 'auto';
+      }
+    });
   }
 
   // Handle preview/editor/split view mode transitions
@@ -1425,6 +1481,16 @@ function initArtifactsAndSearch() {
       const viewMode = btn.dataset.view;
       if (artifactsPanel) {
         artifactsPanel.setAttribute('data-view', viewMode);
+      }
+      
+      // Reset resizer inline widths when not in split mode
+      if (viewMode !== 'split') {
+        if (editorContainer) editorContainer.style.width = '';
+        if (previewContainer) previewContainer.style.width = '';
+      } else {
+        const lastPercent = (artifactsContent && artifactsContent.dataset.splitPercent) || 50;
+        if (editorContainer) editorContainer.style.width = `${lastPercent}%`;
+        if (previewContainer) previewContainer.style.width = `${100 - lastPercent}%`;
       }
     });
   });
@@ -3156,35 +3222,57 @@ function buildMindmapSrcdoc(code, accent1, accent2, accentGlow, isLight) {
     function parseMarkdownToTree(text) {
       const lines = text.split('\\n');
       const root = { name: "Mindmap", children: [], collapsed: false, id: "root" };
+      root.level = -1;
       const path = [root];
-      const indents = [-1];
       let nodeCount = 0;
+      let lastHeaderLevel = 0;
 
       for (let line of lines) {
         const trimmed = line.trim();
         if (!trimmed) continue;
-        const indent = line.search(/\\S/);
-        const cleanName = trimmed.replace(/^([-*+]+|\\d+\\.|#+)\\s+/, '').trim();
-        
+
+        let cleanName = trimmed;
+        let level = 0;
+
+        // Check if it's a header
+        const headerMatch = trimmed.match(/^(#{1,6})\\s+(.*)$/);
+        if (headerMatch) {
+          const numHashes = headerMatch[1].length;
+          cleanName = headerMatch[2].trim();
+          level = numHashes;
+          lastHeaderLevel = numHashes;
+        } else {
+          // List item or plain text
+          cleanName = trimmed.replace(/^([-*+]+|\\d+\\.)\\s+/, '').trim();
+          const indent = line.search(/\\S/);
+          const indentLevel = Math.max(0, Math.floor(indent / 2));
+          level = lastHeaderLevel + 1 + indentLevel;
+        }
+
         nodeCount++;
         const node = { 
           name: cleanName, 
           children: [], 
           collapsed: false, 
-          id: "node_" + nodeCount 
+          id: "node_" + nodeCount,
+          level: level
         };
-        
-        while (path.length > 1 && indent <= indents[indents.length - 1]) {
+
+        while (path.length > 1 && path[path.length - 1].level >= level) {
           path.pop();
-          indents.pop();
         }
-        
+
         path[path.length - 1].children.push(node);
         path.push(node);
-        indents.push(indent);
       }
-      
-      return root.children.length > 0 ? root.children[0] : root;
+
+      if (root.children.length === 1) {
+        return root.children[0];
+      } else if (root.children.length > 1) {
+        root.name = root.children[0].name;
+        return root;
+      }
+      return root;
     }
     
     let yCounter = 0;
@@ -3760,7 +3848,13 @@ function formatMessage(text, isStreaming = false) {
                   <span>Suna đang phác thảo sơ đồ tư duy...</span>
                 </div>`;
       } else {
-        renderedHtml = renderMindmapIframe(code);
+        const decodedMindmap = code
+          .replace(/&amp;/g, '&')
+          .replace(/&lt;/g, '<')
+          .replace(/&gt;/g, '>')
+          .replace(/&quot;/g, '"')
+          .replace(/&#39;/g, "'");
+        renderedHtml = renderMindmapIframe(decodedMindmap);
       }
     }
     // Feature: Mermaid Diagram
