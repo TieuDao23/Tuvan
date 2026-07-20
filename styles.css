@@ -5355,3 +5355,279 @@ body.light-mode .btn-preview-artifact:hover {
   margin-bottom: 0 !important;
 }
 
+/* Live Workspace Left Resize Handle */
+.workspace-left-handle {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 6px;
+  height: 100%;
+  cursor: ew-resize;
+  background: transparent;
+  z-index: 1001;
+  transition: background 0.2s;
+}
+
+.workspace-left-handle:hover {
+  background: rgba(232, 168, 124, 0.2);
+}
+
+/* Three-pane layout split styles */
+.artifacts-panel[data-view="split"] .artifact-editor-container {
+  display: flex;
+  flex-direction: column;
+  width: 35%;
+}
+
+.artifacts-panel[data-view="split"] .artifact-preview-container {
+  display: flex;
+  width: 35%;
+}
+
+.artifacts-panel[data-view="split"] .artifact-chat-container {
+  display: flex;
+  width: 30%;
+}
+
+.artifacts-panel[data-view="editor"] .artifact-editor-container {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  border-right: none;
+}
+
+.artifacts-panel[data-view="editor"] .artifact-preview-container,
+.artifacts-panel[data-view="editor"] .artifact-chat-container {
+  display: none !important;
+}
+
+.artifacts-panel[data-view="preview"] .artifact-preview-container {
+  display: flex;
+  width: 100%;
+  border-right: none;
+}
+
+.artifacts-panel[data-view="preview"] .artifact-editor-container,
+.artifacts-panel[data-view="preview"] .artifact-chat-container {
+  display: none !important;
+}
+
+/* Workspace Editor Toolbar */
+.workspace-editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  background: rgba(0, 0, 0, 0.15);
+  border-bottom: 1px solid var(--border-color, rgba(255, 255, 255, 0.08));
+  flex-shrink: 0;
+}
+
+body.light-mode .workspace-editor-toolbar {
+  background: rgba(0, 0, 0, 0.02);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.btn-toolbar-action {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--accent-gradient, linear-gradient(135deg, #e8a87c, #c0392b));
+  color: #fff;
+  border: none;
+  padding: 5px 12px;
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.1s;
+}
+
+.btn-toolbar-action:active {
+  transform: scale(0.95);
+}
+
+.btn-toolbar-action .material-icons-round {
+  font-size: 1rem;
+}
+
+.select-toolbar-template {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.08));
+  color: var(--text-primary);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-family: inherit;
+  font-size: 0.76rem;
+  outline: none;
+  cursor: pointer;
+}
+
+body.light-mode .select-toolbar-template {
+  background: rgba(255, 255, 255, 0.8);
+  border-color: rgba(0, 0, 0, 0.08);
+  color: var(--text-primary);
+}
+
+.artifacts-panel .artifact-editor-textarea {
+  flex: 1;
+}
+
+/* Workspace Chat Styles */
+.artifact-chat-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: rgba(13, 11, 20, 0.45);
+  border-left: 1px solid var(--border-color, rgba(255, 255, 255, 0.08));
+  transition: width 0.3s ease;
+  overflow: hidden;
+}
+
+body.light-mode .artifact-chat-container {
+  background: rgba(255, 255, 255, 0.4);
+  border-left: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.workspace-chat-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  background: rgba(0, 0, 0, 0.2);
+  border-bottom: 1px solid var(--border-color, rgba(255, 255, 255, 0.08));
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: var(--text-primary);
+  flex-shrink: 0;
+}
+
+body.light-mode .workspace-chat-header {
+  background: rgba(0, 0, 0, 0.015);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.workspace-chat-header .material-icons-round {
+  color: var(--accent-1, #e8a87c);
+}
+
+.workspace-chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.workspace-chat-message {
+  display: flex;
+  flex-direction: column;
+  max-width: 90%;
+  padding: 10px 14px;
+  border-radius: 12px;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  word-wrap: break-word;
+}
+
+.workspace-chat-message.user {
+  background: var(--accent-gradient, linear-gradient(135deg, #e8a87c, #c0392b));
+  color: #fff;
+  align-self: flex-end;
+  border-bottom-right-radius: 2px;
+}
+
+.workspace-chat-message.assistant {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-primary);
+  align-self: flex-start;
+  border-bottom-left-radius: 2px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+body.light-mode .workspace-chat-message.assistant {
+  background: rgba(0, 0, 0, 0.02);
+  border-color: rgba(0, 0, 0, 0.06);
+}
+
+.workspace-chat-input-container {
+  display: flex;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border-color, rgba(255, 255, 255, 0.08));
+  background: rgba(0, 0, 0, 0.1);
+  flex-shrink: 0;
+}
+
+body.light-mode .workspace-chat-input-container {
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+  background: rgba(0, 0, 0, 0.01);
+}
+
+.workspace-chat-input {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.08));
+  border-radius: 10px;
+  padding: 8px 12px;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 0.82rem;
+  resize: none;
+  outline: none;
+}
+
+body.light-mode .workspace-chat-input {
+  background: rgba(255, 255, 255, 0.8);
+  border-color: rgba(0, 0, 0, 0.08);
+}
+
+.btn-send-workspace {
+  background: var(--accent-gradient, linear-gradient(135deg, #e8a87c, #c0392b));
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 0.1s;
+}
+
+.btn-send-workspace:active {
+  transform: scale(0.95);
+}
+
+.btn-send-workspace .material-icons-round {
+  font-size: 1.1rem;
+}
+
+/* Apply button inside code blocks in workspace chat */
+.btn-workspace-apply {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: rgba(232, 168, 124, 0.1);
+  border: 1px solid rgba(232, 168, 124, 0.2);
+  color: var(--accent-1, #e8a87c);
+  border-radius: 6px;
+  padding: 6px 12px;
+  margin-top: 8px;
+  font-size: 0.76rem;
+  font-weight: 600;
+  cursor: pointer;
+  width: fit-content;
+  transition: all 0.2s;
+}
+
+.btn-workspace-apply:hover {
+  background: var(--accent-gradient, linear-gradient(135deg, #e8a87c, #c0392b));
+  border-color: transparent;
+  color: #fff;
+}
+

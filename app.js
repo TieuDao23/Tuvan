@@ -1432,45 +1432,390 @@ function initArtifactsAndSearch() {
     });
   }
 
-  // Interactive Resizer logic for Live Workspace Split View
-  const resizer = document.getElementById('artifact-resizer');
-  const editorContainer = document.getElementById('artifact-editor-container');
-  const previewContainer = document.getElementById('artifact-preview-container');
-  const artifactsContent = document.querySelector('.artifacts-content');
-
-  if (resizer && editorContainer && previewContainer && artifactsContent) {
-    let isResizing = false;
+  // 1. Left Resize Handle for Workspace Panel Width
+  const leftHandle = document.getElementById('workspace-left-handle');
+  if (leftHandle && artifactsPanel) {
+    let isResizingWorkspace = false;
     
-    resizer.addEventListener('mousedown', (e) => {
-      isResizing = true;
-      resizer.classList.add('active');
-      document.body.style.cursor = 'col-resize';
-      previewContainer.style.pointerEvents = 'none'; // Prevent iframe from swallowing mouse events
+    leftHandle.addEventListener('mousedown', (e) => {
+      isResizingWorkspace = true;
+      document.body.style.cursor = 'ew-resize';
       e.preventDefault();
     });
 
     document.addEventListener('mousemove', (e) => {
-      if (!isResizing) return;
-      const contentRect = artifactsContent.getBoundingClientRect();
-      const relativeX = e.clientX - contentRect.left;
-      const totalWidth = contentRect.width;
+      if (!isResizingWorkspace) return;
+      const windowWidth = window.innerWidth;
+      const relativeX = e.clientX;
+      let width = windowWidth - relativeX;
+      let percentage = (width / windowWidth) * 100;
+      percentage = Math.max(25, Math.min(percentage, 100));
       
-      let percentage = (relativeX / totalWidth) * 100;
-      percentage = Math.max(10, Math.min(percentage, 95)); // Bounds check
-      
-      editorContainer.style.width = `${percentage}%`;
-      previewContainer.style.width = `${100 - percentage}%`;
-      artifactsContent.dataset.splitPercent = percentage;
+      artifactsPanel.style.width = `${percentage}%`;
     });
 
     document.addEventListener('mouseup', () => {
-      if (isResizing) {
-        isResizing = false;
-        resizer.classList.remove('active');
+      if (isResizingWorkspace) {
+        isResizingWorkspace = false;
+        document.body.style.cursor = 'default';
+      }
+    });
+  }
+
+  // 2. Fullscreen Toggle Button in Title
+  const btnExpandWorkspace = document.getElementById('btn-expand-workspace');
+  if (btnExpandWorkspace && artifactsPanel) {
+    let isExpanded = false;
+    btnExpandWorkspace.addEventListener('click', () => {
+      isExpanded = !isExpanded;
+      if (isExpanded) {
+        artifactsPanel.style.width = '100%';
+        btnExpandWorkspace.querySelector('.material-icons-round').textContent = 'close_fullscreen';
+      } else {
+        artifactsPanel.style.width = '60%';
+        btnExpandWorkspace.querySelector('.material-icons-round').textContent = 'open_in_full';
+      }
+    });
+  }
+
+  // 3. New Session and Template Loader
+  const btnNewSession = document.getElementById('btn-new-session');
+  const selectTemplate = document.getElementById('select-session-template');
+  
+  const sessionTemplates = {
+    blank: '',
+    html5: `<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Khung HTML5 cơ bản</title>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      margin: 0;
+      background: #f0f2f5;
+    }
+    .card {
+      background: white;
+      padding: 30px;
+      border-radius: 12px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Chào mừng bạn đến với HTML5</h1>
+    <p>Hãy chỉnh sửa code ở Editor để thấy thay đổi trực tiếp nhé!</p>
+  </div>
+</body>
+</html>`,
+    svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="100%" height="100%">
+  <!-- Background Grid -->
+  <rect width="400" height="400" fill="#0f172a" />
+  
+  <!-- Glowing circle -->
+  <circle cx="200" cy="200" r="80" fill="none" stroke="#3b82f6" stroke-width="4" filter="drop-shadow(0 0 10px #3b82f6)" />
+  <circle cx="200" cy="200" r="40" fill="#3b82f6" opacity="0.8" />
+  
+  <!-- Text -->
+  <text x="200" y="320" fill="white" font-family="system-ui, sans-serif" font-size="18" font-weight="bold" text-anchor="middle">Premium SVG Canvas</text>
+</svg>`,
+    tailwind: `<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tailwind CSS Sandbox</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-900 text-white flex items-center justify-center min-h-screen">
+  <div class="max-w-md p-8 bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl text-center transform hover:scale-105 transition-transform duration-300">
+    <div class="inline-flex p-3 bg-amber-500/10 text-amber-500 rounded-full mb-4">
+      <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+    </div>
+    <h1 class="text-2xl font-bold mb-2">Tailwind Play</h1>
+    <p class="text-slate-400 text-sm mb-6">Thử nghiệm các tiện ích CSS Tailwind thời gian thực ngay tại đây.</p>
+    <button class="px-6 py-2 bg-gradient-to-r from-amber-500 to-red-500 text-white font-semibold rounded-lg shadow-lg hover:brightness-110 active:scale-95 transition-all">Bắt đầu nào</button>
+  </div>
+</body>
+</html>`
+  };
+
+  if (btnNewSession && selectTemplate && editorTextarea) {
+    btnNewSession.addEventListener('click', () => {
+      const templateKey = selectTemplate.value;
+      const code = sessionTemplates[templateKey] || '';
+      editorTextarea.value = code;
+      editorTextarea.dispatchEvent(new Event('input'));
+      
+      // Clear assistant chat
+      State.workspaceMessages = [];
+      renderWorkspaceMessages();
+      
+      if (window.toast) window.toast('Đã khởi tạo bài học mới!', 'success');
+    });
+  }
+
+  // 4. Dual Resizers for Editor | Preview | Chat columns
+  const resizer1 = document.getElementById('artifact-resizer-1');
+  const resizer2 = document.getElementById('artifact-resizer-2');
+  const editorContainer = document.getElementById('artifact-editor-container');
+  const previewContainer = document.getElementById('artifact-preview-container');
+  const chatContainer = document.getElementById('artifact-chat-container');
+  const artifactsContent = document.querySelector('.artifacts-content');
+
+  if (resizer1 && resizer2 && editorContainer && previewContainer && chatContainer && artifactsContent) {
+    let isResizing1 = false;
+    let isResizing2 = false;
+
+    resizer1.addEventListener('mousedown', (e) => {
+      isResizing1 = true;
+      resizer1.classList.add('active');
+      document.body.style.cursor = 'col-resize';
+      previewContainer.style.pointerEvents = 'none';
+      e.preventDefault();
+    });
+
+    resizer2.addEventListener('mousedown', (e) => {
+      isResizing2 = true;
+      resizer2.classList.add('active');
+      document.body.style.cursor = 'col-resize';
+      previewContainer.style.pointerEvents = 'none';
+      e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (!isResizing1 && !isResizing2) return;
+      const contentRect = artifactsContent.getBoundingClientRect();
+      const totalWidth = contentRect.width;
+
+      if (isResizing1) {
+        const relativeX = e.clientX - contentRect.left;
+        let editorWidthPercent = (relativeX / totalWidth) * 100;
+        editorWidthPercent = Math.max(10, Math.min(editorWidthPercent, 80));
+        
+        const chatWidthPercent = parseFloat(chatContainer.style.width || 30);
+        const previewWidthPercent = 100 - editorWidthPercent - chatWidthPercent;
+        
+        if (previewWidthPercent > 10) {
+          editorContainer.style.width = `${editorWidthPercent}%`;
+          previewContainer.style.width = `${previewWidthPercent}%`;
+        }
+      }
+
+      if (isResizing2) {
+        const relativeX = e.clientX - contentRect.left;
+        let leftWidthPercent = (relativeX / totalWidth) * 100;
+        leftWidthPercent = Math.max(20, Math.min(leftWidthPercent, 90));
+        
+        const editorWidthPercent = parseFloat(editorContainer.style.width || 35);
+        const previewWidthPercent = leftWidthPercent - editorWidthPercent;
+        const chatWidthPercent = 100 - leftWidthPercent;
+        
+        if (previewWidthPercent > 10 && chatWidthPercent > 10) {
+          previewContainer.style.width = `${previewWidthPercent}%`;
+          chatContainer.style.width = `${chatWidthPercent}%`;
+        }
+      }
+    });
+
+    document.addEventListener('mouseup', () => {
+      if (isResizing1 || isResizing2) {
+        isResizing1 = false;
+        isResizing2 = false;
+        resizer1.classList.remove('active');
+        resizer2.classList.remove('active');
         document.body.style.cursor = 'default';
         previewContainer.style.pointerEvents = 'auto';
       }
     });
+  }
+
+  // 5. Suna Workspace AI Assistant Chat logic
+  State.workspaceMessages = [];
+
+  function escHtml(text) {
+    if (!text) return '';
+    return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function formatWorkspaceMessageContent(text) {
+    if (!text) return '';
+    let html = escHtml(text);
+    const placeholders = {};
+    let count = 0;
+    
+    // Extract code blocks
+    html = html.replace(/```([^\n]*)\n([\s\S]*?)```/g, (_, lang, code) => {
+      const decodedCode = code
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'");
+        
+      const placeholderToken = `%%WS_CODE_${count++}%%`;
+      const applyBtn = `<button class="btn-workspace-apply" onclick="applyWorkspaceCode(this)" data-code="${encodeURIComponent(decodedCode)}"><span class="material-icons-round">play_arrow</span> Áp dụng vào Editor</button>`;
+      const cleanLang = lang.trim() || 'code';
+      
+      placeholders[placeholderToken] = `<div class="code-block-wrapper">
+        <div class="code-lang">${cleanLang}</div>
+        <button class="btn-copy-code" onclick="copyCodeBlock(this)" title="Sao chép code"><span class="material-icons-round">content_copy</span></button>
+        <pre><code>${escHtml(decodedCode)}</code></pre>
+        ${applyBtn}
+      </div>`;
+      
+      return placeholderToken;
+    });
+    
+    // Extract inline code
+    html = html.replace(/`([^`]+)`/g, (_, inline) => {
+      const token = `%%WS_INLINE_${count++}%%`;
+      placeholders[token] = `<code class="math-inline">${inline}</code>`;
+      return token;
+    });
+    
+    // Replace newlines with <br>
+    html = html.replace(/\n/g, '<br>');
+    
+    // Restore placeholders
+    for (const token in placeholders) {
+      html = html.replace(token, placeholders[token]);
+    }
+    
+    return html;
+  }
+
+  function renderWorkspaceMessages() {
+    const container = document.getElementById('workspace-chat-messages');
+    if (!container) return;
+    
+    if (!State.workspaceMessages || State.workspaceMessages.length === 0) {
+      container.innerHTML = `<div class="workspace-chat-message assistant">
+          <div class="workspace-msg-content">Chào bạn! Mình là Suna AI Workspace Assistant. Mình ở đây để giải thích code, sửa lỗi, và tối ưu hóa mã nguồn hiện tại của bạn. Bạn muốn mình giúp gì nào?</div>
+      </div>`;
+      return;
+    }
+    
+    let html = '';
+    State.workspaceMessages.forEach(msg => {
+      const isUser = msg.role === 'user';
+      const formattedContent = isUser ? escHtml(msg.content).replace(/\n/g, '<br>') : formatWorkspaceMessageContent(msg.content);
+      html += `<div class="workspace-chat-message ${msg.role}">
+        <div class="workspace-msg-content">${formattedContent}</div>
+      </div>`;
+    });
+    
+    container.innerHTML = html;
+    container.scrollTop = container.scrollHeight;
+  }
+
+  window.applyWorkspaceCode = function(button) {
+    const code = decodeURIComponent(button.getAttribute('data-code'));
+    const editor = document.getElementById('artifact-editor-textarea');
+    if (editor) {
+      editor.value = code;
+      editor.dispatchEvent(new Event('input'));
+      if (window.toast) window.toast('Đã áp dụng mã nguồn mới vào Editor!', 'success');
+    }
+  };
+
+  async function sendWorkspaceMessage() {
+    const input = document.getElementById('workspace-chat-input');
+    if (!input) return;
+    const text = input.value.trim();
+    if (!text) return;
+    
+    const model = getActiveModel();
+    if (!model) { toast('Vui lòng chọn model trước', 'error'); return; }
+    if (!State.settings.baseUrl || !State.settings.apiKey) { toast('Vui lòng cấu hình API', 'error'); return; }
+    
+    State.workspaceMessages.push({ role: 'user', content: text });
+    input.value = '';
+    renderWorkspaceMessages();
+    
+    const typingMsgId = 'typing_' + Date.now();
+    const messagesContainer = document.getElementById('workspace-chat-messages');
+    const typingHtml = `<div id="${typingMsgId}" class="workspace-chat-message assistant typing">
+      <div class="workspace-msg-content">
+        <span class="material-icons-round rotate-anim" style="font-size: 14px; vertical-align: middle; margin-right: 4px;">psychology</span>
+        Suna đang suy nghĩ...
+      </div>
+    </div>`;
+    if (messagesContainer) {
+      messagesContainer.insertAdjacentHTML('beforeend', typingHtml);
+      messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    }
+    
+    const editor = document.getElementById('artifact-editor-textarea');
+    const currentCode = editor ? editor.value : '';
+    
+    const systemPrompt = `[DANH TÍNH]: Bạn là Suna AI Workspace Assistant, trợ lý ảo chuyên trách hỗ trợ học tập và phát triển mã nguồn trực quan.
+[MỤC TIÊU]: Phân tích, hướng dẫn hoặc chỉnh sửa trực tiếp mã nguồn HTML/CSS/JS hiện tại của người dùng. Trả lời tập trung, rõ ràng và ngắn gọn.
+[MÃ NGUỒN HIỆN TẠI TRONG EDITOR]:
+\`\`\`html
+${currentCode}
+\`\`\`
+Nếu người dùng yêu cầu chỉnh sửa hoặc viết lại code, hãy trả về toàn bộ hoặc đoạn mã nguồn mới nằm trong khối code fenced \`\`\`html ... \`\`\` để họ có thể nhấn nút "Áp dụng vào Editor" một cách dễ dàng.`;
+
+    try {
+      const proxy = getProxyForModel(model);
+      const url = proxy.url + '/chat/completions';
+      
+      const history = State.workspaceMessages.slice(-6);
+      const apiMessages = [
+        { role: 'system', content: systemPrompt },
+        ...history.map(m => ({ role: m.role, content: m.content }))
+      ];
+      
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + proxy.key },
+        body: JSON.stringify({
+          model: model,
+          messages: apiMessages,
+          max_tokens: 4096,
+          stream: false
+        })
+      });
+      
+      const typingEl = document.getElementById(typingMsgId);
+      if (typingEl) typingEl.remove();
+      
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      const reply = data.choices?.[0]?.message?.content || '';
+      
+      State.workspaceMessages.push({ role: 'assistant', content: reply });
+      renderWorkspaceMessages();
+    } catch (err) {
+      console.error('Workspace chat API error:', err);
+      const typingEl = document.getElementById(typingMsgId);
+      if (typingEl) typingEl.remove();
+      toast('Lỗi kết nối API Workspace Chat', 'error');
+    }
+  }
+
+  // Event Listeners for Workspace Chat Input
+  const workspaceInput = document.getElementById('workspace-chat-input');
+  if (workspaceInput) {
+    workspaceInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendWorkspaceMessage();
+      }
+    });
+  }
+
+  const btnSendWorkspace = document.getElementById('btn-send-workspace-chat');
+  if (btnSendWorkspace) {
+    btnSendWorkspace.addEventListener('click', sendWorkspaceMessage);
   }
 
   // Handle preview/editor/split view mode transitions
@@ -1487,10 +1832,11 @@ function initArtifactsAndSearch() {
       if (viewMode !== 'split') {
         if (editorContainer) editorContainer.style.width = '';
         if (previewContainer) previewContainer.style.width = '';
+        if (chatContainer) chatContainer.style.width = '';
       } else {
-        const lastPercent = (artifactsContent && artifactsContent.dataset.splitPercent) || 50;
-        if (editorContainer) editorContainer.style.width = `${lastPercent}%`;
-        if (previewContainer) previewContainer.style.width = `${100 - lastPercent}%`;
+        if (editorContainer) editorContainer.style.width = '35%';
+        if (previewContainer) previewContainer.style.width = '35%';
+        if (chatContainer) chatContainer.style.width = '30%';
       }
     });
   });

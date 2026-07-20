@@ -776,8 +776,13 @@
 
     <!-- Artifacts / Code Preview Panel -->
     <div id="artifacts-panel" class="artifacts-panel" data-view="split">
+        <div id="workspace-left-handle" class="workspace-left-handle" title="Kéo để chỉnh kích thước màn hình làm việc"></div>
         <div class="artifacts-header">
-            <div class="artifacts-title"><span class="material-icons-round">code</span> <span id="artifact-title">Live Workspace</span></div>
+            <div class="artifacts-title">
+                <button id="btn-expand-workspace" class="btn-icon" title="Mở rộng/Thu nhỏ toàn màn hình" style="margin-right: 8px;"><span class="material-icons-round">open_in_full</span></button>
+                <span class="material-icons-round">code</span> 
+                <span id="artifact-title">Live Workspace</span>
+            </div>
             <div class="artifacts-actions">
                 <div class="artifact-view-toggle">
                     <button class="view-toggle-btn active" data-view="split" title="Chế độ chia đôi"><span class="material-icons-round">splitscreen</span><span>Split</span></button>
@@ -793,11 +798,36 @@
         </div>
         <div class="artifacts-content">
             <div id="artifact-editor-container" class="artifact-editor-container">
+                <div class="workspace-editor-toolbar">
+                    <button id="btn-new-session" class="btn-toolbar-action" title="Tạo bài mới"><span class="material-icons-round">add</span><span>Bài mới</span></button>
+                    <select id="select-session-template" class="select-toolbar-template">
+                        <option value="blank">📄 Trang trống</option>
+                        <option value="html5" selected>🌐 HTML5 Boilerplate</option>
+                        <option value="svg">🖼️ SVG Canvas</option>
+                        <option value="tailwind">⚛️ Tailwind Playground</option>
+                    </select>
+                </div>
                 <textarea id="artifact-editor-textarea" class="artifact-editor-textarea" placeholder="Nhập code HTML/CSS/JS..." spellcheck="false"></textarea>
             </div>
-            <div id="artifact-resizer" class="artifact-resizer" title="Kéo để chỉnh kích thước"></div>
+            <div id="artifact-resizer-1" class="artifact-resizer" title="Kéo để chỉnh kích thước"></div>
             <div id="artifact-preview-container" class="artifact-preview-container">
                 <iframe id="artifact-iframe" sandbox="allow-scripts" style="width:100%; height:100%; border:none; background:white;"></iframe>
+            </div>
+            <div id="artifact-resizer-2" class="artifact-resizer" title="Kéo để chỉnh kích thước"></div>
+            <div id="artifact-chat-container" class="artifact-chat-container">
+                <div class="workspace-chat-header">
+                    <span class="material-icons-round">smart_toy</span>
+                    <span>Suna Workspace AI</span>
+                </div>
+                <div id="workspace-chat-messages" class="workspace-chat-messages">
+                    <div class="workspace-chat-message assistant">
+                        <div class="workspace-msg-content">Chào bạn! Mình là Suna AI Workspace Assistant. Mình ở đây để giải thích code, sửa lỗi, và tối ưu hóa mã nguồn hiện tại của bạn. Bạn muốn mình giúp gì nào?</div>
+                    </div>
+                </div>
+                <div class="workspace-chat-input-container">
+                    <textarea id="workspace-chat-input" class="workspace-chat-input" placeholder="Hỏi Suna về code..." rows="2"></textarea>
+                    <button id="btn-send-workspace-chat" class="btn-send-workspace" title="Gửi tin nhắn"><span class="material-icons-round">send</span></button>
+                </div>
             </div>
         </div>
     </div>
