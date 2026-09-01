@@ -1,0 +1,12 @@
+# Backup files
+*.bak
+*.bak.*
+*.tmp
+
+# Node modules
+node_modules/
+npm-debug.log*
+
+# OS artifacts
+.DS_Store
+Thumbs.db

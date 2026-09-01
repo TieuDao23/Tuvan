@@ -1,0 +1,13 @@
+{
+  "name": "suna-chat",
+  "version": "2.0.0",
+  "description": "Suna Chat - Modern AI Web Application with Zen Dark & Live Workspace",
+  "main": "app.js",
+  "scripts": {
+    "test": "npx mocha \"tests/**/*.js\"",
+    "check": "node -c app.js && node -c redesign.js"
+  },
+  "keywords": ["ai", "chat", "workspace", "vanilla-js"],
+  "author": "Suna Team",
+  "license": "MIT"
+}

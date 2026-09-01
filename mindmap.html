@@ -52,6 +52,31 @@
         .color-root { --branch-color: #ffffff; --branch-glow: rgba(255, 255, 255, 0.5); --branch-bg: rgba(255, 255, 255, 0.1); }
         :root.light-mode .color-root { --branch-color: #0f172a; --branch-glow: rgba(15, 23, 42, 0.3); --branch-bg: rgba(15, 23, 42, 0.05); }
 
+        /* 4px Slim Glassmorphic Scrollbar */
+        ::-webkit-scrollbar {
+            width: 4px;
+            height: 4px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.15);
+            border-radius: 9999px;
+            backdrop-filter: blur(4px);
+            -webkit-backdrop-filter: blur(4px);
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+        :root.light-mode ::-webkit-scrollbar-thumb {
+            background: rgba(0, 0, 0, 0.15);
+            border-radius: 9999px;
+        }
+        :root.light-mode ::-webkit-scrollbar-thumb:hover {
+            background: rgba(0, 0, 0, 0.3);
+        }
+
         * {
             box-sizing: border-box;
             margin: 0;
@@ -235,8 +260,8 @@
             font-weight: 500;
             line-height: 1.3;
             outline: none;
-            padding: 2px 4px;
-            border-radius: 4px;
+            padding: 2px 8px;
+            border-radius: 12px;
             width: 100%;
         }
 
@@ -431,8 +456,8 @@
             background: rgba(255, 255, 255, 0.1);
             color: var(--text-secondary);
             -webkit-text-fill-color: var(--text-secondary);
-            padding: 2px 6px;
-            border-radius: 4px;
+            padding: 2px 8px;
+            border-radius: 9999px;
         }
 
         .close-sidebar-btn {
@@ -471,8 +496,8 @@
             width: 100%;
             background: rgba(255, 255, 255, 0.05);
             border: 1px solid var(--panel-border);
-            padding: 8px 12px;
-            border-radius: 8px;
+            padding: 8px 14px;
+            border-radius: 9999px;
             color: var(--text-primary);
             outline: none;
             font-size: 0.85rem;
@@ -497,7 +522,7 @@
             flex-grow: 1;
             background: rgba(10, 10, 15, 0.45);
             border: 1px solid var(--panel-border);
-            border-radius: 8px;
+            border-radius: 14px;
             padding: 12px;
             color: #ffffff;
             font-family: 'Fira Code', monospace;
@@ -586,7 +611,7 @@
         .help-block {
             background: rgba(255, 255, 255, 0.03);
             border: 1px solid var(--panel-border);
-            border-radius: 8px;
+            border-radius: 14px;
             padding: 10px 14px;
             font-size: 0.75rem;
             color: var(--text-secondary);
@@ -632,7 +657,7 @@
             left: 16px;
             right: 16px;
             height: 56px;
-            border-radius: 12px;
+            border-radius: 9999px;
             padding: 0 16px;
             display: flex;
             justify-content: space-between;
@@ -648,7 +673,7 @@
         .sidebar-toggle-btn {
             width: 40px;
             height: 40px;
-            border-radius: 8px;
+            border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -672,7 +697,7 @@
             align-items: center;
             background: var(--panel-bg);
             border: 1px solid var(--panel-border);
-            border-radius: 8px;
+            border-radius: 9999px;
             padding: 4px 12px;
             gap: 8px;
             width: 260px;
@@ -754,8 +779,8 @@
             background: #111827;
             color: #ffffff;
             font-size: 0.7rem;
-            padding: 4px 8px;
-            border-radius: 4px;
+            padding: 4px 10px;
+            border-radius: 9999px;
             opacity: 0;
             pointer-events: none;
             transition: opacity 0.15s, transform 0.15s;
@@ -776,8 +801,9 @@
             right: 0;
             background: var(--panel-bg);
             backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
             border: 1px solid var(--panel-border);
-            border-radius: 8px;
+            border-radius: 14px;
             padding: 6px 0;
             display: none;
             flex-direction: column;
@@ -1866,6 +1892,8 @@
                     textSpan.innerText = node.text; // Cancel edit
                     textSpan.setAttribute('contenteditable', 'false');
                     card.classList.remove('editing');
+                    textSpan.removeEventListener('blur', finishEditing);
+                    textSpan.removeEventListener('keydown', handleKey);
                 }
             }
 
@@ -2310,7 +2338,7 @@
                         display: flex;
                         align-items: center;
                         justify-content: center;
-                        border-radius: 8px;
+                        border-radius: 12px;
                         border: 1px solid ${branchColor};
                         background: rgba(18, 25, 41, 0.9);
                         color: #ffffff;

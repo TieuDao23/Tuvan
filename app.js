@@ -667,6 +667,33 @@ async function handleForgotPassword() {
   }
 }
 
+function resetInMemoryState() {
+  if (typeof State === 'undefined') return;
+  if (State.abortController) {
+    try { State.abortController.abort(); } catch(e) {}
+    State.abortController = null;
+  }
+  State.isGenerating = false;
+  State.generatingChatId = null;
+  if (typeof _workspaceAbortController !== 'undefined' && _workspaceAbortController) {
+    try { _workspaceAbortController.abort(); } catch(e) {}
+    _workspaceAbortController = null;
+  }
+  State.settings = {
+    baseUrl: '', apiKey: '', baseUrl2: '', apiKey2: '', corsProxy: '',
+    currentModel: '', flashModel: '', proModel: '',
+    systemPrompt: '', userPurpose: '', tone: 'friendly', theme: 'aurora',
+    customPersonality: '', fontFamily: "'Inter', sans-serif", fontSize: 15,
+    userName: 'Bạn', userAvatar: ''
+  };
+  State.memory = { facts: [], lastUpdated: 0 };
+  State.chats = [{ id: 'chat-' + Date.now(), title: 'Chat mới', messages: [], createdAt: Date.now(), updatedAt: Date.now() }];
+  State.deletedChats = {};
+  State.activeChatId = State.chats[0].id;
+  if (typeof window.saveLocalStateOnly === 'function') window.saveLocalStateOnly();
+  if (typeof window.saveMemory === 'function') window.saveMemory();
+}
+
 window.handleLogout = async function handleLogout() {
   clearCachedAuth();
   if (AuthState.useLocalOnly) {
@@ -674,24 +701,7 @@ window.handleLogout = async function handleLogout() {
     AuthState.isLoggedIn = false;
     AuthState.useLocalOnly = false;
     localStorage.removeItem('suna_guest_mode');
-    if (typeof State !== 'undefined') {
-      State.settings = {
-        baseUrl: '', apiKey: '', baseUrl2: '', apiKey2: '',
-        currentModel: '', flashModel: '', proModel: '',
-        systemPrompt: '', userPurpose: '', tone: 'friendly', theme: 'aurora',
-        customPersonality: '', fontFamily: "'Inter', sans-serif", fontSize: 15,
-        userName: 'Bạn', userAvatar: ''
-      };
-      State.memory = {
-        facts: [],
-        lastUpdated: 0
-      };
-      State.chats = [{ id: 'chat-' + Date.now(), title: 'Chat mới', messages: [], createdAt: Date.now(), updatedAt: Date.now() }];
-      State.deletedChats = {};
-      State.activeChatId = State.chats[0].id;
-      if (typeof window.saveLocalStateOnly === 'function') window.saveLocalStateOnly();
-      if (typeof window.saveMemory === 'function') window.saveMemory();
-    }
+    resetInMemoryState();
     showAuthScreen();
     if (window.toast) window.toast('Đã đăng xuất', 'info');
     return;
@@ -708,25 +718,8 @@ window.handleLogout = async function handleLogout() {
     AuthState.user = null;
     localStorage.removeItem('suna_guest_mode');
 
-    if (typeof State !== 'undefined') {
-      State.settings = {
-        baseUrl: '', apiKey: '', baseUrl2: '', apiKey2: '',
-        currentModel: '', flashModel: '', proModel: '',
-        systemPrompt: '', userPurpose: '', tone: 'friendly', theme: 'aurora',
-        customPersonality: '', fontFamily: "'Inter', sans-serif", fontSize: 15,
-        userName: 'Bạn', userAvatar: ''
-      };
-      State.memory = {
-        facts: [],
-        lastUpdated: 0
-      };
-      State.chats = [{ id: 'chat-' + Date.now(), title: 'Chat mới', messages: [], createdAt: Date.now(), updatedAt: Date.now() }];
-      State.deletedChats = {};
-      State.activeChatId = State.chats[0].id;
-      if (typeof window.saveLocalStateOnly === 'function') window.saveLocalStateOnly();
-      if (typeof window.saveMemory === 'function') window.saveMemory();
-      if (typeof window.onUserSignedIn === 'function') window.onUserSignedIn();
-    }
+    resetInMemoryState();
+    if (typeof window.onUserSignedIn === 'function') window.onUserSignedIn();
 
     updateUserDisplay();
     updateSyncIndicator('offline');
@@ -735,7 +728,7 @@ window.handleLogout = async function handleLogout() {
   } catch (e) {
     if (window.toast) window.toast('Lỗi: ' + e.message, 'error');
   }
-}
+};
 
 // ===== Guest Login =====
 function handleGuestLogin() {
@@ -783,17 +776,17 @@ function updateUserDisplay() {
         <div class="sidebar-user-text">
           <div class="sidebar-user-name" style="display:flex; align-items:center; gap:6px;">
             ${escName} 
-            ${isAdmin ? '<span style="background: linear-gradient(135deg, #e8a87c, #c0392b); color: white; font-size: 0.6rem; padding: 2px 6px; border-radius: 6px; font-weight: bold; letter-spacing: 0.5px;">ADMIN</span>' : ''}
+            ${isAdmin ? '<span style="background: linear-gradient(135deg, #e8a87c, #c0392b); color: white; font-size: 0.6rem; padding: 2px 8px; border-radius: 9999px; font-weight: bold; letter-spacing: 0.5px;">ADMIN</span>' : ''}
           </div>
           <div class="sidebar-user-email">${escEmail}</div>
         </div>
-        <button id="btn-logout" class="btn-logout" title="Đăng xuất" onclick="handleLogout()">
+        <button id="btn-logout" class="btn-logout" title="Đăng xuất" aria-label="Đăng xuất" onclick="handleLogout()">
           <span class="material-icons-round">logout</span>
         </button>
       </div>`;
   } else {
     el.innerHTML = `
-      <button class="btn-sign-in-sidebar" onclick="showAuthScreen()">
+      <button class="btn-sign-in-sidebar" title="Đăng nhập / Đăng ký" aria-label="Đăng nhập / Đăng ký" onclick="showAuthScreen()">
         <span class="material-icons-round">login</span>
         <span>Đăng nhập / Đăng ký</span>
       </button>`;
@@ -813,6 +806,7 @@ function doAppInit() {
 }
 
 // ===== Main Auth Init (Optimized: Zero-Friction / Offline First) =====
+let _authOnlineListenerAttached = false;
 async function initAuth() {
   const cachedUser = getCachedAuthUser();
   const isGuestMode = localStorage.getItem('suna_guest_mode') === 'true';
@@ -836,7 +830,10 @@ async function initAuth() {
   doAppInit();
   updateUserDisplay();
 
-  window.addEventListener('online', () => { if (!_fb) initAuth(); });
+  if (!_authOnlineListenerAttached) {
+    _authOnlineListenerAttached = true;
+    window.addEventListener('online', () => { if (!_fb) initAuth(); });
+  }
   const sdkLoaded = await loadFirebaseSDK();
 
   if (!sdkLoaded) {
@@ -851,6 +848,7 @@ async function initAuth() {
 
     _fb.onAuthStateChanged(_fb.auth, async (user) => {
       if (user) {
+        const oldUid = AuthState.user ? AuthState.user.uid : null;
         AuthState.user = user;
         AuthState.isLoggedIn = true;
         AuthState.isAdmin = (user.email === 'duyanhblt1@gmail.com' || user.email === 'admin@suna.local');
@@ -862,7 +860,11 @@ async function initAuth() {
         if (loading) loading.style.display = 'flex';
 
         try { 
-          const success = await cloudLoad(); 
+          if (oldUid !== user.uid) {
+            await loadState();
+            await loadMemory();
+          }
+          const success = await cloudLoad();
           if (success) {
             updateSyncIndicator('synced');
           } else {
@@ -930,8 +932,10 @@ function initAuthEvents() {
       const input = document.getElementById(btn.dataset.target);
       if (!input) return;
       input.type = input.type === 'password' ? 'text' : 'password';
-      btn.querySelector('.material-icons-round').textContent =
-        input.type === 'password' ? 'visibility' : 'visibility_off';
+      const icon = btn.querySelector('.material-icons-round');
+      if (icon) {
+        icon.textContent = input.type === 'password' ? 'visibility' : 'visibility_off';
+      }
     });
   });
 }
@@ -1256,7 +1260,7 @@ function initMemoryCabinet() {
       el.innerHTML = `
         <div class="mem-content">${safeFactText}</div>
         ${catHtml}
-        <button class="btn-delete-mem" data-idx="${idx}"><span class="material-icons-round">delete</span></button>
+        <button class="btn-delete-mem" data-idx="${idx}" title="Xóa ký ức" aria-label="Xóa ký ức"><span class="material-icons-round">delete</span></button>
       `;
       list.appendChild(el);
     });
@@ -1364,23 +1368,48 @@ function initArtifactsAndSearch() {
 
   const artifactsPanel = document.getElementById('artifacts-panel');
   const btnCloseArt = document.getElementById('btn-close-artifact');
+  const btnToggleWs = document.getElementById('btn-toggle-workspace');
+  const btnToggleWsMobile = document.getElementById('btn-toggle-workspace-mobile');
   const btnRefreshArt = document.getElementById('btn-refresh-artifact');
-  const iframe = document.getElementById('artifact-iframe');
-  
-  const editorTextarea = document.getElementById('artifact-editor-textarea');
   const btnCopyArt = document.getElementById('btn-copy-artifact');
   const btnDownloadArt = document.getElementById('btn-download-artifact');
   const btnCollabSuna = document.getElementById('btn-collab-suna');
   const viewToggleBtns = document.querySelectorAll('.view-toggle-btn');
+  const editorContainer = document.getElementById('artifact-editor-container');
+  const previewContainer = document.getElementById('artifact-preview-container');
+  const chatContainer = document.getElementById('artifact-chat-container');
+  const iframe = document.getElementById('artifact-iframe');
+  const editorTextarea = document.getElementById('artifact-editor-textarea');
+  
+  const handleToggleWorkspace = () => {
+    const panel = artifactsPanel || document.getElementById('artifacts-panel');
+    if (!panel) return;
+    panel.classList.toggle('active');
+    if (panel.classList.contains('active')) {
+      const ed = editorTextarea || document.getElementById('artifact-editor-textarea');
+      const ifr = iframe || document.getElementById('artifact-iframe');
+      if (ed && (!ed.value || !ed.value.trim())) {
+        const defaultCode = window.WORKSPACE_TEMPLATES?.['html5'] || '<!DOCTYPE html>\n<html>\n<head>\n  <meta charset="UTF-8">\n  <title>Suna Live Workspace</title>\n  <style>\n    body { font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; background: #111; color: #eee; }\n    h1 { color: #e8a87c; }\n  </style>\n</head>\n<body>\n  <h1>Suna Live Workspace</h1>\n</body>\n</html>';
+        ed.value = defaultCode;
+        if (ifr) ifr.srcdoc = defaultCode;
+      }
+    }
+  };
+  if (btnToggleWs) btnToggleWs.addEventListener('click', handleToggleWorkspace);
+  if (btnToggleWsMobile) btnToggleWsMobile.addEventListener('click', handleToggleWorkspace);
   
   if (btnCloseArt) {
     btnCloseArt.addEventListener('click', () => {
-      if (artifactsPanel) artifactsPanel.classList.remove('active');
+      const panel = artifactsPanel || document.getElementById('artifacts-panel');
+      if (panel) panel.classList.remove('active');
     });
   }
   
   window.openArtifact = function(contentOrB64) {
-    if (!artifactsPanel || !iframe) return;
+    const panel = artifactsPanel || document.getElementById('artifacts-panel');
+    const ifr = iframe || document.getElementById('artifact-iframe');
+    const ed = editorTextarea || document.getElementById('artifact-editor-textarea');
+    if (!panel || !ifr) return;
     let htmlContent = '';
     try {
       if (!contentOrB64) {
@@ -1401,11 +1430,26 @@ function initArtifactsAndSearch() {
       htmlContent = contentOrB64 || '';
     }
     
-    if (editorTextarea) {
-      editorTextarea.value = htmlContent;
+    if (ed) {
+      ed.value = htmlContent;
+      ed.dispatchEvent(new Event('input', { bubbles: true }));
     }
-    iframe.srcdoc = htmlContent;
-    artifactsPanel.classList.add('active');
+    ifr.srcdoc = htmlContent;
+    
+    // On mobile devices, automatically switch to full-screen Preview tab
+    if (window.innerWidth <= 768) {
+      panel.setAttribute('data-view', 'preview');
+      const viewBtns = document.querySelectorAll('.view-toggle-btn');
+      viewBtns.forEach(b => {
+        if (b.dataset.view === 'preview') b.classList.add('active');
+        else b.classList.remove('active');
+      });
+    }
+    
+    panel.classList.add('active');
+    if (window.toast) {
+      window.toast('Đã nạp mã nguồn vào Live Workspace & Preview 🚀', 'success');
+    }
   };
 
   // Sync editor modifications with live preview iframe
@@ -1432,6 +1476,19 @@ function initArtifactsAndSearch() {
     });
   }
 
+  // Helper to lock and unlock pointer events on all iframes during resize operations
+  function lockAllIframes() {
+    document.querySelectorAll('iframe').forEach(el => {
+      el.style.pointerEvents = 'none';
+    });
+  }
+
+  function unlockAllIframes() {
+    document.querySelectorAll('iframe').forEach(el => {
+      el.style.pointerEvents = 'auto';
+    });
+  }
+
   // 1. Left Resize Handle for Workspace Panel Width
   const leftHandle = document.getElementById('workspace-left-handle');
   if (leftHandle && artifactsPanel) {
@@ -1440,6 +1497,7 @@ function initArtifactsAndSearch() {
     leftHandle.addEventListener('mousedown', (e) => {
       isResizingWorkspace = true;
       document.body.style.cursor = 'ew-resize';
+      lockAllIframes();
       e.preventDefault();
     });
 
@@ -1458,6 +1516,15 @@ function initArtifactsAndSearch() {
       if (isResizingWorkspace) {
         isResizingWorkspace = false;
         document.body.style.cursor = 'default';
+        unlockAllIframes();
+      }
+    });
+
+    window.addEventListener('blur', () => {
+      if (isResizingWorkspace) {
+        isResizingWorkspace = false;
+        document.body.style.cursor = 'default';
+        unlockAllIframes();
       }
     });
   }
@@ -1468,12 +1535,13 @@ function initArtifactsAndSearch() {
     let isExpanded = false;
     btnExpandWorkspace.addEventListener('click', () => {
       isExpanded = !isExpanded;
+      const iconEl = btnExpandWorkspace.querySelector('.material-icons-round');
       if (isExpanded) {
         artifactsPanel.style.width = '100%';
-        btnExpandWorkspace.querySelector('.material-icons-round').textContent = 'close_fullscreen';
+        if (iconEl) iconEl.textContent = 'close_fullscreen';
       } else {
         artifactsPanel.style.width = '60%';
-        btnExpandWorkspace.querySelector('.material-icons-round').textContent = 'open_in_full';
+        if (iconEl) iconEl.textContent = 'open_in_full';
       }
     });
   }
@@ -1553,6 +1621,7 @@ function initArtifactsAndSearch() {
       const code = sessionTemplates[templateKey] || '';
       editorTextarea.value = code;
       editorTextarea.dispatchEvent(new Event('input'));
+      if (iframe) iframe.srcdoc = code;
       
       // Clear assistant chat
       State.workspaceMessages = [];
@@ -1565,9 +1634,6 @@ function initArtifactsAndSearch() {
   // 4. Dual Resizers for Editor | Preview | Chat columns
   const resizer1 = document.getElementById('artifact-resizer-1');
   const resizer2 = document.getElementById('artifact-resizer-2');
-  const editorContainer = document.getElementById('artifact-editor-container');
-  const previewContainer = document.getElementById('artifact-preview-container');
-  const chatContainer = document.getElementById('artifact-chat-container');
   const artifactsContent = document.querySelector('.artifacts-content');
 
   if (resizer1 && resizer2 && editorContainer && previewContainer && chatContainer && artifactsContent) {
@@ -1578,7 +1644,8 @@ function initArtifactsAndSearch() {
       isResizing1 = true;
       resizer1.classList.add('active');
       document.body.style.cursor = 'col-resize';
-      previewContainer.style.pointerEvents = 'none';
+      lockAllIframes();
+      if (previewContainer) previewContainer.style.pointerEvents = 'none';
       e.preventDefault();
     });
 
@@ -1586,7 +1653,8 @@ function initArtifactsAndSearch() {
       isResizing2 = true;
       resizer2.classList.add('active');
       document.body.style.cursor = 'col-resize';
-      previewContainer.style.pointerEvents = 'none';
+      lockAllIframes();
+      if (previewContainer) previewContainer.style.pointerEvents = 'none';
       e.preventDefault();
     });
 
@@ -1625,24 +1693,36 @@ function initArtifactsAndSearch() {
       }
     });
 
-    document.addEventListener('mouseup', () => {
+    const stopColumnResize = () => {
       if (isResizing1 || isResizing2) {
         isResizing1 = false;
         isResizing2 = false;
         resizer1.classList.remove('active');
         resizer2.classList.remove('active');
         document.body.style.cursor = 'default';
-        previewContainer.style.pointerEvents = 'auto';
+        unlockAllIframes();
+        if (previewContainer) previewContainer.style.pointerEvents = 'auto';
       }
-    });
+    };
+
+    document.addEventListener('mouseup', stopColumnResize);
+    window.addEventListener('blur', stopColumnResize);
   }
 
   // 5. Suna Workspace AI Assistant Chat logic
   State.workspaceMessages = [];
+  let _workspaceAbortController = null;
 
   function escHtml(text) {
-    if (!text) return '';
-    return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    if (text === null || text === undefined) return '';
+    // Escape đầy đủ (bao gồm cả nháy đơn/nháy đôi) để an toàn khi nội suy
+    // vào giá trị attribute, không chỉ vào text node.
+    return String(text)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 
   function formatWorkspaceMessageContent(text) {
@@ -1660,14 +1740,37 @@ function initArtifactsAndSearch() {
         .replace(/&quot;/g, '"')
         .replace(/&#39;/g, "'");
         
+      const cleanCode = decodedCode.replace(/\r?\n$/, '');
+      const lineCount = cleanCode.length === 0 ? 0 : cleanCode.split(/\r\n|\r|\n/).length;
+      const isCollapsible = lineCount > 12;
       const placeholderToken = `%%WS_CODE_${count++}%%`;
-      const applyBtn = `<button class="btn-workspace-apply" onclick="applyWorkspaceCode(this)" data-code="${encodeURIComponent(decodedCode)}"><span class="material-icons-round">play_arrow</span> Áp dụng vào Editor</button>`;
-      const cleanLang = lang.trim() || 'code';
       
-      placeholders[placeholderToken] = `<div class="code-block-wrapper">
-        <div class="code-lang">${cleanLang}</div>
-        <button class="btn-copy-code" onclick="copyCodeBlock(this)" title="Sao chép code"><span class="material-icons-round">content_copy</span></button>
+      const cleanLang = (lang || 'code').trim().toLowerCase();
+      const lineBadge = `<span class="code-line-badge">${lineCount} dòng</span>`;
+      const collapseToggleBtn = isCollapsible
+        ? `<button class="btn-code-collapse-toggle btn-toggle-code" onclick="toggleCodeBlock(this)" title="Mở rộng / Thu gọn mã nguồn" aria-label="Mở rộng / Thu gọn mã nguồn"><span class="material-icons-round">unfold_more</span> <span class="toggle-text">Mở rộng mã nguồn</span></button>`
+        : '';
+      const fadeOverlay = isCollapsible
+        ? `<div class="code-fade-overlay code-collapse-overlay" onclick="toggleCodeBlock(this)"></div>`
+        : '';
+      const collapsibleClass = isCollapsible ? ' is-collapsible collapsed' : '';
+
+      const applyBtn = `<button class="btn-workspace-apply" onclick="applyWorkspaceCode(this)" data-code="${encodeURIComponent(decodedCode)}" title="Áp dụng vào Editor" aria-label="Áp dụng vào Editor"><span class="material-icons-round">play_arrow</span> Áp dụng vào Editor</button>`;
+      
+      placeholders[placeholderToken] = `<div class="code-block-wrapper${collapsibleClass}">
+        <div class="code-block-header">
+          <div class="code-block-header-left">
+            <span class="code-lang">${cleanLang}</span>
+            ${lineBadge}
+          </div>
+          <div class="code-block-header-right">
+            <button class="btn-header-apply" onclick="applyWorkspaceCode(this)" data-code="${encodeURIComponent(decodedCode)}" title="Áp dụng vào Editor" aria-label="Áp dụng vào Editor"><span class="material-icons-round">play_arrow</span> Áp dụng</button>
+            <button class="btn-copy-code" onclick="copyCodeBlock(this)" data-code="${encodeURIComponent(decodedCode)}" title="Sao chép code" aria-label="Sao chép code"><span class="material-icons-round">content_copy</span></button>
+          </div>
+        </div>
         <pre><code>${escHtml(decodedCode)}</code></pre>
+        ${fadeOverlay}
+        ${collapseToggleBtn}
         ${applyBtn}
       </div>`;
       
@@ -1686,7 +1789,7 @@ function initArtifactsAndSearch() {
     
     // Restore placeholders
     for (const token in placeholders) {
-      html = html.replace(token, placeholders[token]);
+      html = html.replace(token, () => placeholders[token]);
     }
     
     return html;
@@ -1716,13 +1819,189 @@ function initArtifactsAndSearch() {
     container.scrollTop = container.scrollHeight;
   }
 
+  function extractWorkspaceCode(responseText) {
+    if (!responseText) return null;
+    const codeBlockRegex = /```([a-zA-Z0-9_-]*)\s*\n([\s\S]*?)```/g;
+    const matches = [];
+    let m;
+    while ((m = codeBlockRegex.exec(responseText)) !== null) {
+      if (m[2] && m[2].trim().length > 0) {
+        matches.push({ lang: (m[1] || '').toLowerCase(), content: m[2].trim() });
+      }
+    }
+
+    if (matches.length === 0) return null;
+
+    const htmlBlock = matches.find(b => 
+      ['html', 'svg', 'xml'].includes(b.lang) || 
+      b.content.includes('<html') || 
+      b.content.includes('<!DOCTYPE') || 
+      b.content.includes('<canvas') || 
+      b.content.includes('<div') || 
+      b.content.includes('<svg')
+    );
+    if (htmlBlock) return htmlBlock.content;
+
+    const jsCssBlock = matches.find(b => ['javascript', 'js', 'css'].includes(b.lang));
+    if (jsCssBlock) return jsCssBlock.content;
+
+    return matches[0].content;
+  }
+
+  function autoApplyWorkspaceCode(newCode) {
+    if (!newCode) return false;
+    const editor = document.getElementById('artifact-editor-textarea');
+    const iframeEl = document.getElementById('artifact-iframe');
+
+    let updated = false;
+    if (editor) {
+      editor.value = newCode;
+      editor.dispatchEvent(new Event('input', { bubbles: true }));
+      updated = true;
+    }
+    if (iframeEl) {
+      iframeEl.srcdoc = newCode;
+      updated = true;
+    }
+    if (updated) {
+      if (typeof window.toast === 'function') {
+        window.toast('Đã tự động cập nhật mã nguồn vào Live Workspace!', 'success');
+      } else if (typeof toast === 'function') {
+        toast('Đã tự động cập nhật mã nguồn vào Live Workspace!', 'success');
+      }
+    }
+    return updated;
+  }
+
+  /**
+   * Centralized Multi-Tier Stream Truncation Detector (Milestone 2 - R2)
+   * 
+   * Detects response truncation across 3 tiers:
+   * 1. Provider finish reason indicators ('length', 'max_tokens', 'MAX_TOKENS', 'LENGTH', 'truncated')
+   * 2. Markdown code block fence parity (odd count of ``` backticks)
+   * 3. Unclosed structural HTML / SVG / Canvas tags (html, script, style, svg, canvas, div, body, table, head)
+   */
+  function isResponseTruncated(finishReason, content) {
+    if (!content || typeof content !== 'string' || content.trim().length === 0) {
+      return false;
+    }
+
+    // Tier 1: Explicit provider finish reason indicators
+    const truncatedReasons = ['length', 'max_tokens', 'MAX_TOKENS', 'LENGTH', 'truncated'];
+    if (finishReason && (truncatedReasons.includes(finishReason) || truncatedReasons.includes(String(finishReason).toLowerCase()))) {
+      return true;
+    }
+
+    // Tier 2: Code Block Fence Parity (Triple Backticks)
+    const fenceMatches = content.match(/```/g);
+    const fenceCount = fenceMatches ? fenceMatches.length : 0;
+    if (fenceCount % 2 === 1) {
+      return true;
+    }
+
+    // Tier 3: Unclosed Structural HTML / SVG / Canvas Tags
+    const structuralTags = ['html', 'script', 'style', 'svg', 'canvas', 'div', 'body', 'table', 'head'];
+    for (const tag of structuralTags) {
+      // FIX: khong dem the TU DONG (self-closing) nhu <svg ... /> la "the mo".
+      // Truoc day <svg viewBox="0 0 1 1"/> luon bi coi la thieu </svg>
+      // => bao truncated sai => chay het MAX_CONTINUATION_TURNS moi lan,
+      //    dot token va lam tre phan hoi.
+      const openRe = new RegExp('<' + tag + '(?:\\s[^>]*?)?(\\/?)>', 'gi');
+      let openMatches = 0;
+      let m;
+      while ((m = openRe.exec(content)) !== null) {
+        if (m[1] !== '/') openMatches++;   // bo qua <tag ... />
+      }
+      const closeMatches = (content.match(new RegExp('</' + tag + '>', 'gi')) || []).length;
+      if (openMatches > closeMatches) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Smart Boundary Stitching & Deduplication (Milestone 3 - R3)
+   * 
+   * Strips redundant opening fences and conversational preambles,
+   * eliminates overlapping lines and suffix-prefix character duplicates (3-300 chars).
+   */
+  function stitchContinuationChunks(accumulated, nextChunk) {
+    if (!accumulated) return nextChunk || '';
+    if (!nextChunk) return accumulated || '';
+
+    let cleanedNext = nextChunk;
+
+    // 1. Strip leading conversational preambles
+    cleanedNext = cleanedNext.replace(/^(?:Dưới đây là phần tiếp theo|Dưới đây là|Đây là|Tiếp tục|Phần tiếp theo|Here is the continuation|Here is|Continuing)[\s\S]*?:\s*\r?\n?/i, '');
+
+    // 2. Strip redundant opening code fences if continuing an unclosed block
+    cleanedNext = cleanedNext.replace(/^`{3,4}\s*[a-zA-Z0-9_-]*\s*\r?\n/, '');
+
+    // 3. Line-level overlap deduplication (up to 10 lines)
+    const linesA = accumulated.replace(/\r?\n$/, '').split(/\r?\n/);
+    const linesB = cleanedNext.split(/\r?\n/);
+
+    let overlapLines = 0;
+    const maxLineCheck = Math.min(linesA.length, linesB.length, 10);
+    for (let len = maxLineCheck; len > 0; len--) {
+      const tailA = linesA.slice(-len).map(l => l.trim()).join('\n');
+      const headB = linesB.slice(0, len).map(l => l.trim()).join('\n');
+      if (tailA.length > 0 && tailA === headB) {
+        overlapLines = len;
+        break;
+      }
+    }
+
+    if (overlapLines > 0) {
+      return linesA.join('\n') + '\n' + linesB.slice(overlapLines).join('\n');
+    }
+
+    // 4. Character-level suffix-prefix overlap deduplication (3 to 300 characters)
+    const cleanA = accumulated.replace(/\r?\n$/, '');
+    const cleanB = cleanedNext;
+    const maxCharCheck = Math.min(cleanA.length, cleanB.length, 300);
+    let overlapChars = 0;
+
+    for (let len = maxCharCheck; len >= 3; len--) {
+      const tail = cleanA.slice(-len);
+      const head = cleanB.slice(0, len);
+      if (tail === head) {
+        overlapChars = len;
+        break;
+      }
+    }
+
+    if (overlapChars > 0) {
+      return cleanA + cleanB.slice(overlapChars);
+    }
+
+    // 5. Default concatenation
+    if (accumulated.endsWith('\n') || cleanedNext.startsWith('\n')) {
+      return accumulated + cleanedNext;
+    }
+    return accumulated + '\n' + cleanedNext;
+  }
+
+  window.extractWorkspaceCode = extractWorkspaceCode;
+  window.autoApplyWorkspaceCode = autoApplyWorkspaceCode;
+  window.isResponseTruncated = isResponseTruncated;
+  window.stitchContinuationChunks = stitchContinuationChunks;
+
   window.applyWorkspaceCode = function(button) {
     const code = decodeURIComponent(button.getAttribute('data-code'));
     const editor = document.getElementById('artifact-editor-textarea');
+    const iframeEl = document.getElementById('artifact-iframe');
     if (editor) {
       editor.value = code;
-      editor.dispatchEvent(new Event('input'));
-      if (window.toast) window.toast('Đã áp dụng mã nguồn mới vào Editor!', 'success');
+      editor.dispatchEvent(new Event('input', { bubbles: true }));
+      if (iframeEl) iframeEl.srcdoc = code;
+      if (typeof window.toast === 'function') {
+        window.toast('Đã áp dụng mã nguồn mới vào Editor!', 'success');
+      } else if (typeof toast === 'function') {
+        toast('Đã áp dụng mã nguồn mới vào Editor!', 'success');
+      }
     }
   };
 
@@ -1736,6 +2015,12 @@ function initArtifactsAndSearch() {
     if (!model) { toast('Vui lòng chọn model trước', 'error'); return; }
     if (!State.settings.baseUrl || !State.settings.apiKey) { toast('Vui lòng cấu hình API', 'error'); return; }
     
+    if (_workspaceAbortController) {
+      _workspaceAbortController.abort();
+      _workspaceAbortController = null;
+    }
+    _workspaceAbortController = new AbortController();
+
     State.workspaceMessages.push({ role: 'user', content: text });
     input.value = '';
     renderWorkspaceMessages();
@@ -1757,48 +2042,308 @@ function initArtifactsAndSearch() {
     const currentCode = editor ? editor.value : '';
     
     const systemPrompt = `[DANH TÍNH]: Bạn là Suna AI Workspace Assistant, trợ lý ảo chuyên trách hỗ trợ học tập và phát triển mã nguồn trực quan.
-[MỤC TIÊU]: Phân tích, hướng dẫn hoặc chỉnh sửa trực tiếp mã nguồn HTML/CSS/JS hiện tại của người dùng. Trả lời tập trung, rõ ràng và ngắn gọn.
+[MỤC TIÊU]: Phân tích, hướng dẫn hoặc chỉnh sửa trực tiếp mã nguồn HTML/CSS/JS hiện tại của người dùng.
+[QUY TẮC BẮT BUỘC VỀ MÃ NGUỒN - 100% TOÀN VẸN & KHÔNG PLACEHOLDER]:
+1. Khi người dùng yêu cầu tạo mới, chỉnh sửa, bổ sung hoặc sửa lỗi code, bạn BẮT BUỘC phải trả về TOÀN BỘ file ứng dụng HTML/CSS/JS hoàn chỉnh 100% (bao gồm <!DOCTYPE html>, <html>, <head>, <style>, <body>, <script>) có thể chạy trực tiếp (Live Preview) nằm trong MỘT khối code fenced duy nhất \`\`\`html ... \`\`\` để hệ thống tự động đồng bộ vào Live Workspace.
+2. TUYỆT ĐỐI NGHIÊM CẤM sử dụng bất kỳ chú thích rút gọn, placeholder hoặc cắt bớt code nào (như "// ... rest of code here ...", "// code cũ giữ nguyên", "/* TODO */", "/* unchanged */", "<!-- ... existing code ... -->"). Mọi dòng mã nguồn cũ và mới đều phải được viết ra đầy đủ 100% không rút gọn.
 [MÃ NGUỒN HIỆN TẠI TRONG EDITOR]:
 \`\`\`html
 ${currentCode}
-\`\`\`
-Nếu người dùng yêu cầu chỉnh sửa hoặc viết lại code, hãy trả về toàn bộ hoặc đoạn mã nguồn mới nằm trong khối code fenced \`\`\`html ... \`\`\` để họ có thể nhấn nút "Áp dụng vào Editor" một cách dễ dàng.`;
+\`\`\``;
+
+    const timeoutId = setTimeout(() => {
+      if (_workspaceAbortController) {
+        _workspaceAbortController.abort();
+      }
+    }, 45000);
+
+    let currentReply = '';
+    let assistantMsgEl = null;
+    let msgContentEl = null;
+
+    const onChunk = (delta, fullText) => {
+      currentReply = fullText;
+      const typingEl = document.getElementById(typingMsgId);
+      if (typingEl) typingEl.remove();
+
+      if (!assistantMsgEl && messagesContainer) {
+        const msgId = 'ws_msg_' + Date.now();
+        const msgHtml = `<div id="${msgId}" class="workspace-chat-message assistant">
+          <div class="workspace-msg-content"></div>
+        </div>`;
+        messagesContainer.insertAdjacentHTML('beforeend', msgHtml);
+        assistantMsgEl = document.getElementById(msgId);
+        if (assistantMsgEl) {
+          msgContentEl = assistantMsgEl.querySelector('.workspace-msg-content');
+        }
+      }
+
+      if (msgContentEl) {
+        msgContentEl.innerHTML = formatWorkspaceMessageContent(currentReply);
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+      }
+    };
 
     try {
-      const proxy = getProxyForModel(model);
-      const url = proxy.url + '/chat/completions';
-      
       const history = State.workspaceMessages.slice(-6);
       const apiMessages = [
         { role: 'system', content: systemPrompt },
         ...history.map(m => ({ role: m.role, content: m.content }))
       ];
       
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + proxy.key },
-        body: JSON.stringify({
-          model: model,
-          messages: apiMessages,
-          max_tokens: 4096,
-          stream: false
-        })
-      });
+      let reply = await callWorkspaceChatApi(model, apiMessages, _workspaceAbortController.signal, onChunk);
+      if (!reply && currentReply) reply = currentReply;
+      
+      // Multi-turn auto-continuation if code is unclosed or response cuts off (Milestone 2 & 3)
+      let continuationTurns = 0;
+      let prevReplyLength = 0;
+      while (continuationTurns < 10 && _workspaceAbortController && !_workspaceAbortController.signal.aborted) {
+        const backtickCount = (reply.match(/```/g) || []).length;
+        const isTrunc = (backtickCount % 2 === 1) || isResponseTruncated(null, reply);
+        if (!isTrunc) break;
+        if (continuationTurns > 0 && reply.length === prevReplyLength) break;
+        prevReplyLength = reply.length;
+        
+        continuationTurns++;
+        const contMessages = [
+          { role: 'system', content: systemPrompt },
+          ...history.map(m => ({ role: m.role, content: m.content })),
+          { role: 'assistant', content: reply },
+          { role: 'user', content: 'Tiếp tục chính xác phần mã nguồn đang dang dở từ chỗ bị ngắt, không lặp lại đoạn mã đã tạo.' }
+        ];
+        
+        try {
+          const nextChunk = await callWorkspaceChatApi(model, contMessages, _workspaceAbortController.signal, (delta, fullNext) => {
+            onChunk(delta, reply + '\n' + fullNext);
+          });
+          if (!nextChunk || nextChunk.trim().length === 0) break;
+          reply = stitchContinuationChunks(reply, nextChunk);
+        } catch (e) {
+          break; // Stop continuation if error, preserve existing reply
+        }
+      }
+
+      clearTimeout(timeoutId);
       
       const typingEl = document.getElementById(typingMsgId);
       if (typingEl) typingEl.remove();
-      
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      const data = await res.json();
-      const reply = data.choices?.[0]?.message?.content || '';
       
       State.workspaceMessages.push({ role: 'assistant', content: reply });
       renderWorkspaceMessages();
+
+      // R3 / Milestone M2: Direct Workspace Live Sync - Auto extract and apply code to Editor and Live Preview
+      const extractedCode = extractWorkspaceCode(reply);
+      if (extractedCode) {
+        autoApplyWorkspaceCode(extractedCode);
+      }
     } catch (err) {
+      clearTimeout(timeoutId);
       console.error('Workspace chat API error:', err);
       const typingEl = document.getElementById(typingMsgId);
       if (typingEl) typingEl.remove();
-      toast('Lỗi kết nối API Workspace Chat', 'error');
+      if (err && err.name === 'AbortError') {
+        toast('Yêu cầu Workspace Chat đã quá hạn thời gian hoặc bị hủy.', 'warning');
+      } else {
+        const errorDetail = err && err.message ? ` (${err.message})` : '';
+        toast(`Lỗi kết nối API Workspace Chat${errorDetail}`, 'error');
+      }
+    } finally {
+      _workspaceAbortController = null;
+    }
+  }
+
+  async function callWorkspaceChatApi(model, apiMessages, customSignal, onChunk) {
+    const proxy = getProxyForModel(model);
+    const { baseUrl, apiKey, baseUrl2, apiKey2 } = State.settings;
+    const proxiesToTry = [proxy];
+    
+    // Add altProxy if available
+    const altProxy = (proxy.url === baseUrl?.replace(/\/+$/, '')) && baseUrl2 && apiKey2
+      ? { url: baseUrl2.replace(/\/+$/, ''), key: apiKey2 }
+      : (baseUrl && apiKey && proxy.url !== baseUrl.replace(/\/+$/, '') ? { url: baseUrl.replace(/\/+$/, ''), key: apiKey } : null);
+    if (altProxy && altProxy.url !== proxy.url) {
+      proxiesToTry.push(altProxy);
+    }
+
+    const maxTokensCeiling = resolveModelMaxTokens(model, 'pro');
+    let lastError = null;
+
+    for (const currentProxy of proxiesToTry) {
+      if (!currentProxy.url || !currentProxy.key) continue;
+      const url = currentProxy.proxyBridgeUrl
+        ? `${currentProxy.proxyBridgeUrl}/chat/completions?target=${encodeURIComponent(currentProxy.url.replace(/\/+$/, ''))}`
+        : currentProxy.url.replace(/\/+$/, '') + '/chat/completions';
+
+      // First try with stream: true (supported by 100% of proxies, including stream-only proxies like gcli-fake-stream)
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + currentProxy.key
+          },
+          body: JSON.stringify({
+            model: model,
+            messages: apiMessages,
+            stream: true,
+            max_tokens: maxTokensCeiling,
+            temperature: 0.7
+          }),
+          // signal: _workspaceAbortController.signal
+          signal: customSignal || _workspaceAbortController?.signal
+        });
+
+        if (res.ok) {
+          const streamText = await parseAnyApiResponse(res, onChunk);
+          if (streamText && streamText.trim().length > 0) {
+            return streamText;
+          }
+        } else if (res.status === 400 || res.status === 404 || res.status === 405) {
+          // If stream: true failed with 400/404/405, fallback to stream: false on same proxy
+          const nonStreamRes = await fetch(url, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer ' + currentProxy.key
+            },
+            body: JSON.stringify({
+              model: model,
+              messages: apiMessages,
+              max_tokens: maxTokensCeiling,
+              stream: false
+            }),
+            // signal: _workspaceAbortController.signal
+            signal: customSignal || _workspaceAbortController?.signal
+          });
+          if (nonStreamRes.ok) {
+            const text = await parseAnyApiResponse(nonStreamRes, onChunk);
+            if (text && text.trim().length > 0) return text;
+          } else {
+            lastError = new Error(`HTTP ${nonStreamRes.status}`);
+          }
+        } else {
+          lastError = new Error(`HTTP ${res.status}`);
+        }
+      } catch (err) {
+        lastError = err;
+        if (err.name === 'AbortError') throw err;
+      }
+    }
+
+    throw lastError || new Error('Không thể kết nối đến máy chủ API');
+  }
+
+  async function parseAnyApiResponse(res, onChunk) {
+    if (!res) return '';
+    
+    // If it's a readable stream (SSE or chunked transfer)
+    if (res.body && typeof res.body.getReader === 'function') {
+      try {
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let fullSseText = '';
+        let fullRawText = '';
+        let buffer = '';
+        let isSSE = false;
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const chunk = decoder.decode(value, { stream: true });
+          fullRawText += chunk;
+          buffer += chunk;
+
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+            if (trimmed.startsWith('data:')) {
+              isSSE = true;
+              const dataStr = trimmed.slice(5).trim();
+              if (dataStr === '[DONE]') continue;
+              try {
+                const parsed = JSON.parse(dataStr);
+                const delta = parsed.choices?.[0]?.delta?.content || 
+                              parsed.choices?.[0]?.delta?.text || 
+                              parsed.choices?.[0]?.text ||
+                              parsed.choices?.[0]?.message?.content ||
+                              parsed.candidates?.[0]?.content?.parts?.[0]?.text;
+                if (delta) {
+                  fullSseText += delta;
+                  if (typeof onChunk === 'function') onChunk(delta, fullSseText);
+                }
+              } catch (e) {}
+            }
+          }
+        }
+
+        // Process leftover buffer
+        if (buffer.trim()) {
+          const trimmed = buffer.trim();
+          if (trimmed.startsWith('data:')) {
+            isSSE = true;
+            const dataStr = trimmed.slice(5).trim();
+            if (dataStr !== '[DONE]') {
+              try {
+                const parsed = JSON.parse(dataStr);
+                const delta = parsed.choices?.[0]?.delta?.content || 
+                              parsed.choices?.[0]?.delta?.text || 
+                              parsed.choices?.[0]?.text ||
+                              parsed.choices?.[0]?.message?.content ||
+                              parsed.candidates?.[0]?.content?.parts?.[0]?.text;
+                if (delta) {
+                  fullSseText += delta;
+                  if (typeof onChunk === 'function') onChunk(delta, fullSseText);
+                }
+              } catch (e) {}
+            }
+          }
+        }
+
+        if (isSSE && fullSseText) return fullSseText;
+
+        // If not SSE or SSE had no delta, parse fullRawText as JSON
+        if (fullRawText) {
+          try {
+            const parsed = JSON.parse(fullRawText);
+            const content = parsed.choices?.[0]?.message?.content || 
+                            parsed.choices?.[0]?.text || 
+                            parsed.candidates?.[0]?.content?.parts?.[0]?.text;
+            if (content) {
+              if (typeof onChunk === 'function') onChunk(content, content);
+              return content;
+            }
+          } catch (e) {
+            // Not JSON, return fullRawText directly
+            if (typeof onChunk === 'function') onChunk(fullRawText, fullRawText);
+            return fullRawText;
+          }
+        }
+      } catch (err) {
+        console.warn('Stream parsing error, falling back to text read:', err);
+      }
+    }
+
+    // Fallback: Read as text/json
+    try {
+      const rawText = typeof res.text === 'function' ? await res.text() : '';
+      if (!rawText) return '';
+      try {
+        const data = JSON.parse(rawText);
+        const content = data.choices?.[0]?.message?.content || 
+                        data.choices?.[0]?.text || 
+                        data.candidates?.[0]?.content?.parts?.[0]?.text || 
+                        rawText;
+        if (typeof onChunk === 'function') onChunk(content, content);
+        return content;
+      } catch (e) {
+        if (typeof onChunk === 'function') onChunk(rawText, rawText);
+        return rawText;
+      }
+    } catch (e) {
+      return '';
     }
   }
 
@@ -2102,10 +2647,13 @@ class LofiPlayer {
     this.visualizer = document.getElementById('lofi-visualizer');
     
     if (!this.playBtn || !this.volumeSlider || !this.trackTitle || !this.visualizer) {
-      console.warn("Suna Lofi Player DOM elements not found. Retrying in 1 second...");
-      setTimeout(() => this.init(), 1000);
+      this._retryCount = (this._retryCount || 0) + 1;
+      if (this._retryCount <= 5) {
+        setTimeout(() => this.init(), 1000);
+      }
       return;
     }
+    this._retryCount = 0;
     
     // Set initial track
     this.loadTrack(this.currentMood);
@@ -2147,12 +2695,12 @@ class LofiPlayer {
     }
     
     this.audio.src = track.url;
-    this.trackTitle.textContent = track.title;
-    
-    // Restart animation for title marquee
-    this.trackTitle.style.animation = 'none';
-    this.trackTitle.offsetHeight; // trigger reflow
-    this.trackTitle.style.animation = '';
+    if (this.trackTitle) {
+      this.trackTitle.textContent = track.title;
+      this.trackTitle.style.animation = 'none';
+      this.trackTitle.offsetHeight; // trigger reflow
+      this.trackTitle.style.animation = '';
+    }
     
     if (wasPlaying) {
       this.audio.play().catch(e => {
@@ -2221,12 +2769,12 @@ class LofiPlayer {
       if (currentUrl === newUrl) {
         this.currentMood = mood;
         const track = this.tracks[mood];
-        this.trackTitle.textContent = track.title;
-        
-        // Restart animation for title marquee
-        this.trackTitle.style.animation = 'none';
-        this.trackTitle.offsetHeight; // trigger reflow
-        this.trackTitle.style.animation = '';
+        if (this.trackTitle) {
+          this.trackTitle.textContent = track.title;
+          this.trackTitle.style.animation = 'none';
+          this.trackTitle.offsetHeight; // trigger reflow
+          this.trackTitle.style.animation = '';
+        }
       } else {
         this.loadTrack(mood);
       }
@@ -2636,17 +3184,21 @@ const MEMORY_CATEGORIES = {
 
 async function loadMemory() {
   try {
-    const mem = await idbGet('suna_memory');
+    const suffix = getStorageSuffix();
+    const mem = await idbGet('suna_memory' + suffix);
     if (mem && mem.facts) State.memory = mem;
+    else State.memory = { facts: [], lastUpdated: 0 }; // Reset memory list for a new account load
   } catch(e) { console.error('Load memory error:', e); }
 }
 
 async function saveMemory() {
   try {
+    const suffix = getStorageSuffix();
     State.memory.lastUpdated = Date.now();
-    await idbSet('suna_memory', State.memory);
+    await idbSet('suna_memory' + suffix, State.memory);
   } catch(e) { console.error('Save memory error:', e); }
 }
+
 
 function addMemoryFact(fact, category = 'context') {
   // Tránh trùng lặp (so sánh nội dung tương tự)
@@ -2824,33 +3376,90 @@ async function idbGet(key) {
   } catch(e) { console.error('IndexedDB read error:', e); return null; }
 }
 
+// ===== Dynamic Storage Suffix & Message Pruning Logic =====
+const MAX_CHAT_MESSAGES = 40;
+window.MAX_CHAT_MESSAGES = MAX_CHAT_MESSAGES;
+
+function getStorageSuffix() {
+  if (typeof AuthState !== 'undefined' && AuthState.isLoggedIn && AuthState.user && AuthState.user.uid) {
+    return '_' + AuthState.user.uid;
+  }
+  return '_guest';
+}
+
+function pruneChatMessages(chat) {
+  if (chat && chat.messages && chat.messages.length > MAX_CHAT_MESSAGES) {
+    chat.messages = chat.messages.slice(-MAX_CHAT_MESSAGES);
+  }
+}
+
+function safeSaveLocalStorage(key, val) {
+  const strVal = typeof val === 'string' ? val : JSON.stringify(val);
+  try {
+    localStorage.setItem(key, strVal);
+    return true;
+  } catch (e) {
+    if (e.name === 'QuotaExceededError' || e.code === 22 || e.code === 1014 || (e.message && e.message.toLowerCase().includes('quota'))) {
+      console.warn('LocalStorage quota exceeded. Evicting legacy keys and recovering...');
+      try {
+        localStorage.removeItem('suna_chats');
+        localStorage.removeItem('suna_guest_notes');
+        const suffix = typeof getStorageSuffix === 'function' ? getStorageSuffix() : '_guest';
+        localStorage.setItem('suna_deleted_chats' + suffix, '{}');
+      } catch (_) {}
+      try {
+        localStorage.setItem(key, strVal);
+        return true;
+      } catch (retryErr) {
+        console.error('LocalStorage write failed after recovery attempt:', retryErr);
+        return false;
+      }
+    }
+    console.error('LocalStorage write error:', e);
+    return false;
+  }
+}
+window.safeSaveLocalStorage = safeSaveLocalStorage;
+
 let _saveTimeout = null;
 window.saveLocalStateOnly = function() {
-  idbSet('suna_chats', State.chats).catch(e => console.error('IndexedDB save error:', e));
-  try {
-    localStorage.setItem('suna_settings', JSON.stringify(State.settings));
-    localStorage.setItem('suna_mode', State.mode);
-    localStorage.setItem('suna_deleted_chats', JSON.stringify(State.deletedChats || {}));
-  } catch(e) {}
+  const suffix = getStorageSuffix();
+  idbSet('suna_chats' + suffix, State.chats).catch(e => console.error('IndexedDB save error:', e));
+  safeSaveLocalStorage('suna_settings' + suffix, State.settings);
+  safeSaveLocalStorage('suna_mode', State.mode);
+  safeSaveLocalStorage('suna_deleted_chats' + suffix, State.deletedChats || {});
 };
 
 function saveState(forceIndexedDB = false) {
   if (_saveTimeout) clearTimeout(_saveTimeout);
   _saveTimeout = setTimeout(() => {
     try {
-      localStorage.setItem('suna_settings', JSON.stringify(State.settings));
-      localStorage.setItem('suna_mode', State.mode);
-      localStorage.setItem('suna_deleted_chats', JSON.stringify(State.deletedChats || {}));
+      // Prune chat messages to avoid infinite lag and Firebase 1MB limits
+      State.chats.forEach(c => pruneChatMessages(c));
       
+      const suffix = getStorageSuffix();
+      const settingsSaved = safeSaveLocalStorage('suna_settings' + suffix, State.settings);
+      safeSaveLocalStorage('suna_mode', State.mode);
+      safeSaveLocalStorage('suna_deleted_chats' + suffix, State.deletedChats || {});
+      
+      if (!settingsSaved) {
+        toast('Bộ nhớ settings đã đầy!', 'error');
+      }
+
       // Tối ưu hiệu suất: Không ghi IndexedDB liên tục khi AI đang stream chữ
       // Trừ khi bị ép buộc lưu (forceIndexedDB) khi kết thúc
       if (!State.isGenerating || forceIndexedDB) {
-        idbSet('suna_chats', State.chats).catch(e => console.error('IndexedDB save error:', e));
+        idbSet('suna_chats' + suffix, State.chats).catch(e => console.error('IndexedDB save error:', e));
         // Cloud sync chỉ nên gọi khi đã lưu xong chat hoàn chỉnh
         if (typeof triggerCloudSync === 'function') triggerCloudSync();
       }
     } catch (e) {
-      if (e.name === 'QuotaExceededError' || e.code === 22) {
+      if (e.name === 'QuotaExceededError' || e.code === 22 || e.code === 1014 || (e.message && e.message.toLowerCase().includes('quota'))) {
+        try {
+          localStorage.removeItem('suna_chats');
+          const suffix = getStorageSuffix();
+          localStorage.setItem('suna_deleted_chats' + suffix, '{}');
+        } catch (_) {}
         toast('Bộ nhớ settings đã đầy!', 'error');
       } else {
         console.error('Lỗi khi lưu trạng thái:', e);
@@ -2861,34 +3470,46 @@ function saveState(forceIndexedDB = false) {
 
 async function loadState() {
   try {
-    const s = localStorage.getItem('suna_settings');
+    const suffix = getStorageSuffix();
+    const s = localStorage.getItem('suna_settings' + suffix);
     const m = localStorage.getItem('suna_mode');
-    const dc = localStorage.getItem('suna_deleted_chats');
+    const dc = localStorage.getItem('suna_deleted_chats' + suffix);
     if (dc) State.deletedChats = JSON.parse(dc);
     else State.deletedChats = {};
     
-    // Migrate old chats from localStorage if they exist
-    const oldChatsStr = localStorage.getItem('suna_chats');
-    if (oldChatsStr) {
-      State.chats = JSON.parse(oldChatsStr);
-      await idbSet('suna_chats', State.chats);
-      localStorage.removeItem('suna_chats'); // Free up localStorage limit
+    // Migrate old chats from legacy key if they exist
+    const legacyChatsStr = localStorage.getItem('suna_chats');
+    if (legacyChatsStr) {
+      State.chats = JSON.parse(legacyChatsStr);
+      await idbSet('suna_chats' + suffix, State.chats);
+      localStorage.removeItem('suna_chats'); // Free up legacy storage
     } else {
-      const c = await idbGet('suna_chats');
+      const c = await idbGet('suna_chats' + suffix);
       if (c) State.chats = c;
+      else State.chats = []; // Reset chats list for a new account load
     }
 
-    if (s) Object.assign(State.settings, JSON.parse(s));
+    State.settings = {
+      baseUrl: '', apiKey: '', baseUrl2: '', apiKey2: '', corsProxy: '',
+      currentModel: '', flashModel: '', proModel: '',
+      systemPrompt: '', userPurpose: '', tone: 'friendly', theme: 'aurora',
+      customPersonality: '', fontFamily: "'Inter', sans-serif", fontSize: 15,
+      userName: 'Bạn', userAvatar: ''
+    };
+    if (s) {
+      Object.assign(State.settings, JSON.parse(s));
+    }
     if (m) State.mode = m;
   } catch(e) { console.error('Load state error:', e); }
 
   if (State.chats.length === 0) {
-    State.chats.push({ id: genId(), title: 'Chat mới', messages: [], createdAt: Date.now() });
+    State.chats.push({ id: genId(), title: 'Chat mới', messages: [], createdAt: Date.now(), updatedAt: Date.now() });
   }
   if (!State.activeChatId || !State.chats.find(c => c.id === State.activeChatId)) {
     State.activeChatId = State.chats[0].id;
   }
 }
+
 
 function toast(msg, type = 'info') {
   const t = document.createElement('div');
@@ -2911,7 +3532,9 @@ function renderMermaid() {
     mermaid.initialize({
       startOnLoad: false,
       theme: isLight ? 'default' : 'dark',
-      securityLevel: 'loose',
+      // 'strict' chan HTML/script trong nhan node cua mermaid.
+      // 'loose' cho phep LLM chen <img onerror=...> qua so do mermaid -> XSS.
+      securityLevel: 'strict',
       suppressErrors: true
     });
 
@@ -2996,6 +3619,8 @@ function applyTheme() {
     document.body.classList.add('light-mode');
     const icon = document.getElementById('theme-icon');
     if (icon) icon.textContent = 'dark_mode';
+    const iconMobile = document.getElementById('theme-icon-mobile');
+    if (iconMobile) iconMobile.textContent = 'dark_mode';
     // Cập nhật meta theme-color cho trình duyệt mobile
     const meta = document.querySelector('meta[name="theme-color"]');
     if (meta) meta.setAttribute('content', '#f5f5f7');
@@ -3003,6 +3628,8 @@ function applyTheme() {
     document.body.classList.remove('light-mode');
     const icon = document.getElementById('theme-icon');
     if (icon) icon.textContent = 'light_mode';
+    const iconMobile = document.getElementById('theme-icon-mobile');
+    if (iconMobile) iconMobile.textContent = 'light_mode';
     const meta = document.querySelector('meta[name="theme-color"]');
     if (meta) meta.setAttribute('content', '#0d0b14');
   }
@@ -3032,6 +3659,61 @@ function createChat() {
   return chat;
 }
 
+async function summarizeAndCreateNewChat() {
+  const activeChat = getActiveChat();
+  if (!activeChat || !activeChat.messages || activeChat.messages.length === 0) {
+    toast('Không có tin nhắn nào để tóm tắt!', 'info');
+    return;
+  }
+
+  const btn = document.getElementById('btn-summarize-new-chat');
+  let originalHtml = '';
+  if (btn) {
+    originalHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="material-icons-round spin">sync</span>';
+  }
+
+  try {
+    const chatHistoryText = activeChat.messages
+      .map(m => `${m.role === 'user' ? 'Người dùng' : 'Suna'}: ${m.content}`)
+      .join('\n');
+
+    const prompt = `Hãy tóm tắt cực kỳ ngắn gọn cuộc hội thoại sau thành một đoạn ngữ cảnh dưới 120 từ. Chỉ lấy các kết luận quan trọng, mục tiêu chính và các lưu ý kỹ thuật cần nhớ cho cuộc hội thoại sau:\n\n${chatHistoryText}`;
+
+    const summary = await window.directApiCall(prompt);
+    if (summary) {
+      // 1. Save summary into memory facts
+      const factText = `Tóm tắt từ đoạn chat "${activeChat.title}": ${summary.trim()}`;
+      addMemoryFact(factText, 'context');
+      
+      // 2. Create the new chat
+      const newChat = createChat();
+      
+      // 3. Automatically insert an assistant message carrying this context
+      newChat.messages.push({
+        id: genId(),
+        role: 'assistant',
+        content: `✨ **Ngữ cảnh kế thừa từ đoạn chat trước ("${activeChat.title}"):**\n\n${summary.trim()}\n\n*Ngữ cảnh này đã được lưu vào Trí nhớ AI để tối ưu hóa câu trả lời tiếp theo. Bạn muốn trao đổi tiếp về vấn đề gì?*`,
+        timestamp: Date.now(),
+        updatedAt: Date.now()
+      });
+      
+      saveState(true);
+      renderMessages();
+      toast('Đã tóm tắt ngữ cảnh và bắt đầu chat mới!', 'success');
+    }
+  } catch (e) {
+    console.error(e);
+    toast('Lỗi khi tóm tắt ngữ cảnh: ' + e.message, 'error');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = originalHtml;
+    }
+  }
+}
+
 function openRenameChat(id) {
   const chat = State.chats.find(c => c.id === id);
   if (!chat) return;
@@ -3048,7 +3730,8 @@ function openRenameChat(id) {
 function confirmDeleteChat(id) {
   const chat = State.chats.find(c => c.id === id);
   State.pendingDeleteId = id;
-  $('#delete-confirm-text').textContent = `Bạn có chắc muốn xóa đoạn chat "${chat ? chat.title : ''}" ?`;
+  const delText = $('#delete-confirm-text');
+  if (delText) delText.textContent = `Bạn có chắc muốn xóa đoạn chat "${chat ? chat.title : ''}" ?`;
   openModal('delete-confirm-modal');
 }
 
@@ -3111,10 +3794,10 @@ function renderChatList() {
         <div class="chat-item-date">${new Date(c.createdAt).toLocaleDateString('vi-VN')}</div>
       </div>
       <div class="chat-item-actions">
-        <button class="chat-item-rename" data-rename="${c.id}" title="Đổi tên">
+        <button class="chat-item-rename" data-rename="${c.id}" title="Đổi tên" aria-label="Đổi tên đoạn chat">
           <span class="material-icons-round" style="font-size:16px;">edit</span>
         </button>
-        <button class="chat-item-delete" data-delete="${c.id}" title="Xóa">
+        <button class="chat-item-delete" data-delete="${c.id}" title="Xóa" aria-label="Xóa đoạn chat">
           <span class="material-icons-round" style="font-size:16px;">delete</span>
         </button>
       </div>
@@ -3157,7 +3840,9 @@ function renderMessages() {
 
   let htmlContent = chat.messages.map((m, idx) => {
     const isUser = m.role === 'user';
-    const safeAvatar = (State.settings.userAvatar || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    // Chi cho phep http(s) va data:image, dong thoi escape de khong thoat attribute.
+    const rawAvatar = State.settings.userAvatar || '';
+    const safeAvatar = /^(https?:\/\/|data:image\/)/i.test(rawAvatar) ? escHtml(rawAvatar) : '';
     const userAvatarHtml = safeAvatar
       ? `<img src="${safeAvatar}" alt="User">`
       : '<span class="material-icons-round" style="font-size:18px;">person</span>';
@@ -3169,10 +3854,10 @@ function renderMessages() {
             ${isUser ? userAvatarHtml : '<img src="assets/avatar.png" alt="Suna">'}
           </div>
           <div class="message-content edit-mode">
-            <textarea id="edit-input-${idx}" class="edit-textarea">${m.content}</textarea>
+            <textarea id="edit-input-${idx}" class="edit-textarea">${escHtml(m.content)}</textarea>
             <div class="edit-actions">
               <button class="btn-cancel" onclick="cancelEdit()">Hủy</button>
-              <button class="btn-submit" onclick="submitEdit(${idx})">Lưu & Gửi</button>
+              <button class="btn-submit" onclick="submitEdit(${idx})">Lưu &amp; Gửi</button>
             </div>
           </div>
         </div>`;
@@ -3201,7 +3886,7 @@ function renderMessages() {
         
         // Feature: Interactive Document Analyzer
         if (isUser) {
-          formatted += `<button class="btn-analyze-doc" onclick="analyzeDocumentMessage(${idx})"><span class="material-icons-round">analytics</span> Phân tích tài liệu</button>`;
+          formatted += `<button class="btn-analyze-doc" onclick="analyzeDocumentMessage(${idx})" title="Phân tích tài liệu" aria-label="Phân tích tài liệu"><span class="material-icons-round">analytics</span> Phân tích tài liệu</button>`;
         }
       }
       formatted += formatMessage(m.content);
@@ -3212,14 +3897,14 @@ function renderMessages() {
     
     const actionHtml = `
       <div class="message-actions">
-        <button class="action-btn" onclick="copyMessage(${idx})" title="Sao chép"><span class="material-icons-round">content_copy</span></button>
+        <button class="action-btn" onclick="copyMessage(${idx})" title="Sao chép" aria-label="Sao chép tin nhắn"><span class="material-icons-round">content_copy</span></button>
         ${isUser 
-          ? `<button class="action-btn" onclick="editMessage(${idx})" title="Chỉnh sửa"><span class="material-icons-round">edit</span></button>` 
-          : `<button class="action-btn" onclick="quoteMessage(${idx})" title="Trích dẫn/Trả lời"><span class="material-icons-round">reply</span></button>
-             <button class="action-btn" onclick="readAloudMessage(${idx})" title="Đọc văn bản"><span class="material-icons-round">volume_up</span></button>
-             <button class="action-btn" onclick="reloadMessage(${idx})" title="Tải lại"><span class="material-icons-round">refresh</span></button>`
+          ? `<button class="action-btn" onclick="editMessage(${idx})" title="Chỉnh sửa" aria-label="Chỉnh sửa tin nhắn"><span class="material-icons-round">edit</span></button>` 
+          : `<button class="action-btn" onclick="quoteMessage(${idx})" title="Trích dẫn/Trả lời" aria-label="Trích dẫn tin nhắn"><span class="material-icons-round">reply</span></button>
+             <button class="action-btn" onclick="readAloudMessage(${idx})" title="Đọc văn bản" aria-label="Đọc văn bản"><span class="material-icons-round">volume_up</span></button>
+             <button class="action-btn" onclick="reloadMessage(${idx})" title="Tải lại" aria-label="Tải lại tin nhắn"><span class="material-icons-round">refresh</span></button>`
         }
-        <button class="action-btn delete-btn" onclick="deleteMessage(${idx})" title="Xóa"><span class="material-icons-round">delete_outline</span></button>
+        <button class="action-btn delete-btn" onclick="deleteMessage(${idx})" title="Xóa" aria-label="Xóa tin nhắn"><span class="material-icons-round">delete_outline</span></button>
       </div>
     `;
 
@@ -3304,7 +3989,7 @@ function renderMindmapIframe(code) {
     <iframe 
       class="mindmap-iframe" 
       srcdoc="${escHtml(buildMindmapSrcdoc(code, accent1, accent2, accentGlow, isLight))}"
-      sandbox="allow-scripts"
+      sandbox="allow-scripts allow-modals allow-forms"
       scrolling="no">
     </iframe>
   </div>`;
@@ -3457,7 +4142,7 @@ function buildMindmapSrcdoc(code, accent1, accent2, accentGlow, isLight) {
       border: 1px solid var(--panel-border);
       backdrop-filter: blur(15px);
       -webkit-backdrop-filter: blur(15px);
-      border-radius: 12px;
+      border-radius: 20px;
       padding: 6px;
       display: flex;
       gap: 6px;
@@ -3470,7 +4155,7 @@ function buildMindmapSrcdoc(code, accent1, accent2, accentGlow, isLight) {
       color: var(--node-text);
       width: 32px;
       height: 32px;
-      border-radius: 8px;
+      border-radius: 50%;
       cursor: pointer;
       display: flex;
       align-items: center;
@@ -3514,34 +4199,39 @@ function buildMindmapSrcdoc(code, accent1, accent2, accentGlow, isLight) {
 <body>
   <div id="app">
     <div id="toolbar">
-      <button class="tool-btn" onclick="zoomIn()" title="Phóng to">
+      <button class="tool-btn" onclick="zoomIn()" title="Phóng to" aria-label="Phóng to">
         <span class="material-icons-round">zoom_in</span>
       </button>
-      <button class="tool-btn" onclick="zoomOut()" title="Thu nhỏ">
+      <button class="tool-btn" onclick="zoomOut()" title="Thu nhỏ" aria-label="Thu nhỏ">
         <span class="material-icons-round">zoom_out</span>
       </button>
-      <button class="tool-btn" onclick="fitScreen()" title="Đặt vừa màn hình">
+      <button class="tool-btn" onclick="fitScreen()" title="Đặt vừa màn hình" aria-label="Đặt vừa màn hình">
         <span class="material-icons-round">fit_screen</span>
       </button>
-      <button class="tool-btn" onclick="exportSVG()" title="Xuất file ảnh SVG">
+      <button class="tool-btn" onclick="exportSVG()" title="Xuất file ảnh SVG" aria-label="Xuất file ảnh SVG">
         <span class="material-icons-round">insert_photo</span>
       </button>
-      <button class="tool-btn" onclick="exportPNG()" title="Xuất file ảnh PNG">
+      <button class="tool-btn" onclick="exportPNG()" title="Xuất file ảnh PNG" aria-label="Xuất file ảnh PNG">
         <span class="material-icons-round">image</span>
       </button>
     </div>
     
     <div id="canvas">
       <div id="zoom-wrapper">
-        <svg id="svg-connections" style="position:absolute; width:100%; height:100%; top:0; left:0; overflow:visible; z-index:1;">
+        <svg id="svg-connections" style="position:absolute; width:1px; height:1px; top:0; left:0; overflow:visible; z-index:1;">
+          <!-- FIX: #zoom-wrapper co width:0/height:0 nen width:100% => SVG 0x0.
+               SVG viewport 0x0 KHONG BAO GIO paint children (du overflow:visible).
+               Dung 1px + overflow:visible: cac path ve tu goc toa do (0,0) van
+               hien day du ra ngoai viewport. Day la nguyen nhan that su khien
+               moi duong noi mindmap vo hinh. -->
           <defs>
             <linearGradient id="root-grad" x1="0%" y1="0%" x2="100%" y2="0%">
-              <stop offset="0%" stop-color="var(--accent-1)" stop-opacity="0.8" />
-              <stop offset="100%" stop-color="var(--accent-2)" stop-opacity="0.6" />
+              <stop offset="0%" stop-color="${accent1}" stop-opacity="0.8" />
+              <stop offset="100%" stop-color="${accent2}" stop-opacity="0.6" />
             </linearGradient>
             <linearGradient id="branch-grad" x1="0%" y1="0%" x2="100%" y2="0%">
-              <stop offset="0%" stop-color="var(--accent-2)" stop-opacity="0.6" />
-              <stop offset="100%" stop-color="rgba(255, 255, 255, 0.15)" stop-opacity="0.2" />
+              <stop offset="0%" stop-color="${accent2}" stop-opacity="0.6" />
+              <stop offset="100%" stop-color="${isLight ? 'rgba(0, 0, 0, 0.15)' : 'rgba(255, 255, 255, 0.15)'}" stop-opacity="0.35" />
             </linearGradient>
           </defs>
         </svg>
@@ -3551,6 +4241,9 @@ function buildMindmapSrcdoc(code, accent1, accent2, accentGlow, isLight) {
   </div>
 
   <script>
+    // Mau duong noi: solid, lay tu theme cua trang cha.
+    const ROOT_EDGE_COLOR = '${accent1}';
+    const BRANCH_EDGE_COLOR = '${isLight ? 'rgba(0, 0, 0, 0.55)' : 'rgba(255, 255, 255, 0.62)'}';
     const rawMarkdown = decodeURIComponent("${encodeURIComponent(code)}");
     let treeRoot = parseMarkdownToTree(rawMarkdown);
     let initialRender = true;
@@ -3698,16 +4391,19 @@ function buildMindmapSrcdoc(code, accent1, accent2, accentGlow, isLight) {
           path.setAttribute('d', d);
           path.setAttribute('fill', 'none');
           
-          let strokeColor = 'rgba(255, 255, 255, 0.2)';
-          let strokeWidth = '2';
-          
-          if (node.id === 'root') {
-            strokeColor = 'url(#root-grad)';
-            strokeWidth = '3.5';
-          } else {
-            strokeColor = 'url(#branch-grad)';
-            strokeWidth = '2';
-          }
+          // FIX: khong dung url(#gradient) cho stroke.
+          // SVG gradient mac dinh la objectBoundingBox; path NGANG (py === cy)
+          // co bbox height = 0 nen theo spec element bi BO QUA hoan toan
+          // => duong noi vo hinh. Mau solid luon render duoc.
+          // FIX: so sanh voi treeRoot thay vi id === 'root', vi
+          // parseMarkdownToTree() tra ve root.children[0] (id = 'node_1')
+          // khi markdown chi co 1 heading cap 1.
+          const isRootEdge = (node === treeRoot);
+          const strokeColor = isRootEdge ? ROOT_EDGE_COLOR : BRANCH_EDGE_COLOR;
+          const strokeWidth = isRootEdge ? '3.5' : '2.5';
+          // vector-effect: giu do day net khi fitScreen thu nho (zoom ~0.5)
+          // neu khong, net 2px * 0.5 = 1px o alpha thap => nhin nhu vo hinh.
+          path.setAttribute('vector-effect', 'non-scaling-stroke');
           
           path.setAttribute('stroke', strokeColor);
           path.setAttribute('stroke-width', strokeWidth);
@@ -3844,8 +4540,12 @@ function buildMindmapSrcdoc(code, accent1, accent2, accentGlow, isLight) {
         if (now - start < duration) {
           requestAnimationFrame(step);
         } else {
-          drawConnections();
+          // FIX: tat initialRender TRUOC lan ve cuoi, de duong noi cuoi cung
+          // la net TINH (khong con dasharray/dashoffset animation dang chay).
+          // Truoc day lan ve cuoi van mang class 'draw-animate' nen net bi
+          // an trong phan 'gap' cua dasharray gan het thoi luong animation.
           initialRender = false;
+          drawConnections();
         }
       }
       requestAnimationFrame(step);
@@ -3865,19 +4565,24 @@ function buildMindmapSrcdoc(code, accent1, accent2, accentGlow, isLight) {
       updateTransform();
     }
     
+    function getActiveNodes() {
+      const activeNodes = [];
+      function collect(node) {
+        activeNodes.push(node);
+        if (!node.collapsed && node.children) {
+          node.children.forEach(collect);
+        }
+      }
+      collect(treeRoot);
+      return activeNodes;
+    }
+
     function fitScreen() {
       const containerWidth = app.clientWidth;
       const containerHeight = app.clientHeight;
       if (containerWidth === 0 || containerHeight === 0) return;
       
-      const activeNodes = [];
-      function collectActive(node) {
-        activeNodes.push(node);
-        if (!node.collapsed && node.children) {
-          node.children.forEach(collectActive);
-        }
-      }
-      collectActive(treeRoot);
+      const activeNodes = getActiveNodes();
       if (activeNodes.length === 0) return;
       
       let minX = Infinity, maxX = -Infinity;
@@ -3905,15 +4610,8 @@ function buildMindmapSrcdoc(code, accent1, accent2, accentGlow, isLight) {
       updateTransform();
     }
     
-    function getExportSVGString() {
-      const activeNodes = [];
-      function collectActive(node) {
-        activeNodes.push(node);
-        if (!node.collapsed && node.children) {
-          node.children.forEach(collectActive);
-        }
-      }
-      collectActive(treeRoot);
+    function getExportSVGData() {
+      const activeNodes = getActiveNodes();
       
       let minX = Infinity, maxX = -Infinity;
       let minY = Infinity, maxY = -Infinity;
@@ -3979,11 +4677,11 @@ function buildMindmapSrcdoc(code, accent1, accent2, accentGlow, isLight) {
       });
       
       svgStr += '</svg>';
-      return svgStr;
+      return { svgStr, width, height };
     }
     
     function exportSVG() {
-      const svgStr = getExportSVGString();
+      const { svgStr } = getExportSVGData();
       const blob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -3996,30 +4694,9 @@ function buildMindmapSrcdoc(code, accent1, accent2, accentGlow, isLight) {
     }
     
     function exportPNG() {
-      const svgStr = getExportSVGString();
+      const { svgStr, width, height } = getExportSVGData();
       const blob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
       const url = URL.createObjectURL(blob);
-      
-      const activeNodes = [];
-      function collectActive(node) {
-        activeNodes.push(node);
-        if (!node.collapsed && node.children) {
-          node.children.forEach(collectActive);
-        }
-      }
-      collectActive(treeRoot);
-      
-      let minX = Infinity, maxX = -Infinity;
-      let minY = Infinity, maxY = -Infinity;
-      activeNodes.forEach(node => {
-        minX = Math.min(minX, node.x - 130);
-        maxX = Math.max(maxX, node.x + 130);
-        minY = Math.min(minY, node.y - 50);
-        maxY = Math.max(maxY, node.y + 50);
-      });
-      
-      const width = maxX - minX;
-      const height = maxY - minY;
       
       const img = new Image();
       img.onload = () => {
@@ -4162,11 +4839,10 @@ function formatMessage(text, isStreaming = false) {
   // Strip tool call tags and their contents to prevent raw tags showing in UI
   let cleanText = text.replace(/<suna_tool_call>[\s\S]*?<\/suna_tool_call>/g, '');
   cleanText = cleanText.replace(/<suna_tool_call\s+[^>]*>[\s\S]*?<\/suna_tool_call>/g, '');
-  
-  let html = escHtml(cleanText);
 
   // === PLACEHOLDER SYSTEM ===
   // Hệ thống registry placeholder thống nhất để bảo vệ:
+  // - Thinking Blocks (<think>, <thought>)
   // - Fenced Code Blocks (Standard Code, Mermaid, Kanban)
   // - KaTeX Math Blocks (Block/Inline)
   // - Inline Code (kẹp trong dấu backtick `...`)
@@ -4180,10 +4856,65 @@ function formatMessage(text, isStreaming = false) {
     return token;
   }
 
+  // === BƯỚC 0: TOKEN HÓA THINKING BLOCKS (<think> / <thought>) ===
+  // Case 1: Closed thinking block
+  cleanText = cleanText.replace(/<(?:think|thought)\b[^>]*>([\s\S]*?)<\/(?:think|thought)>/gi, (_, content) => {
+    const lines = content.trim().split('\n').filter(l => l.trim().length > 0);
+    const lineCount = lines.length || 1;
+    const safeContent = escHtml(content.trim());
+    
+    const thinkingHtml = `<div class="thinking-block-wrapper is-collapsed" data-streaming="false">
+      <div class="thinking-header" onclick="toggleThinkingBlock(this)" role="button" tabindex="0" aria-expanded="false" title="Nhấn để mở rộng/thu gọn quá trình suy nghĩ">
+        <div class="thinking-header-left">
+          <div class="thinking-badge">
+            <span class="material-icons-round thinking-icon">psychology</span>
+            <span class="thinking-badge-text">Quá trình suy nghĩ</span>
+          </div>
+          <span class="thinking-meta-info">${lineCount} dòng suy luận</span>
+        </div>
+        <div class="thinking-header-right">
+          <span class="material-icons-round thinking-toggle-icon">expand_more</span>
+        </div>
+      </div>
+      <div class="thinking-body" style="display: none;">
+        <div class="thinking-content">${safeContent.replace(/\n/g, '<br>')}</div>
+      </div>
+    </div>`;
+    return savePlaceholder(thinkingHtml);
+  });
+
+  // Case 2: Unclosed thinking block (active streaming or truncated)
+  cleanText = cleanText.replace(/<(?:think|thought)\b[^>]*>([\s\S]*)$/gi, (_, content) => {
+    const lines = content.trim().split('\n').filter(l => l.trim().length > 0);
+    const lineCount = lines.length || 1;
+    const safeContent = escHtml(content.trim());
+    const isStreamingActive = isStreaming;
+
+    const thinkingHtml = `<div class="thinking-block-wrapper ${isStreamingActive ? 'is-streaming is-open' : 'is-collapsed'}" data-streaming="${isStreamingActive}">
+      <div class="thinking-header" onclick="toggleThinkingBlock(this)" role="button" tabindex="0" aria-expanded="${isStreamingActive ? 'true' : 'false'}" title="Nhấn để mở rộng/thu gọn quá trình suy nghĩ">
+        <div class="thinking-header-left">
+          <div class="thinking-badge ${isStreamingActive ? 'is-pulsing' : ''}">
+            <span class="material-icons-round thinking-icon">psychology</span>
+            <span class="thinking-badge-text">${isStreamingActive ? 'Đang suy nghĩ...' : 'Quá trình suy nghĩ'}</span>
+          </div>
+          <span class="thinking-meta-info">${lineCount} dòng suy luận</span>
+        </div>
+        <div class="thinking-header-right">
+          <span class="material-icons-round thinking-toggle-icon">${isStreamingActive ? 'expand_less' : 'expand_more'}</span>
+        </div>
+      </div>
+      <div class="thinking-body" style="${isStreamingActive ? 'display: block;' : 'display: none;'}">
+        <div class="thinking-content">${safeContent.replace(/\n/g, '<br>')}</div>
+      </div>
+    </div>`;
+    return savePlaceholder(thinkingHtml);
+  });
+
+  let html = escHtml(cleanText);
+
   // === BƯỚC 1: TOKEN HÓA FENCED CODE BLOCKS (Standard, Mermaid, Kanban) ===
   html = html.replace(/```([^\n]*)\n([\s\S]*?)```/g, (_, lang, code) => {
     const cleanLang = lang.trim().toLowerCase();
-    const safeCode = encodeURIComponent(code);
     let renderedHtml = '';
     
     // Feature: Mindmap Diagram
@@ -4227,20 +4958,51 @@ function formatMessage(text, isStreaming = false) {
     else if (cleanLang === 'kanban') {
       renderedHtml = parseKanban(code);
     }
-    // Feature: Standard Code & Live Preview Artifacts
+    // Feature: Standard Code & Live Preview Artifacts with Collapsible Logic
     else {
+      const decodedCode = code
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'");
+
+      const cleanCode = decodedCode.replace(/\r?\n$/, '');
+      const lineCount = cleanCode.length === 0 ? 0 : cleanCode.split(/\r\n|\r|\n/).length;
+      const isCollapsible = lineCount > 12;
+
+      const lineBadge = `<span class="code-line-badge">${lineCount} dòng</span>`;
+      const collapseToggleBtn = isCollapsible
+        ? `<button class="btn-code-collapse-toggle btn-toggle-code" onclick="toggleCodeBlock(this)" title="Mở rộng / Thu gọn mã nguồn" aria-label="Mở rộng / Thu gọn mã nguồn"><span class="material-icons-round">unfold_more</span> <span class="toggle-text">Mở rộng mã nguồn</span></button>`
+        : '';
+      const fadeOverlay = isCollapsible
+        ? `<div class="code-fade-overlay code-collapse-overlay" onclick="toggleCodeBlock(this)"></div>`
+        : '';
+      const collapsibleClass = isCollapsible ? ' is-collapsible collapsed' : '';
+
       let artifactBtn = '';
-      if (cleanLang === 'html' || cleanLang === 'svg' || cleanLang.includes('xml') || cleanLang === 'javascript') {
-        artifactBtn = `<button class="btn-preview-artifact" onclick="window.openArtifactFromCodeBlock(this)"><span class="material-icons-round">play_arrow</span> Xem trước (Live Preview)</button>`;
+      let headerPreviewBtn = '';
+      if (['html', 'svg', 'javascript', 'js'].includes(cleanLang) || cleanLang.includes('xml')) {
+        headerPreviewBtn = `<button class="btn-header-preview" onclick="window.openArtifactFromCodeBlock(this)" title="Mở trong Live Workspace" aria-label="Mở trong Live Workspace"><span class="material-icons-round">play_arrow</span> Live Preview</button>`;
+        artifactBtn = `<button class="btn-preview-artifact" onclick="window.openArtifactFromCodeBlock(this)" title="Xem trước (Live Preview)" aria-label="Xem trước (Live Preview)"><span class="material-icons-round">play_arrow</span> Xem trước (Live Preview)</button>`;
       }
 
-      const label = cleanLang ? `<div class="code-lang">${cleanLang}</div>` : '';
-      renderedHtml = `<div class="code-block-wrapper">
-                ${label}
-                <button class="btn-copy-code" onclick="copyCodeBlock(this)" title="Sao chép code"><span class="material-icons-round">content_copy</span></button>
-                <pre><code>${code}</code></pre>
-                ${artifactBtn}
-              </div>`;
+      renderedHtml = `<div class="code-block-wrapper${collapsibleClass}">
+        <div class="code-block-header">
+          <div class="code-block-header-left">
+            <span class="code-lang">${cleanLang || 'code'}</span>
+            ${lineBadge}
+          </div>
+          <div class="code-block-header-right">
+            ${headerPreviewBtn}
+            <button class="btn-copy-code" onclick="copyCodeBlock(this)" data-code="${encodeURIComponent(decodedCode)}" title="Sao chép code" aria-label="Sao chép code"><span class="material-icons-round">content_copy</span></button>
+          </div>
+        </div>
+        <pre><code>${escHtml(decodedCode)}</code></pre>
+        ${fadeOverlay}
+        ${collapseToggleBtn}
+        ${artifactBtn}
+      </div>`;
     }
 
     return savePlaceholder(renderedHtml);
@@ -4302,7 +5064,10 @@ function formatMessage(text, isStreaming = false) {
     let cleanUrl = url.trim();
     const isSafeUrl = /^(https?:\/\/|mailto:|tel:)/i.test(cleanUrl) || cleanUrl.startsWith('#') || cleanUrl.startsWith('/');
     if (!isSafeUrl) cleanUrl = '#';
-    return `<a href="${cleanUrl}" target="_blank" rel="noopener noreferrer" class="msg-link">${text}</a>`;
+    // Escape dau nhay de URL khong the thoat ra khoi attribute href="..."
+    // va chen them event handler (vd: https://a" onmouseover="...).
+    const safeHref = cleanUrl.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return `<a href="${safeHref}" target="_blank" rel="noopener noreferrer" class="msg-link">${text}</a>`;
   });
 
   // Unordered lists (lines starting with - or *)
@@ -4474,7 +5239,7 @@ function parseKanban(code) {
             <span class="kanban-card-text">${task.text}</span>
           </div>
           <div class="kanban-card-actions">
-            <button class="btn-kanban-execute" onclick="executeKanbanTask(decodeURIComponent('${encodeURIComponent(plainText)}'))" title="Giao cho Suna thực hiện">
+            <button class="btn-kanban-execute" onclick="executeKanbanTask(decodeURIComponent('${encodeURIComponent(plainText)}'))" title="Giao cho Suna thực hiện" aria-label="Giao cho Suna thực hiện">
               <span class="material-icons-round">bolt</span>
               Giao cho Suna thực hiện
             </button>
@@ -4592,9 +5357,17 @@ window.toggleKanbanCardComplete = toggleKanbanCardComplete;
 window.executeKanbanTask = executeKanbanTask;
 
 function escHtml(s) {
-  const d = document.createElement('div');
-  d.textContent = s;
-  return d.innerHTML;
+  if (s === null || s === undefined) return '';
+  // QUAN TRỌNG: phải escape cả " và ' vì hàm này được dùng để nội suy vào
+  // trong giá trị attribute (ví dụ srcdoc="...", title="..."). Cách cũ dùng
+  // textContent -> innerHTML KHÔNG escape dấu nháy, khiến payload thoát ra
+  // khỏi attribute và chèn được event handler (onload=, onmouseover=).
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 // ===== Image Handling =====
@@ -4660,7 +5433,7 @@ function renderPendingFiles() {
           <div class="file-card-name" title="${escHtml(f.name)}">${escHtml(f.name)}</div>
           <div class="file-card-meta">${sizeStr} • ${f.lang || f.ext || 'file'}</div>
         </div>
-        <button class="file-card-remove" data-idx="${i}" title="Hủy file">&times;</button>
+        <button class="file-card-remove" data-idx="${i}" title="Hủy file" aria-label="Hủy file">&times;</button>
       </div>
     `;
   }).join('');
@@ -4680,7 +5453,7 @@ function renderPendingImages() {
   area.innerHTML = State.pendingImages.map((img, i) => `
     <div class="image-preview-item">
       <img src="${img}" alt="preview">
-      <button class="image-preview-remove" data-idx="${i}">&times;</button>
+      <button class="image-preview-remove" data-idx="${i}" title="Hủy ảnh" aria-label="Hủy ảnh">&times;</button>
     </div>
   `).join('');
   area.querySelectorAll('.image-preview-remove').forEach(btn => {
@@ -4701,6 +5474,7 @@ function fileToBase64(file) {
 }
 
 async function readTextFile(file) {
+  if (typeof file.text === 'function') return file.text();
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result);
@@ -4726,15 +5500,12 @@ function getFileExtension(filename) {
 
 function isTextFile(file) {
   const ext = getFileExtension(file.name);
-  if (TEXT_EXTENSIONS.has(ext)) return true;
-  if (file.type && file.type.startsWith('text/')) return true;
-  if (file.type === 'application/json' || file.type === 'application/xml') return true;
-    return false;
+  return TEXT_EXTENSIONS.has(ext) || (file.type && file.type.startsWith('text/')) || file.type === 'application/json' || file.type === 'application/xml';
 }
 
+const BINARY_DOC_EXTENSIONS = new Set(['pdf','doc','docx','xls','xlsx','ppt','pptx','odt','ods','odp','rtf','epub']);
 function isBinaryDocFile(file) {
-  const ext = getFileExtension(file.name);
-  return ['pdf','doc','docx','xls','xlsx','ppt','pptx','odt','ods','odp','rtf','epub'].includes(ext);
+  return BINARY_DOC_EXTENSIONS.has(getFileExtension(file.name));
 }
 
 function validateFile(file, maxSize) {
@@ -4863,13 +5634,17 @@ async function processFileForInput(file) {
 async function fetchModels(source = 'both') {
   const { baseUrl, apiKey, baseUrl2, apiKey2 } = State.settings;
   const status = $('#fetch-status');
-  status.textContent = 'Đang lấy danh sách model...';
-  status.className = 'fetch-status';
+  if (status) {
+    status.textContent = 'Đang lấy danh sách model...';
+    status.className = 'fetch-status';
+  }
   let allModels = [];
   let sources = 0;
 
   // Track which proxy each model belongs to
   const newMap = {};
+
+  const bridge = (State.settings.corsProxy || '').trim().replace(/\/+$/, '');
 
   // Fetch from primary proxy
   if (source === 'proxy1' || source === 'both') {
@@ -4877,7 +5652,8 @@ async function fetchModels(source = 'both') {
       toast('Vui lòng nhập Base URL và API Key proxy chính', 'error');
     } else {
       try {
-        const url = baseUrl.replace(/\/+$/, '') + '/models';
+        const cleanBase = baseUrl.replace(/\/+$/, '');
+        const url = bridge ? `${bridge}/models?target=${encodeURIComponent(cleanBase)}` : `${cleanBase}/models`;
         const res = await fetch(url, { headers: { 'Authorization': `Bearer ${apiKey}` } });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
@@ -4897,7 +5673,8 @@ async function fetchModels(source = 'both') {
       toast('Vui lòng nhập Base URL và API Key proxy phụ', 'error');
     } else {
       try {
-        const url2 = baseUrl2.replace(/\/+$/, '') + '/models';
+        const cleanBase2 = baseUrl2.replace(/\/+$/, '');
+        const url2 = bridge ? `${bridge}/models?target=${encodeURIComponent(cleanBase2)}` : `${cleanBase2}/models`;
         const res2 = await fetch(url2, { headers: { 'Authorization': `Bearer ${apiKey2}` } });
         if (!res2.ok) throw new Error(`HTTP ${res2.status}`);
         const data2 = await res2.json();
@@ -4916,13 +5693,17 @@ async function fetchModels(source = 'both') {
   State.modelProxyMap = newMap;
   if (State.models.length) {
     const sourceLabel = source === 'proxy1' ? 'proxy chính' : source === 'proxy2' ? 'proxy phụ' : `${sources} proxy`;
-    status.textContent = `✓ Tìm thấy ${State.models.length} model từ ${sourceLabel}`;
-    status.className = 'fetch-status success';
+    if (status) {
+      status.textContent = `✓ Tìm thấy ${State.models.length} model từ ${sourceLabel}`;
+      status.className = 'fetch-status success';
+    }
     populateModelSelects();
     toast(`Đã lấy ${State.models.length} model`, 'success');
   } else {
-    status.textContent = '✗ Không tìm thấy model nào';
-    status.className = 'fetch-status error';
+    if (status) {
+      status.textContent = '✗ Không tìm thấy model nào';
+      status.className = 'fetch-status error';
+    }
   }
 }
 
@@ -4932,7 +5713,7 @@ function populateModelSelects() {
     const el = $(sel);
     const current = el.value;
     el.innerHTML = `<option value="">-- Chọn model --</option>` +
-      State.models.map(m => `<option value="${m}" ${m === current ? 'selected' : ''}>${m}</option>`).join('');
+      State.models.map(m => `<option value="${escHtml(m)}" ${m === current ? 'selected' : ''}>${escHtml(m)}</option>`).join('');
   });
   if (State.settings.currentModel) $('#model-select').value = State.settings.currentModel;
   if (State.settings.flashModel) $('#flash-model-select').value = State.settings.flashModel;
@@ -4989,15 +5770,96 @@ function getActiveModel() {
   return State.mode === 'flash' ? (State.settings.flashModel || State.settings.currentModel) : (State.settings.proModel || State.settings.currentModel);
 }
 
+function normalizeBaseUrl(url) {
+  if (!url || typeof url !== 'string') return '';
+  let clean = url.trim().replace(/\/+$/, '');
+  try {
+    const parsed = new URL(clean);
+    if (parsed.pathname === '' || parsed.pathname === '/') {
+      clean = clean + '/v1';
+    }
+  } catch (e) {}
+  return clean;
+}
+
 // Get the correct proxy URL and key for a model
 function getProxyForModel(model) {
   const proxy = State.modelProxyMap[model];
-  const { baseUrl, apiKey, baseUrl2, apiKey2 } = State.settings;
+  const { baseUrl, apiKey, baseUrl2, apiKey2, corsProxy } = State.settings;
+  const bridge = (corsProxy || '').trim().replace(/\/+$/, '');
   if (proxy === 'proxy2' && baseUrl2 && apiKey2) {
-    return { url: baseUrl2.replace(/\/+$/, ''), key: apiKey2 };
+    return { url: normalizeBaseUrl(baseUrl2), key: apiKey2, proxyBridgeUrl: bridge };
   }
   // Default to proxy1
-  return { url: baseUrl.replace(/\/+$/, ''), key: apiKey };
+  return { url: normalizeBaseUrl(baseUrl), key: apiKey, proxyBridgeUrl: bridge };
+}
+
+// Resolve maximum output token ceiling supported by model
+function resolveModelMaxTokens(modelName, mode = 'pro') {
+  if (!modelName || typeof modelName !== 'string') {
+    return mode === 'flash' ? 4096 : 8192;
+  }
+  const m = modelName.toLowerCase();
+
+  // Tier 1: 65,536 Tokens (Reasoning, Thinking, Extended-Output Models)
+  if (
+    m.includes('o1') || 
+    m.includes('o3') || 
+    m.includes('o4') || 
+    m.includes('thinking') || 
+    m.includes('reasoner') || 
+    m.includes('gemini-2.5') || 
+    m.includes('gemini-3') ||
+    m.includes('claude-3-7') ||
+    m.includes('claude-3.7')
+  ) {
+    return 65536;
+  }
+
+  // Tier 2: 16,384 Tokens (GPT-4o, GPT-4.1, Gemini 2.0, Qwen 2.5 Coder, Llama 3.3 / Llama 3.1 405B/70B, DeepSeek, Mistral Large, Codestral)
+  if (
+    m.includes('gpt-4o') || 
+    m.includes('gpt-4.1') || 
+    m.includes('gpt-4-turbo') || 
+    m.includes('gemini-2.0') || 
+    m.includes('gemini-2') ||
+    m.includes('qwen-2.5') || 
+    m.includes('qwen2.5') || 
+    m.includes('coder') ||
+    m.includes('llama-3.3') || 
+    m.includes('llama-3.1-405b') ||
+    m.includes('llama-3.1-70b') ||
+    m.includes('deepseek') ||
+    m.includes('mistral-large') ||
+    m.includes('codestral')
+  ) {
+    return 16384;
+  }
+
+  // Tier 3: 8,192 Tokens (Claude 3.5, Gemini 1.5, Modern General LLMs, Qwen, Llama 3.1 8B, GLM-4)
+  if (
+    m.includes('claude-3-5') || 
+    m.includes('claude-3.5') || 
+    m.includes('gemini-1.5') || 
+    m.includes('gemini-1') ||
+    m.includes('qwen') ||
+    m.includes('llama') ||
+    m.includes('glm-4')
+  ) {
+    return 8192;
+  }
+
+  // Tier 4: 4,096 Tokens (Legacy Models)
+  if (m.includes('claude-3') || m.includes('gpt-4') || m.includes('gpt-3.5')) {
+    return 4096;
+  }
+
+  // Default fallback based on active mode
+  return mode === 'flash' ? 4096 : 8192;
+}
+
+if (typeof window !== 'undefined') {
+  window.resolveModelMaxTokens = resolveModelMaxTokens;
 }
 
 // ===== Vision Fallback System =====
@@ -5245,13 +6107,17 @@ Chương 2: Thế giới quan của bạn —— Từ "database xập xệ" đ�
   
   // Logic & Tư duy (đặt sau mode để mode có priority cao hơn)
   parts.push(`[TƯ DUY]: Đọc kỹ lịch sử hội thoại. Hiểu ngữ cảnh và ý định thực sự. Nếu câu hỏi mơ hồ, suy luận từ ngữ cảnh. Ưu tiên: chính xác, hữu ích. Không từ chối giúp đỡ khi có thể.`);
+
+  parts.push(`[NGUYÊN TẮC TOÀN VẸN MÃ NGUỒN & KHAI THÁC TOKEN TỐI ĐA]:
+1. [TUYỆT ĐỐI CẤM PLACEHOLDER & RÚT GỌN]: Nghiêm cấm hoàn toàn việc sử dụng bất kỳ dạng chú thích rút gọn, placeholder hoặc cắt bớt mã nguồn/nội dung. Các mẫu sau đây là VI PHẠM NGHIÊM TRỌNG:
+   - Trong code: "// ...", "// ... rest of code", "// ... rest of code here ...", "// ... existing code ...", "// code cũ giữ nguyên", "/* TODO */", "/* unchanged */", "<!-- ... rest of code ... -->", "/* keep existing styles */", "// implement here", "// tương tự như trên", "// phần còn lại giữ nguyên", "// continue pattern", bare "..."
+   - Trong văn bản: "để cho ngắn gọn", "phần còn lại tương tự", "bạn có thể tự làm tiếp", "và cứ thế tiếp tục"...
+2. [100% HOÀN CHỈNH & SẴN SÀNG THỰC THI]: Mọi đoạn code, hàm, component, biến, thuật toán hoặc file được yêu cầu phải được viết ĐẦY ĐỦ 100%, chi tiết từ đầu đến cuối mà không được lược bỏ bất kỳ dòng nào.
+3. [TẬN DỤNG TỐI ĐA DUNG LƯỢNG TOKEN]: Hệ thống hỗ trợ dung lượng token mở rộng và Động cơ Ghép chuỗi Đa tầng Tự động (Multi-Turn Continuation Chaining). Luôn triển khai 100% đầy đủ, chi tiết từng hàm, từng module, toàn bộ logic và cấu trúc dữ liệu không bỏ sót bất kỳ dòng nào để khai thác tối đa dung lượng token của lượt gọi.`);
   
   parts.push('[HÌNH ẢNH]: Bạn CÓ khả năng nhìn và phân tích hình ảnh. Khi người dùng gửi ảnh, hãy trực tiếp phân tích. KHÔNG nói rằng bạn không thể xem ảnh. Đọc chữ (OCR) trong ảnh nếu có.');
 
-  // Memory
-  if (State.memory && State.memory.facts && State.memory.facts.length > 0) {
-    parts.push(`[TRÍ NHỚ AI]: Bạn phải ghi nhớ các thông tin sau về người dùng để cá nhân hóa:\n- ${State.memory.facts.join('\n- ')}`);
-  }
+
 
   // Web Search
   if (State.webSearchEnabled) {
@@ -5285,11 +6151,21 @@ async function fetchLinkContext(text) {
   let linkContextText = '';
   for (const link of urls) {
     try {
-      const corsProxy = `https://api.allorigins.win/get?url=${encodeURIComponent(link)}`;
-      const res = await fetch(corsProxy);
-      if (res.ok) {
-        const data = await res.json();
-        const html = data.contents;
+      let html = '';
+      if (typeof window.fetchWithProxy === 'function') {
+        const res = await window.fetchWithProxy(link);
+        if (res && res.ok) {
+          html = await res.text();
+        }
+      } else {
+        const corsProxy = `https://api.allorigins.win/get?url=${encodeURIComponent(link)}`;
+        const res = await fetch(corsProxy);
+        if (res.ok) {
+          const data = await res.json();
+          html = data.contents;
+        }
+      }
+      if (html) {
         const doc = new DOMParser().parseFromString(html, 'text/html');
         doc.querySelectorAll('script, style, nav, footer, iframe').forEach(el => el.remove());
         let content = doc.body ? doc.body.textContent : '';
@@ -5583,20 +6459,30 @@ async function generateAIResponse() {
     async function makeApiRequest(messages, targetModel) {
       const modelToUse = targetModel || model;
       const proxy = getProxyForModel(modelToUse);
-      const url = proxy.url + '/chat/completions';
+      function resolveTargetUrl(targetBase, bridgeUrl) {
+        const cleanBase = (targetBase || '').replace(/\/+$/, '');
+        if (bridgeUrl && bridgeUrl.trim()) {
+          const cleanBridge = bridgeUrl.trim().replace(/\/+$/, '');
+          return `${cleanBridge}/chat/completions?target=${encodeURIComponent(cleanBase)}`;
+        }
+        return cleanBase + '/chat/completions';
+      }
+      const url = resolveTargetUrl(proxy.url, proxy.proxyBridgeUrl);
       const lastUserMessage = [...messages].reverse().find(m => m.role === 'user');
       const userText = typeof lastUserMessage?.content === 'string' 
         ? lastUserMessage.content 
         : (Array.isArray(lastUserMessage?.content) 
             ? lastUserMessage.content.map(p => p.text || '').join(' ') 
             : '');
-      
-      const requiresUnlimited = /không giới hạn|unlimited|tối đa|hết cỡ|dài|chi tiết|write more|continue|viết tiếp|detailed|long|max/i.test(userText);
+
+      const maxTokensCeiling = resolveModelMaxTokens(modelToUse, State.mode);
 
       const reqBody = {
-        model: modelToUse, messages, stream: true,
+        model: modelToUse, 
+        messages, 
+        stream: true,
         temperature: State.mode === 'flash' ? 0.3 : 0.75,
-        ...(requiresUnlimited ? {} : { max_tokens: State.mode === 'flash' ? 1024 : 4096 }),
+        max_tokens: resolveModelMaxTokens(modelToUse, State.mode),
         ...(State.mode === 'flash' ? {
           top_p: 0.85,
           frequency_penalty: 0.1,
@@ -5615,9 +6501,25 @@ async function generateAIResponse() {
           body: JSON.stringify(reqBody),
           signal: State.abortController.signal
         });
+        // HTTP 400 downgrade safety if a constrained proxy rejects high max_tokens
+        if (res && res.status === 400 && reqBody.max_tokens > 4096) {
+          const downgradedBody = { ...reqBody, max_tokens: 4096 };
+          const retryRes = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${proxy.key}` },
+            body: JSON.stringify(downgradedBody),
+            signal: State.abortController.signal
+          });
+          if (retryRes && retryRes.ok) {
+            res = retryRes;
+          }
+        }
       } catch (err) { 
         fetchError = err;
         if (err.name === 'AbortError') throw err; // Không thử proxy khác nếu người dùng chủ động ngắt
+        if (err.name === 'TypeError' && String(err.message).toLowerCase().includes('fetch')) {
+          err.isCorsError = true;
+        }
       }
 
       if (!res || !res.ok) {
@@ -5627,13 +6529,33 @@ async function generateAIResponse() {
           : (baseUrl && apiKey ? { url: baseUrl.replace(/\/+$/, ''), key: apiKey } : null);
         if (altProxy && altProxy.url !== proxy.url) {
           try {
-            res = await fetch(altProxy.url + '/chat/completions', {
+            const altUrl = resolveTargetUrl(altProxy.url, proxy.proxyBridgeUrl);
+            res = await fetch(altUrl, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${altProxy.key}` },
               body: JSON.stringify(reqBody),
               signal: State.abortController.signal
             });
-          } catch (err) { if (!res && !fetchError) fetchError = err; }
+            if (res && res.status === 400 && reqBody.max_tokens > 4096) {
+              const downgradedBody = { ...reqBody, max_tokens: 4096 };
+              const retryAltRes = await fetch(altUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${altProxy.key}` },
+                body: JSON.stringify(downgradedBody),
+                signal: State.abortController.signal
+              });
+              if (retryAltRes && retryAltRes.ok) {
+                res = retryAltRes;
+              }
+            }
+          } catch (err) { 
+            if (!res && !fetchError) {
+              fetchError = err;
+              if (err.name === 'TypeError' && String(err.message).toLowerCase().includes('fetch')) {
+                err.isCorsError = true;
+              }
+            } 
+          }
         } else if (fetchError) { throw fetchError; }
       }
       return { res, fetchError };
@@ -5674,38 +6596,7 @@ async function generateAIResponse() {
       });
     }
 
-    // --- LƯỢT 2 (CHÍNH) ---
-    let { res, fetchError } = await makeApiRequest(apiMessages);
-
-    // --- Fallback: if HTTP error AND has images, retry text-only (no image_url) ---
-    if ((!res || !res.ok) && hasImages) {
-      console.log('Retrying with text-only messages (removing image_url)...');
-      // Vì model chính thất bại với ảnh, ta cần mượn fallback model để dịch ảnh ra chữ trước khi thử lại
-      await runVisionTaskIfNeeded();
-      
-      const textOnlyMessages = buildTextOnlyMessages(chat, systemPrompt);
-      if (implicitContext) {
-        textOnlyMessages.push({
-          role: 'system',
-          content: `[Bối cảnh phân tích từ Lượt 1 - Model: ${chamberModel}]:\n${implicitContext}\n\nHãy sử dụng bối cảnh phân tích trên để trả lời người dùng một cách tối ưu nhất.`
-        });
-      }
-      const retry = await makeApiRequest(textOnlyMessages);
-      res = retry.res;
-      fetchError = retry.fetchError;
-    }
-
-    if (!res || !res.ok) {
-      if (fetchError && !res) throw fetchError;
-      const errData = res ? await res.text() : 'No response';
-      throw new Error(`HTTP ${res ? res.status : 'Error'}: ${errData.slice(0, 200)}`);
-    }
-
-    // Stream response - keep typing animation until first real content arrives
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let typingRemoved = false;
-
+    // --- LƯỢT 2 (CHÍNH) & MULTI-TURN AUTO-CONTINUATION STREAMING ---
     const assistantEl = document.createElement('div');
     assistantEl.className = 'message assistant';
     assistantEl.innerHTML = `
@@ -5716,55 +6607,134 @@ async function generateAIResponse() {
       </div>`;
     const bubbleEl = assistantEl.querySelector('.message-bubble');
 
-    let buffer = '';
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
+    let typingRemoved = false;
+    const MAX_CONTINUATION_TURNS = 5;
+    let turnCount = 0;
+    let previousAssistantLength = 0;
 
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed || !trimmed.startsWith('data:')) continue;
-        const data = trimmed.slice(5).trim();
-        if (data === '[DONE]') continue;
-        try {
-          const parsed = JSON.parse(data);
-          const delta = parsed.choices?.[0]?.delta?.content;
-          if (delta) {
-            assistantContent += delta;
-            if (parser) {
-              parser.parseChunk(delta);
-            }
-            if (!typingRemoved) {
-              typingRemoved = true;
-              if (typingEl.parentNode) typingEl.remove();
-            }
+    while (turnCount < MAX_CONTINUATION_TURNS) {
+      if (State.abortController?.signal?.aborted) break;
 
-            if (isStillActiveChat()) {
-              // Phục hồi kết nối DOM nếu user chuyển chat qua lại
-              if (!assistantEl.parentNode) {
-                const restoreTyping = document.getElementById('restore-typing');
-                if (restoreTyping) restoreTyping.remove();
-                container.appendChild(assistantEl);
+      let currentReqMessages;
+      if (turnCount === 0) {
+        currentReqMessages = apiMessages;
+      } else {
+        currentReqMessages = [
+          ...apiMessages,
+          { role: 'assistant', content: assistantContent },
+          { role: 'user', content: 'Tiếp tục chính xác từ chỗ vừa dừng mà không lặp lại bất kỳ nội dung nào trước đó:' }
+        ];
+      }
+
+      let { res, fetchError } = await makeApiRequest(currentReqMessages);
+
+      // --- Fallback: if HTTP error AND has images, retry text-only (no image_url) (Turn 0 only) ---
+      if (turnCount === 0 && (!res || !res.ok) && hasImages) {
+        console.log('Retrying with text-only messages (removing image_url)...');
+        // Vì model chính thất bại với ảnh, ta cần mượn fallback model để dịch ảnh ra chữ trước khi thử lại
+        await runVisionTaskIfNeeded();
+        
+        const textOnlyMessages = buildTextOnlyMessages(chat, systemPrompt);
+        if (implicitContext) {
+          textOnlyMessages.push({
+            role: 'system',
+            content: `[Bối cảnh phân tích từ Lượt 1 - Model: ${chamberModel}]:\n${implicitContext}\n\nHãy sử dụng bối cảnh phân tích trên để trả lời người dùng một cách tối ưu nhất.`
+          });
+        }
+        const retry = await makeApiRequest(textOnlyMessages);
+        res = retry.res;
+        fetchError = retry.fetchError;
+      }
+
+      if (!res || !res.ok) {
+        if (turnCount === 0) {
+          if (fetchError && !res) throw fetchError;
+          const errData = res ? await res.text() : 'No response';
+          throw new Error(`HTTP ${res ? res.status : 'Error'}: ${errData.slice(0, 200)}`);
+        } else {
+          console.warn('Continuation turn API error:', fetchError || (res ? await res.text() : ''));
+          break;
+        }
+      }
+
+      // Stream response - keep typing animation until first real content arrives
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let turnFinishReason = null;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || !trimmed.startsWith('data:')) continue;
+          const data = trimmed.slice(5).trim();
+          if (data === '[DONE]') continue;
+          try {
+            const parsed = JSON.parse(data);
+            const finishReason = parsed.choices?.[0]?.finish_reason || 
+                                 parsed.candidates?.[0]?.finishReason || 
+                                 parsed.delta?.stop_reason;
+            if (finishReason) {
+              turnFinishReason = finishReason;
+            }
+            const delta = parsed.choices?.[0]?.delta?.content;
+            if (delta) {
+              assistantContent += delta;
+              if (parser) {
+                parser.parseChunk(delta);
+              }
+              if (!typingRemoved) {
+                typingRemoved = true;
+                if (typingEl.parentNode) typingEl.remove();
               }
 
-              // TỐI ƯU: Throttle render để tránh lag UI khi streaming nhanh
-              if (!bubbleEl._renderPending) {
-                bubbleEl._renderPending = true;
-                requestAnimationFrame(() => {
-                  const displayContent = parser ? parser.filteredText : assistantContent;
-                  bubbleEl.innerHTML = formatMessage(displayContent, true);
-                  const chatArea = $('#chat-area');
-                  const isNearBottom = chatArea.scrollHeight - chatArea.scrollTop - chatArea.clientHeight < 150;
-                  if (isNearBottom) chatArea.scrollTop = chatArea.scrollHeight;
-                  bubbleEl._renderPending = false;
-                });
+              if (isStillActiveChat()) {
+                // Phục hồi kết nối DOM nếu user chuyển chat qua lại
+                if (!assistantEl.parentNode) {
+                  const restoreTyping = document.getElementById('restore-typing');
+                  if (restoreTyping) restoreTyping.remove();
+                  container.appendChild(assistantEl);
+                }
+
+                // TỐI ƯU: Throttle render để tránh lag UI khi streaming nhanh
+                if (!bubbleEl._renderPending) {
+                  bubbleEl._renderPending = true;
+                  requestAnimationFrame(() => {
+                    const displayContent = parser ? parser.filteredText : assistantContent;
+                    bubbleEl.innerHTML = formatMessage(displayContent, true);
+                    const chatArea = $('#chat-area');
+                    const isNearBottom = chatArea.scrollHeight - chatArea.scrollTop - chatArea.clientHeight < 150;
+                    if (isNearBottom) chatArea.scrollTop = chatArea.scrollHeight;
+                    bubbleEl._renderPending = false;
+                  });
+                }
               }
             }
-          }
-        } catch(e) {}
+          } catch(e) {}
+        }
+      }
+
+      turnCount++;
+
+      // Zero-progress safety guard
+      if (turnCount > 1 && assistantContent.length === previousAssistantLength) {
+        break;
+      }
+      previousAssistantLength = assistantContent.length;
+
+      // Check if continuation is needed
+      const isLengthTruncated = turnFinishReason === 'length';
+      const unclosedFences = (assistantContent.match(/```/g) || []).length % 2 === 1;
+      const isTruncated = (isLengthTruncated || unclosedFences || isResponseTruncated(turnFinishReason, assistantContent)) && !State.abortController?.signal?.aborted;
+
+      if (!isTruncated) {
+        break;
       }
     }
 
@@ -5867,14 +6837,21 @@ async function generateAIResponse() {
       toast('Đã dừng tạo phản hồi.', 'info');
     } else {
       if (typingEl && typingEl.parentNode) typingEl.remove();
+      const isCors = e.isCorsError || (e.name === 'TypeError' && String(e.message).toLowerCase().includes('fetch'));
+      const isModelNotFound = String(e.message).includes('model_not_found') || String(e.message).includes('Model not found') || (String(e.message).includes('404') && String(e.message).includes('model'));
+      const errorContent = isCors
+        ? `⚠️ Lỗi kết nối CORS (Preflight 403 / Failed to fetch): Máy chủ API không cho phép gọi từ trình duyệt. Giải pháp: Vào "Cài đặt API" > Điền "CORS Worker Proxy" (Cloudflare Worker) để vượt CORS.`
+        : (isModelNotFound
+            ? `⚠️ Lỗi: Không tìm thấy Model trên máy chủ API (Model not found). Giải pháp: Mở "Cài đặt API" > Bấm "Lấy danh sách Model" và chọn đúng Model có trên server.`
+            : `⚠️ Lỗi: ${e.message}`);
       const currentChat = State.chats.find(c => c.id === generatingChatId);
       if (currentChat) {
-        currentChat.messages.push({ id: genId(), role: 'assistant', content: `⚠️ Lỗi: ${e.message}`, timestamp: Date.now(), updatedAt: Date.now() });
+        currentChat.messages.push({ id: genId(), role: 'assistant', content: errorContent, timestamp: Date.now(), updatedAt: Date.now() });
         currentChat.updatedAt = Date.now(); // Parent chat updated
       }
       saveState(true);
       if (isStillActiveChat()) renderMessages();
-      toast('Lỗi: ' + e.message, 'error');
+      toast(isCors ? 'Lỗi kết nối CORS (Preflight): Vui lòng kiểm tra CORS Proxy' : (isModelNotFound ? 'Lỗi: Model không tồn tại trên server' : 'Lỗi: ' + e.message), 'error');
     }
   } finally {
     if (!hasPendingRecursiveTurn) {
@@ -5996,23 +6973,107 @@ window.copyMessage = function(idx) {
   copyText(chat.messages[idx].content);
 };
 
+function toggleCodeBlock(btnOrOverlay) {
+  if (!btnOrOverlay) return;
+  const wrapper = btnOrOverlay.closest('.code-block-wrapper');
+  if (!wrapper) return;
+  
+  const isExpanded = wrapper.classList.toggle('is-expanded');
+  if (isExpanded) {
+    wrapper.classList.remove('collapsed');
+  } else {
+    wrapper.classList.add('collapsed');
+  }
+  
+  const btn = wrapper.querySelector('.btn-code-collapse-toggle, .btn-toggle-code');
+  if (btn) {
+    if (isExpanded) {
+      btn.innerHTML = '<span class="material-icons-round">unfold_less</span> <span class="toggle-text">Thu gọn</span>';
+      btn.title = 'Thu gọn mã nguồn';
+      btn.setAttribute('aria-label', 'Thu gọn mã nguồn');
+    } else {
+      btn.innerHTML = '<span class="material-icons-round">unfold_more</span> <span class="toggle-text">Mở rộng mã nguồn</span>';
+      btn.title = 'Mở rộng / Thu gọn mã nguồn';
+      btn.setAttribute('aria-label', 'Mở rộng / Thu gọn mã nguồn');
+    }
+  }
+}
+window.toggleCodeBlock = toggleCodeBlock;
+
+function toggleThinkingBlock(headerEl) {
+  if (!headerEl) return;
+  const wrapper = headerEl.closest('.thinking-block-wrapper');
+  if (!wrapper) return;
+  
+  const body = wrapper.querySelector('.thinking-body');
+  const toggleIcon = wrapper.querySelector('.thinking-toggle-icon');
+  const isCurrentlyOpen = wrapper.classList.contains('is-open');
+
+  if (isCurrentlyOpen) {
+    wrapper.classList.remove('is-open');
+    wrapper.classList.add('is-collapsed');
+    headerEl.setAttribute('aria-expanded', 'false');
+    if (toggleIcon) toggleIcon.textContent = 'expand_more';
+    if (body) {
+      body.style.display = 'none';
+    }
+  } else {
+    wrapper.classList.remove('is-collapsed');
+    wrapper.classList.add('is-open');
+    headerEl.setAttribute('aria-expanded', 'true');
+    if (toggleIcon) toggleIcon.textContent = 'expand_less';
+    if (body) {
+      body.style.display = 'block';
+    }
+  }
+}
+window.toggleThinkingBlock = toggleThinkingBlock;
+
 window.copyCodeBlock = function(button) {
   const wrapper = button.closest('.code-block-wrapper');
   if (!wrapper) return;
-  const codeEl = wrapper.querySelector('pre code');
-  if (!codeEl) return;
-  copyText(codeEl.textContent);
+  const dataCode = button.getAttribute('data-code');
+  let code = '';
+  if (dataCode) {
+    code = decodeURIComponent(dataCode);
+  } else {
+    const codeEl = wrapper.querySelector('pre code');
+    if (codeEl) code = codeEl.textContent;
+  }
+  if (code) {
+    copyText(code);
+    const icon = button.querySelector('.material-icons-round');
+    if (icon) {
+      const orig = icon.textContent;
+      icon.textContent = 'check';
+      setTimeout(() => { icon.textContent = orig; }, 1500);
+    }
+  }
 };
 
 window.openArtifactFromCodeBlock = function(button) {
-  const wrapper = button.closest('.code-block-wrapper');
-  if (!wrapper) return;
-  const codeEl = wrapper.querySelector('pre code');
-  if (!codeEl) return;
+  if (!button) return;
+  const wrapper = button.closest('.code-block-wrapper') || button.parentElement?.closest('.code-block-wrapper');
+  let code = '';
+  if (wrapper) {
+    const copyBtn = wrapper.querySelector('.btn-copy-code');
+    if (copyBtn && copyBtn.getAttribute('data-code')) {
+      code = decodeURIComponent(copyBtn.getAttribute('data-code'));
+    } else {
+      const codeEl = wrapper.querySelector('pre code');
+      if (codeEl) code = codeEl.textContent;
+    }
+  } else if (button.getAttribute('data-code')) {
+    code = decodeURIComponent(button.getAttribute('data-code'));
+  }
+  if (!code) {
+    if (window.toast) window.toast('Không tìm thấy nội dung mã nguồn để xem trước!', 'warning');
+    return;
+  }
   if (window.openArtifact) {
-    window.openArtifact(codeEl.textContent);
+    window.openArtifact(code);
   } else {
-    toast('Tính năng Xem trước không khả dụng', 'error');
+    if (window.toast) window.toast('Tính năng Xem trước không khả dụng', 'error');
   }
 };
 
@@ -6259,17 +7320,20 @@ function setMode(mode) {
   State.mode = mode;
   $$('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
   const slider = $('.mode-slider');
-  if (mode === 'pro') slider.classList.add('pro');
-  else slider.classList.remove('pro');
+  if (slider) {
+    if (mode === 'pro') slider.classList.add('pro');
+    else slider.classList.remove('pro');
+  }
   const badge = $('#mode-badge');
-  badge.textContent = mode === 'flash' ? 'Flash' : 'Pro';
+  if (badge) badge.textContent = mode === 'flash' ? 'Flash' : 'Pro';
   updateModelDisplay();
   saveState();
 }
 
 function updateModelDisplay() {
   const model = getActiveModel();
-  $('#current-model-name').textContent = model || 'Chưa chọn model';
+  const el = $('#current-model-name');
+  if (el) el.textContent = model || 'Chưa chọn model';
 }
 
 // ===== Event Listeners =====
@@ -6294,6 +7358,8 @@ function initEvents() {
   if (btnMobileMore && mobileMoreMenu) {
     btnMobileMore.addEventListener('click', (e) => {
       e.stopPropagation();
+      const userDropdown = document.getElementById('user-dropdown');
+      if (userDropdown) userDropdown.classList.remove('active');
       mobileMoreMenu.classList.toggle('active');
     });
     document.addEventListener('click', (e) => {
@@ -6308,6 +7374,10 @@ function initEvents() {
     });
     document.getElementById('btn-export-chat-mobile')?.addEventListener('click', () => {
       if ($('#btn-export-chat')) $('#btn-export-chat').click();
+      mobileMoreMenu.classList.remove('active');
+    });
+    document.getElementById('btn-api-settings-mobile')?.addEventListener('click', () => {
+      if ($('#btn-api-settings')) $('#btn-api-settings').click();
       mobileMoreMenu.classList.remove('active');
     });
   }
@@ -6328,11 +7398,61 @@ function initEvents() {
     closeSidebar();
   });
 
+  // Global Keyboard Shortcuts
+  document.addEventListener('keydown', (e) => {
+    // Escape: close open modal dialogs (.modal-overlay) and dropdowns
+    if (e.key === 'Escape' || e.key === 'Esc') {
+      document.querySelectorAll('.modal-overlay').forEach(modal => {
+        if (modal.style.display !== 'none' && getComputedStyle(modal).display !== 'none') {
+          closeModal(modal.id);
+        }
+      });
+      const userDropdown = document.getElementById('user-dropdown');
+      if (userDropdown) userDropdown.classList.remove('active');
+      const mobileMoreMenu = document.getElementById('mobile-more-menu');
+      if (mobileMoreMenu) mobileMoreMenu.classList.remove('active');
+    }
+
+    // Ctrl + / and Cmd + /: focus message input
+    if ((e.ctrlKey || e.metaKey) && (e.key === '/' || e.code === 'Slash')) {
+      e.preventDefault();
+      const msgInput = document.getElementById('user-input') || document.getElementById('message-input');
+      if (msgInput) {
+        msgInput.focus();
+      }
+    }
+
+    // Ctrl + Shift + O and Cmd + Shift + O: toggle live workspace
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'O' || e.key === 'o' || e.code === 'KeyO')) {
+      e.preventDefault();
+      const artifactsPanel = document.getElementById('artifacts-panel');
+      if (artifactsPanel) {
+        artifactsPanel.classList.toggle('active');
+      }
+    }
+  });
+
+  // Tab Visibility Lifecycle Management for Particles
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      if (window._particleInterval) {
+        clearInterval(window._particleInterval);
+        window._particleInterval = null;
+      }
+    } else {
+      initParticles();
+    }
+  });
+
   // Tính năng 2: Chat Search (Tìm kiếm)
   const searchInput = $('#chat-search-input');
   if (searchInput) {
+    let searchDebounceTimer = null;
     searchInput.addEventListener('input', () => {
-      renderChatList();
+      clearTimeout(searchDebounceTimer);
+      searchDebounceTimer = setTimeout(() => {
+        renderChatList();
+      }, 150);
     });
   }
 
@@ -6340,14 +7460,21 @@ function initEvents() {
   const chatArea = $('#chat-area');
   const btnScroll = $('#btn-scroll-bottom');
   if (chatArea && btnScroll) {
+    let isScrollTicking = false;
     chatArea.addEventListener('scroll', () => {
-      // Nếu cách đáy hơn 300px thì hiện nút
-      if (chatArea.scrollHeight - chatArea.scrollTop - chatArea.clientHeight > 300) {
-        btnScroll.classList.add('show');
-      } else {
-        btnScroll.classList.remove('show');
+      if (!isScrollTicking) {
+        window.requestAnimationFrame(() => {
+          // Nếu cách đáy hơn 300px thì hiện nút
+          if (chatArea.scrollHeight - chatArea.scrollTop - chatArea.clientHeight > 300) {
+            btnScroll.classList.add('show');
+          } else {
+            btnScroll.classList.remove('show');
+          }
+          isScrollTicking = false;
+        });
+        isScrollTicking = true;
       }
-    });
+    }, { passive: true });
     btnScroll.addEventListener('click', () => {
       chatArea.scrollTo({ top: chatArea.scrollHeight, behavior: 'smooth' });
     });
@@ -6356,32 +7483,12 @@ function initEvents() {
 
     // New chat
   $('#btn-new-chat').addEventListener('click', () => createChat());
+  
+  const btnSummarize = $('#btn-summarize-new-chat');
+  if (btnSummarize) {
+    btnSummarize.addEventListener('click', () => summarizeAndCreateNewChat());
+  }
 
-    // Tải xuống đoạn chat (Export to Markdown)
-  const btnExportChat = $('#btn-export-chat');
-  if (btnExportChat) btnExportChat.addEventListener('click', () => {
-    const chat = getActiveChat();
-    if (!chat || chat.messages.length === 0) {
-      toast('Đoạn chat đang trống', 'info');
-      return;
-    }
-    let mdContent = `# ${chat.title}\n\n*Ngày tạo: ${new Date(chat.createdAt).toLocaleString('vi-VN')}*\n\n---\n\n`;
-    chat.messages.forEach(m => {
-      const roleName = m.role === 'user' ? State.settings.userName || 'Bạn' : 'Suna Chat';
-      mdContent += `### **${roleName}**:\n${m.content}\n\n---\n\n`;
-    });
-    
-    const blob = new Blob([mdContent], { type: 'text/markdown;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `SunaChat_${chat.title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.md`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    toast('Đã tải xuống đoạn chat', 'success');
-  });
 
   // Nhập văn bản bằng giọng nói (Voice Recognition)
   const btnVoice = $('#btn-voice');
@@ -6630,6 +7737,16 @@ function initEvents() {
     // Modals
   const btnSettings = $('#btn-settings'); if (btnSettings) btnSettings.addEventListener('click', () => openModal('settings-modal'));
   const btnApiSettings = $('#btn-api-settings'); if (btnApiSettings) btnApiSettings.addEventListener('click', () => openModal('api-modal'));
+  const currentModelDisplay = $('#current-model-display');
+  if (currentModelDisplay) {
+    currentModelDisplay.addEventListener('click', () => openModal('api-modal'));
+    currentModelDisplay.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        openModal('api-modal');
+      }
+    });
+  }
   const btnPersonality = $('#btn-personality'); if (btnPersonality) btnPersonality.addEventListener('click', () => openModal('personality-modal'));
   const btnFontSettings = $('#btn-font-settings'); if (btnFontSettings) btnFontSettings.addEventListener('click', () => openModal('font-modal'));
 
@@ -6648,6 +7765,8 @@ function initEvents() {
     State.settings.apiKey = $('#api-key').value.trim();
     State.settings.baseUrl2 = $('#api-base-url-2').value.trim();
     State.settings.apiKey2 = $('#api-key-2').value.trim();
+    const corsEl = $('#api-cors-proxy');
+    if (corsEl) State.settings.corsProxy = corsEl.value.trim();
   }
   $('#btn-fetch-proxy1').addEventListener('click', () => {
     syncProxyFields();
@@ -6669,14 +7788,93 @@ function initEvents() {
     const el = $('#api-key-2');
     el.type = el.type === 'password' ? 'text' : 'password';
   });
-    $('#btn-save-api').addEventListener('click', () => {
+  const btnCopyWorker = $('#btn-copy-worker-code');
+  if (btnCopyWorker) {
+    btnCopyWorker.addEventListener('click', () => {
+      // Worker HARDENED: whitelist host dich + chi forward header can thiet.
+      // Ban goc la OPEN PROXY (?target=<bat ky URL>) khien API key cua user
+      // bi forward sang may chu ke tan cong. Nguoi dung PHAI sua ALLOWED_TARGETS.
+      const workerCode = `// Suna Chat CORS Proxy (hardened)
+// >>> BAT BUOC: dien host API cua ban vao ALLOWED_TARGETS truoc khi deploy <<<
+const ALLOWED_TARGETS = ['api.justwoker.icu'];
+const ALLOWED_ORIGINS = []; // [] = cho phep moi origin. Nen dien domain that khi public.
+const FORWARD_HEADERS = ['authorization', 'content-type', 'accept', 'x-api-key', 'anthropic-version'];
+
+export default {
+  async fetch(request) {
+    const origin = request.headers.get('Origin');
+    const allowOrigin = ALLOWED_ORIGINS.length === 0
+      ? '*'
+      : (origin && ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0]);
+    const cors = {
+      'Access-Control-Allow-Origin': allowOrigin,
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      'Access-Control-Allow-Headers': FORWARD_HEADERS.join(', '),
+      'Access-Control-Max-Age': '86400',
+      'Vary': 'Origin'
+    };
+    const fail = (m, st) => new Response(JSON.stringify({ error: m }), { status: st, headers: { 'Content-Type': 'application/json', ...cors } });
+
+    if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
+    if (request.method !== 'GET' && request.method !== 'POST') return fail('Method not allowed', 405);
+    if (ALLOWED_ORIGINS.length > 0 && origin && !ALLOWED_ORIGINS.includes(origin)) return fail('Origin not allowed', 403);
+
+    const url = new URL(request.url);
+    let baseStr = (url.searchParams.get('target') || 'https://' + ALLOWED_TARGETS[0] + '/v1').replace(/\\/+\$/, '');
+    let baseUrl;
+    try { baseUrl = new URL(baseStr); } catch { return fail('Invalid target URL', 400); }
+    if (baseUrl.protocol !== 'https:') return fail('Only https targets allowed', 400);
+    if (!ALLOWED_TARGETS.includes(baseUrl.hostname)) return fail('Target host not in allowlist', 403);
+
+    const subPath = url.pathname.replace(/^\\/+/, '');
+    const base = baseUrl.origin + baseUrl.pathname.replace(/\\/+\$/, '');
+    const finalStr = (subPath.startsWith('v1/') && base.endsWith('/v1')) ? base.slice(0, -3) + '/' + subPath : base + '/' + subPath;
+    let targetUrl;
+    try { targetUrl = new URL(finalStr); } catch { return fail('Invalid resolved URL', 400); }
+    if (!ALLOWED_TARGETS.includes(targetUrl.hostname) || targetUrl.protocol !== 'https:') return fail('Resolved target rejected', 403);
+    url.searchParams.forEach((v, k) => { if (k !== 'target') targetUrl.searchParams.set(k, v); });
+
+    const headers = new Headers();
+    for (const n of FORWARD_HEADERS) { const v = request.headers.get(n); if (v) headers.set(n, v); }
+
+    try {
+      const res = await fetch(targetUrl.toString(), {
+        method: request.method,
+        headers,
+        body: request.method === 'POST' ? request.body : undefined,
+        redirect: 'manual'
+      });
+      if (res.status >= 300 && res.status < 400) return fail('Upstream redirect blocked', 502);
+      const rh = new Headers(res.headers);
+      rh.delete('set-cookie');
+      Object.entries(cors).forEach(([k, v]) => rh.set(k, v));
+      return new Response(res.body, { status: res.status, headers: rh });
+    } catch (e) {
+      return fail(e && e.message ? e.message : 'Upstream fetch failed', 502);
+    }
+  }
+};`;
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(workerCode).then(() => {
+          toast('Đã sao chép mã Cloudflare Worker vào Clipboard!', 'success');
+        }).catch(() => {
+          toast('Mở file cloudflare-worker-cors-proxy.js trong project để lấy mã.', 'info');
+        });
+      } else {
+        toast('Mở file cloudflare-worker-cors-proxy.js trong project để lấy mã.', 'info');
+      }
+    });
+  }
+  $('#btn-save-api').addEventListener('click', () => {
     State.settings.baseUrl = $('#api-base-url').value.trim();
     State.settings.apiKey = $('#api-key').value.trim();
     State.settings.baseUrl2 = $('#api-base-url-2').value.trim();
     State.settings.apiKey2 = $('#api-key-2').value.trim();
+    const corsEl = $('#api-cors-proxy');
+    if (corsEl) State.settings.corsProxy = corsEl.value.trim();
     State.settings.currentModel = $('#model-select').value;
     // Lưu NGAY LẬP TỨC (bypass debounce)
-    try { localStorage.setItem('suna_settings', JSON.stringify(State.settings)); } catch(e) {}
+    safeSaveLocalStorage('suna_settings' + getStorageSuffix(), State.settings);
     saveState();
     updateModelDisplay();
     closeModal('api-modal');
@@ -6692,6 +7890,8 @@ function initEvents() {
     State.settings.apiKey = $('#api-key').value.trim();
     State.settings.baseUrl2 = $('#api-base-url-2').value.trim();
     State.settings.apiKey2 = $('#api-key-2').value.trim();
+    const corsEl = $('#api-cors-proxy');
+    if (corsEl) State.settings.corsProxy = corsEl.value.trim();
     State.settings.currentModel = testModel;
     saveState();
     updateModelDisplay();
@@ -6712,9 +7912,7 @@ function initEvents() {
     State.settings.proModel = $('#pro-model-select').value;
     
     // Lưu NGAY LẬP TỨC (bypass debounce) để tránh mất dữ liệu khi reload
-    try {
-      localStorage.setItem('suna_settings', JSON.stringify(State.settings));
-    } catch(e) { console.error('Save settings error:', e); }
+    safeSaveLocalStorage('suna_settings' + getStorageSuffix(), State.settings);
     saveState(); // Vẫn gọi debounce để lưu chats
     
     updateModelDisplay();
@@ -6759,7 +7957,7 @@ function initEvents() {
 
       State.settings.userAvatar = compressedDataUrl;
       $('#user-avatar-preview').src = compressedDataUrl;
-      localStorage.setItem('suna_settings', JSON.stringify(State.settings));
+      safeSaveLocalStorage('suna_settings' + getStorageSuffix(), State.settings);
       saveState();
       renderMessages();
       toast('Đã cập nhật avatar', 'success');
@@ -6835,30 +8033,42 @@ function initEvents() {
     applyTheme();
     
     // Lưu NGAY LẬP TỨC (bypass debounce)
-    try { localStorage.setItem('suna_settings', JSON.stringify(State.settings)); } catch(e) {}
+    safeSaveLocalStorage('suna_settings' + getStorageSuffix(), State.settings);
     saveState();
     closeModal('personality-modal');
     toast('Đã lưu tính cách AI', 'success');
   });
 
   // Font settings
-  $('#font-family-select').addEventListener('change', function() {
-    $('#font-preview').style.fontFamily = this.value;
-  });
-  $('#font-size-range').addEventListener('input', function() {
-    $('#font-size-value').textContent = this.value + 'px';
-    $('#font-preview').style.fontSize = this.value + 'px';
-  });
-    $('#btn-save-font').addEventListener('click', () => {
-    State.settings.fontFamily = $('#font-family-select').value;
-    State.settings.fontSize = parseInt($('#font-size-range').value);
-    applyTheme();
-    // Lưu NGAY LẬP TỨC (bypass debounce)
-    try { localStorage.setItem('suna_settings', JSON.stringify(State.settings)); } catch(e) {}
-    saveState();
-    closeModal('font-modal');
-    toast('Đã áp dụng font chữ', 'success');
-  });
+  const fontSelect = $('#font-family-select');
+  const fontRange = $('#font-size-range');
+  const fontSaveBtn = $('#btn-save-font');
+  const fontPreview = $('#font-preview');
+  const fontSizeValue = $('#font-size-value');
+
+  if (fontSelect && fontPreview) {
+    fontSelect.addEventListener('change', function() {
+      fontPreview.style.fontFamily = this.value;
+    });
+  }
+  if (fontRange) {
+    fontRange.addEventListener('input', function() {
+      if (fontSizeValue) fontSizeValue.textContent = this.value + 'px';
+      if (fontPreview) fontPreview.style.fontSize = this.value + 'px';
+    });
+  }
+  if (fontSaveBtn) {
+    fontSaveBtn.addEventListener('click', () => {
+      if (fontSelect) State.settings.fontFamily = fontSelect.value;
+      if (fontRange) State.settings.fontSize = parseInt(fontRange.value);
+      applyTheme();
+      // Lưu NGAY LẬP TỨC (bypass debounce)
+      safeSaveLocalStorage('suna_settings' + getStorageSuffix(), State.settings);
+      saveState();
+      closeModal('font-modal');
+      toast('Đã áp dụng font chữ', 'success');
+    });
+  }
 }
 
 
@@ -6883,6 +8093,8 @@ function openModal(id) {
     document.getElementById('api-key').value = State.settings.apiKey || '';
     document.getElementById('api-base-url-2').value = State.settings.baseUrl2 || '';
     document.getElementById('api-key-2').value = State.settings.apiKey2 || '';
+    const corsEl = document.getElementById('api-cors-proxy');
+    if (corsEl) corsEl.value = State.settings.corsProxy || '';
     if (State.models.length) populateModelSelects();
   } else if (id === 'personality-modal') {
     const tone = State.settings.tone || 'friendly';
@@ -6917,7 +8129,9 @@ window.directApiCall = async function(prompt) {
   const model = getActiveModel();
   const proxy = getProxyForModel(model); // Use existing function
   if (!proxy.url || !proxy.key) throw new Error('Chua cau hinh API');
-  const url = proxy.url + '/chat/completions';
+  const url = proxy.proxyBridgeUrl
+    ? `${proxy.proxyBridgeUrl}/chat/completions?target=${encodeURIComponent(proxy.url.replace(/\/+$/, ''))}`
+    : proxy.url.replace(/\/+$/, '') + '/chat/completions';
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + proxy.key },

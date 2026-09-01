@@ -3,7 +3,11 @@
 
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-content">
+    <!-- Baseline CSP: chan <base> hijack, chan plugin/object injection, chan form exfil.
+         script-src KHONG the siet vi app dung inline onclick handlers;
+         connect-src KHONG the siet vi user tu cau hinh Base URL API. -->
+    <meta http-equiv="Content-Security-Policy" content="object-src 'none'; base-uri 'self'; form-action 'self'">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
     <meta name="description" content="Suna Chat - Trợ lý AI thông minh hỗ trợ chat văn bản và hình ảnh">
     <meta name="theme-color" content="#0d0b14">
     <meta name="apple-mobile-web-app-capable" content="yes">
@@ -12,24 +16,25 @@
     <link rel="icon" href="assets/logo.png" type="image/png">
     <link rel="apple-touch-icon" href="assets/avatar.png">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&family=Noto+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@400;700&family=Playfair+Display:ital,wght@0,400..900;1,400..900&family=Outfit:wght@100..900&display=swap" rel="stylesheet">
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet">
     <!-- KaTeX for math rendering -->
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
-    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
-    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" integrity="sha384-nB0miv6/jRmo5UMMR1wu3Gz6NLsoTkbqJghGIsx//Rlm+ZU03BU6SQNC66uf4l5+" crossorigin="anonymous" referrerpolicy="no-referrer">
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" integrity="sha384-7zkQWkzuo3B5mTepMUcHkMB5jZaolc2xDwL6VFqjFALcbeS9Ggm/Yr2r3Dy4lfFg" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" integrity="sha384-43gviWU0YVjaDtb/GhzOouOXtZMP/7XUzwPTstBeZFe/+rCMvRwr4yROQP43s0Xk" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
     <link rel="stylesheet" href="styles.css">
     <!-- Preload Firebase SDK for instant auth -->
     <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js">
     <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js">
     <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js">
     <!-- PDF.js for reading PDF files -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js" integrity="sha384-/1qUCSGwTur9vjf/z9lmu/eCUYbpOTgSjmpbMQZ1/CtX2v/WcAIKqRv+U1DUCG6e" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
     <!-- PDF Worker configuration moved to app.js to ensure library is loaded -->
     <!-- Mermaid cho Sơ đồ tư duy -->
-    <script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js" integrity="sha384-WmdflGW9aGfoBdHc4rRyWzYuAjEmDwMdGdiPNacbwfGKxBW/SO6guzuQ76qjnSlr" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
     <script>
         if (typeof mermaid !== 'undefined') {
-            mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'loose' });
+            mermaid.initialize({ startOnLoad: false, theme: 'dark', securityLevel: 'strict' });
         }
     </script>
 </head>
@@ -105,7 +110,7 @@
                             <div class="auth-input-wrapper">
                                 <span class="material-icons-round auth-input-icon">lock</span>
                                 <input type="password" id="login-password" class="auth-input" placeholder="••••••••" autocomplete="current-password">
-                                <button type="button" class="btn-toggle-password" data-target="login-password" title="Hiện/Ẩn mật khẩu">
+                                <button type="button" class="btn-toggle-password" data-target="login-password" title="Hiện/Ẩn mật khẩu" aria-label="Hiện/Ẩn mật khẩu">
                                     <span class="material-icons-round">visibility</span>
                                 </button>
                             </div>
@@ -161,7 +166,7 @@
                             <div class="auth-input-wrapper">
                                 <span class="material-icons-round auth-input-icon">lock</span>
                                 <input type="password" id="register-password" class="auth-input" placeholder="Tối thiểu 6 ký tự" autocomplete="new-password">
-                                <button type="button" class="btn-toggle-password" data-target="register-password" title="Hiện/Ẩn mật khẩu">
+                                <button type="button" class="btn-toggle-password" data-target="register-password" title="Hiện/Ẩn mật khẩu" aria-label="Hiện/Ẩn mật khẩu">
                                     <span class="material-icons-round">visibility</span>
                                 </button>
                             </div>
@@ -172,7 +177,7 @@
                             <div class="auth-input-wrapper">
                                 <span class="material-icons-round auth-input-icon">lock_outline</span>
                                 <input type="password" id="register-confirm" class="auth-input" placeholder="Nhập lại mật khẩu" autocomplete="new-password">
-                                <button type="button" class="btn-toggle-password" data-target="register-confirm" title="Hiện/Ẩn mật khẩu">
+                                <button type="button" class="btn-toggle-password" data-target="register-confirm" title="Hiện/Ẩn mật khẩu" aria-label="Hiện/Ẩn mật khẩu">
                                     <span class="material-icons-round">visibility</span>
                                 </button>
                             </div>
@@ -227,19 +232,24 @@
                     <img src="assets/logo.png" alt="Suna Chat" class="logo-img">
                     <h1 class="logo-text">Suna <span class="logo-accent">Chat</span></h1>
                 </div>
-                <button id="btn-new-chat" class="btn-new-chat" title="Tạo đoạn chat mới">
-                    <span class="material-icons-round">add_comment</span>
-                </button>
+                <div class="sidebar-header-actions" style="display: flex; gap: 8px;">
+                    <button id="btn-summarize-new-chat" class="btn-new-chat" title="Tóm tắt & Chat mới (Kế thừa ngữ cảnh)" aria-label="Tóm tắt & Chat mới (Kế thừa ngữ cảnh)">
+                        <span class="material-icons-round">shortcut</span>
+                    </button>
+                    <button id="btn-new-chat" class="btn-new-chat" title="Tạo đoạn chat mới" aria-label="Tạo đoạn chat mới">
+                        <span class="material-icons-round">add_comment</span>
+                    </button>
+                </div>
             </div>
 
             <!-- Mode Toggle -->
             <div class="mode-toggle-container">
                 <div class="mode-toggle" id="mode-toggle">
-                    <button class="mode-btn active" data-mode="flash" title="Flash - Nhanh & Nhẹ">
+                    <button class="mode-btn active" data-mode="flash" title="Flash - Nhanh & Nhẹ" aria-label="Flash - Nhanh & Nhẹ">
                         <span class="material-icons-round">bolt</span>
                         <span>Flash</span>
                     </button>
-                    <button class="mode-btn" data-mode="pro" title="Pro - Mạnh mẽ & Chính xác">
+                    <button class="mode-btn" data-mode="pro" title="Pro - Mạnh mẽ & Chính xác" aria-label="Pro - Mạnh mẽ & Chính xác">
                         <span class="material-icons-round">diamond</span>
                         <span>Pro</span>
                     </button>
@@ -263,15 +273,15 @@
 
             <!-- Sidebar Footer -->
             <div class="sidebar-footer">
-                <button id="btn-settings" class="sidebar-footer-btn" title="Cài đặt">
+                <button id="btn-settings" class="sidebar-footer-btn" title="Cài đặt" aria-label="Cài đặt">
                     <span class="material-icons-round">settings</span>
                     <span>Cài đặt</span>
                 </button>
-                <button id="btn-memory" class="sidebar-footer-btn" title="Quản lý Trí nhớ AI">
+                <button id="btn-memory" class="sidebar-footer-btn" title="Quản lý Trí nhớ AI" aria-label="Quản lý Trí nhớ AI">
                     <span style="font-size: 1.2rem;">🌸</span>
                     <span>Trí nhớ Suna</span>
                 </button>
-                <button id="btn-personality" class="sidebar-footer-btn" title="Tính cách AI">
+                <button id="btn-personality" class="sidebar-footer-btn" title="Tính cách AI" aria-label="Tính cách AI">
                     <span style="font-size: 1.2rem;">🌿</span>
                     <span>Tính cách</span>
                 </button>
@@ -285,11 +295,11 @@
         <main class="main-content">
             <!-- Top Bar -->
             <header class="top-bar">
-                <button id="btn-toggle-sidebar" class="btn-icon" title="Đóng/Mở sidebar">
+                <button id="btn-toggle-sidebar" class="btn-icon" title="Đóng/Mở sidebar" aria-label="Đóng/Mở sidebar">
                     <span class="material-icons-round">menu</span>
                 </button>
                 <div class="top-bar-center">
-                    <div class="current-model-display" id="current-model-display">
+                    <div class="current-model-display" id="current-model-display" title="Đổi model & Cài đặt API" aria-label="Đổi model & Cài đặt API" role="button" tabindex="0">
                         <span class="material-icons-round model-icon">smart_toy</span>
                         <span id="current-model-name">Chưa chọn model</span>
                         <div class="mode-badge" id="mode-badge">Flash</div>
@@ -298,7 +308,7 @@
                 <div class="top-bar-right">
                     <!-- Suna Lofi Player -->
                     <div id="suna-lofi-player" class="suna-lofi-player">
-                        <button id="lofi-play-btn" class="lofi-control-btn" title="Play/Pause Suna Lofi">
+                        <button id="lofi-play-btn" class="lofi-control-btn" title="Play/Pause Suna Lofi" aria-label="Play/Pause Suna Lofi">
                             <span class="material-icons-round">play_arrow</span>
                         </button>
                         <div class="lofi-track-info">
@@ -322,7 +332,7 @@
 
                     <!-- User Profile Dropdown -->
                     <div class="top-user-profile" style="position: relative;">
-                        <button id="btn-user-menu" class="btn-icon" title="Tài khoản" onclick="document.getElementById('user-dropdown').classList.toggle('active')">
+                        <button id="btn-user-menu" class="btn-icon" title="Tài khoản" aria-label="Tài khoản" onclick="document.getElementById('user-dropdown').classList.toggle('active'); const mm = document.getElementById('mobile-more-menu'); if (mm) mm.classList.remove('active');">
                             <span class="material-icons-round">account_circle</span>
                         </button>
                         <div id="user-dropdown" class="user-dropdown">
@@ -334,26 +344,35 @@
                     <div id="sync-indicator" class="sync-indicator offline" title="Chưa đăng nhập">
                         <span class="material-icons-round">cloud_off</span>
                     </div>
-                    <button id="btn-toggle-theme" class="btn-icon mobile-hidden" title="Chuyển đổi Sáng/Tối">
+                    <button id="btn-toggle-workspace" class="btn-icon" title="Mở Live Workspace (Ctrl+Shift+O)" aria-label="Mở Live Workspace (Ctrl+Shift+O)">
+                        <span class="material-icons-round">space_dashboard</span>
+                    </button>
+                    <button id="btn-toggle-theme" class="btn-icon mobile-hidden" title="Chuyển đổi Sáng/Tối" aria-label="Chuyển đổi Sáng/Tối">
                         <span class="material-icons-round" id="theme-icon">light_mode</span>
                     </button>
-                    <button id="btn-export-chat" class="btn-icon mobile-hidden" title="Tải xuống đoạn chat (Markdown)">
+                    <button id="btn-export-chat" class="btn-icon mobile-hidden" title="Tải xuống đoạn chat (Markdown)" aria-label="Tải xuống đoạn chat (Markdown)">
                         <span class="material-icons-round">download</span>
                     </button>
-                    <button id="btn-api-settings" class="btn-icon mobile-hidden" title="API & Model (Proxy)">
+                    <button id="btn-api-settings" class="btn-icon mobile-hidden" title="API & Model (Proxy)" aria-label="API & Model (Proxy)">
                         <span class="material-icons-round">api</span>
                     </button>
                     <!-- Dropdown for Mobile -->
                     <div class="mobile-dropdown-container">
-                        <button id="btn-mobile-more" class="btn-icon desktop-hidden" title="Thêm">
+                        <button id="btn-mobile-more" class="btn-icon desktop-hidden" title="Thêm" aria-label="Thêm">
                             <span class="material-icons-round">more_vert</span>
                         </button>
                         <div id="mobile-more-menu" class="mobile-more-menu">
-                            <button id="btn-export-chat-mobile" class="mobile-menu-item">
+                            <button id="btn-toggle-workspace-mobile" class="mobile-menu-item" title="Mở Live Workspace" aria-label="Mở Live Workspace">
+                                <span class="material-icons-round">space_dashboard</span> Live Workspace
+                            </button>
+                            <button id="btn-export-chat-mobile" class="mobile-menu-item" title="Tải đoạn chat" aria-label="Tải đoạn chat">
                                 <span class="material-icons-round">download</span> Tải đoạn chat
                             </button>
-                            <button id="btn-toggle-theme-mobile" class="mobile-menu-item">
+                            <button id="btn-toggle-theme-mobile" class="mobile-menu-item" title="Đổi giao diện" aria-label="Đổi giao diện">
                                 <span class="material-icons-round" id="theme-icon-mobile">light_mode</span> Đổi giao diện
+                            </button>
+                            <button id="btn-api-settings-mobile" class="mobile-menu-item" title="Cài đặt API" aria-label="Cài đặt API">
+                                <span class="material-icons-round">api</span> Cài đặt API
                             </button>
                         </div>
                     </div>
@@ -382,7 +401,7 @@
                 <div id="messages-container" class="messages-container" style="display:none;"></div>
 
                 <!-- Tính năng 3: Nút cuộn xuống dưới cùng -->
-                <button id="btn-scroll-bottom" class="btn-scroll-bottom" title="Cuộn xuống dưới cùng">
+                <button id="btn-scroll-bottom" class="btn-scroll-bottom" title="Cuộn xuống dưới cùng" aria-label="Cuộn xuống dưới cùng">
                     <span class="material-icons-round">arrow_downward</span>
                 </button>
 
@@ -402,31 +421,31 @@
             <!-- Input Area -->
             <div class="input-area">
                 <div class="input-tools-bar">
-                    <button id="btn-web-search" class="tool-chip" title="Tìm kiếm thông tin thực tế từ Internet">
+                    <button id="btn-web-search" class="tool-chip" title="Tìm kiếm thông tin thực tế từ Internet" aria-label="Tìm kiếm thông tin thực tế từ Internet">
                         <span class="material-icons-round" id="web-search-icon">public</span>
                         <span id="web-search-text">Web Search</span>
                     </button>
-                    <button id="btn-translator-mode" class="tool-chip" title="Mở chế độ phiên dịch viên">
+                    <button id="btn-translator-mode" class="tool-chip" title="Mở chế độ phiên dịch viên" aria-label="Mở chế độ phiên dịch viên">
                         <span class="material-icons-round">translate</span>
                         <span>Dịch trực tiếp</span>
                     </button>
                 </div>
                 <div class="input-container">
                     <div class="input-actions-left">
-                        <button id="btn-voice" class="btn-input-action" title="Nhập bằng giọng nói (Micro)">
+                        <button id="btn-voice" class="btn-input-action" title="Nhập bằng giọng nói (Micro)" aria-label="Nhập bằng giọng nói (Micro)">
                             <span class="material-icons-round">mic</span>
                         </button>
-                        <button id="btn-attach-file" class="btn-input-action" title="Đính kèm file">
+                        <button id="btn-attach-file" class="btn-input-action" title="Đính kèm file" aria-label="Đính kèm file">
                             <span class="material-icons-round">attach_file</span>
                         </button>
-                        <button id="btn-attach-image" class="btn-input-action" title="Đính kèm hình ảnh">
+                        <button id="btn-attach-image" class="btn-input-action" title="Đính kèm hình ảnh" aria-label="Đính kèm hình ảnh">
                             <span class="material-icons-round">image</span>
                         </button>
                     </div>
                     <div class="textarea-wrapper">
                         <textarea id="message-input" class="message-input" placeholder="Nhập tin nhắn... (Ctrl+V để dán ảnh)" rows="1"></textarea>
                     </div>
-                    <button id="btn-send" class="btn-send" title="Gửi tin nhắn">
+                    <button id="btn-send" class="btn-send" title="Gửi tin nhắn" aria-label="Gửi tin nhắn">
                         <span class="material-icons-round">send</span>
                     </button>
                 </div>
@@ -441,7 +460,7 @@
         <div class="modal settings-modal">
             <div class="modal-header">
                 <h2><span class="material-icons-round">settings</span> Cài đặt chung</h2>
-                <button class="btn-close-modal" data-close="settings-modal"><span class="material-icons-round">close</span></button>
+                <button class="btn-close-modal" data-close="settings-modal" title="Đóng" aria-label="Đóng"><span class="material-icons-round">close</span></button>
             </div>
             <div class="modal-body">
                 <div class="settings-section">
@@ -449,7 +468,7 @@
                     <div class="user-profile-row">
                         <div class="user-avatar-edit">
                             <img id="user-avatar-preview" src="" alt="Avatar" class="user-avatar-img">
-                            <button id="btn-change-avatar" class="btn-avatar-change" title="Đổi avatar"><span class="material-icons-round">photo_camera</span></button>
+                            <button id="btn-change-avatar" class="btn-avatar-change" title="Đổi avatar" aria-label="Đổi avatar"><span class="material-icons-round">photo_camera</span></button>
                             <input type="file" id="user-avatar-input" style="display:none" accept="image/*">
                         </div>
                         <div class="user-name-edit">
@@ -461,7 +480,7 @@
                 <div class="settings-section">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 10px;">
                         <h3 style="margin-bottom:0;"><span class="material-icons-round">text_fields</span> Hiển thị & Font chữ</h3>
-                        <button id="btn-font-settings-in-modal" class="btn-secondary" style="padding: 5px 12px; font-size: 0.9rem;">Tùy chỉnh Font</button>
+                        <button id="btn-font-settings-in-modal" class="btn-secondary" style="padding: 5px 12px; font-size: 0.9rem;" title="Tùy chỉnh Font" aria-label="Tùy chỉnh Font">Tùy chỉnh Font</button>
                     </div>
                 </div>
                 <div class="settings-section">
@@ -484,7 +503,7 @@
                     <p class="settings-desc">Model mạnh nhất, hiệu năng tối đa</p>
                     <select id="pro-model-select" class="settings-select"><option value="">-- Chọn model Pro --</option></select>
                 </div>
-                <button id="btn-save-settings" class="btn-primary"><span class="material-icons-round">save</span> Lưu cài đặt</button>
+                <button id="btn-save-settings" class="btn-primary" title="Lưu cài đặt" aria-label="Lưu cài đặt"><span class="material-icons-round">save</span> Lưu cài đặt</button>
             </div>
         </div>
     </div>
@@ -494,7 +513,7 @@
         <div class="modal api-modal">
             <div class="modal-header">
                 <h2><span class="material-icons-round">api</span> Cấu hình API & Model</h2>
-                <button class="btn-close-modal" data-close="api-modal"><span class="material-icons-round">close</span></button>
+                <button class="btn-close-modal" data-close="api-modal" title="Đóng" aria-label="Đóng"><span class="material-icons-round">close</span></button>
             </div>
             <div class="modal-body">
                 <div class="settings-section">
@@ -505,7 +524,7 @@
                     <h3><span class="material-icons-round">key</span> Proxy chính - API Key</h3>
                     <div class="api-key-wrapper">
                         <input type="password" id="api-key" class="settings-input" placeholder="sk-xxxxxxxxxxxxx">
-                        <button id="btn-toggle-key" class="btn-icon-sm" title="Hiện/Ẩn key"><span class="material-icons-round">visibility</span></button>
+                        <button id="btn-toggle-key" class="btn-icon-sm" title="Hiện/Ẩn key" aria-label="Hiện/Ẩn key"><span class="material-icons-round">visibility</span></button>
                     </div>
                 </div>
                 <div class="proxy-divider"><span>Proxy phụ (tùy chọn)</span></div>
@@ -517,15 +536,24 @@
                     <h3><span class="material-icons-round">key</span> Proxy phụ - API Key</h3>
                     <div class="api-key-wrapper">
                         <input type="password" id="api-key-2" class="settings-input" placeholder="sk-xxxxxxxxxxxxx">
-                        <button id="btn-toggle-key-2" class="btn-icon-sm" title="Hiện/Ẩn key"><span class="material-icons-round">visibility</span></button>
+                        <button id="btn-toggle-key-2" class="btn-icon-sm" title="Hiện/Ẩn key" aria-label="Hiện/Ẩn key"><span class="material-icons-round">visibility</span></button>
                     </div>
+                </div>
+                <div class="proxy-divider"><span>Vượt lỗi CORS / Preflight (Tùy chọn)</span></div>
+                <div class="settings-section">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                        <h3 style="margin: 0;"><span class="material-icons-round">security</span> CORS Worker Proxy</h3>
+                        <button type="button" id="btn-copy-worker-code" class="btn-secondary" style="font-size: 11px; padding: 3px 8px; height: auto; line-height: 1.2; display: inline-flex; align-items: center; gap: 4px;" title="Sao chép script Cloudflare Worker để tự tạo proxy miễn phí"><span class="material-icons-round" style="font-size: 13px;">content_copy</span> Copy Worker</button>
+                    </div>
+                    <input type="url" id="api-cors-proxy" class="settings-input" placeholder="https://my-worker.workers.dev (hoặc để trống)">
+                    <p class="settings-desc" style="font-size: 11px; opacity: 0.75; margin-top: 4px; margin-bottom: 0;">Dành cho API bị chặn CORS (OPTIONS 403) trên trình duyệt. Suna Chat sẽ tự động chuyển tiếp an toàn qua Worker.</p>
                 </div>
                 <div class="settings-section">
                     <h3><span class="material-icons-round">download</span> Lấy danh sách Model</h3>
                     <div class="fetch-btn-group">
-                        <button id="btn-fetch-proxy1" class="btn-secondary btn-fetch-item" title="Chỉ lấy từ proxy chính"><span class="material-icons-round">looks_one</span> Proxy chính</button>
-                        <button id="btn-fetch-proxy2" class="btn-secondary btn-fetch-item" title="Chỉ lấy từ proxy phụ"><span class="material-icons-round">looks_two</span> Proxy phụ</button>
-                        <button id="btn-fetch-models" class="btn-secondary btn-fetch-item btn-fetch-all" title="Lấy từ cả hai proxy"><span class="material-icons-round">merge</span> Cả hai</button>
+                        <button id="btn-fetch-proxy1" class="btn-secondary btn-fetch-item" title="Chỉ lấy từ proxy chính" aria-label="Chỉ lấy từ proxy chính"><span class="material-icons-round">looks_one</span> Proxy chính</button>
+                        <button id="btn-fetch-proxy2" class="btn-secondary btn-fetch-item" title="Chỉ lấy từ proxy phụ" aria-label="Chỉ lấy từ proxy phụ"><span class="material-icons-round">looks_two</span> Proxy phụ</button>
+                        <button id="btn-fetch-models" class="btn-secondary btn-fetch-item btn-fetch-all" title="Lấy từ cả hai proxy" aria-label="Lấy từ cả hai proxy"><span class="material-icons-round">merge</span> Cả hai</button>
                     </div>
                     <div id="fetch-status" class="fetch-status"></div>
                 </div>
@@ -534,8 +562,8 @@
                     <select id="model-select" class="settings-select"><option value="">-- Lấy model trước --</option></select>
                 </div>
                 <div style="display: flex; gap: 10px;">
-                    <button id="btn-save-api" class="btn-primary" style="flex: 1;"><span class="material-icons-round">save</span> Lưu cấu hình</button>
-                    <button id="btn-test-api" class="btn-secondary" style="flex: 1;" title="Gửi tin nhắn 'Hello' để kiểm tra kết nối"><span class="material-icons-round">bug_report</span> Test API</button>
+                    <button id="btn-save-api" class="btn-primary" style="flex: 1;" title="Lưu cấu hình" aria-label="Lưu cấu hình"><span class="material-icons-round">save</span> Lưu cấu hình</button>
+                    <button id="btn-test-api" class="btn-secondary" style="flex: 1;" title="Gửi tin nhắn 'Hello' để kiểm tra kết nối" aria-label="Gửi tin nhắn 'Hello' để kiểm tra kết nối"><span class="material-icons-round">bug_report</span> Test API</button>
                 </div>
             </div>
         </div>
@@ -546,7 +574,7 @@
         <div class="modal personality-modal">
             <div class="modal-header">
                 <h2><span class="material-icons-round">psychology</span> Tính cách AI</h2>
-                <button class="btn-close-modal" data-close="personality-modal"><span class="material-icons-round">close</span></button>
+                <button class="btn-close-modal" data-close="personality-modal" title="Đóng" aria-label="Đóng"><span class="material-icons-round">close</span></button>
             </div>
             <div class="modal-body">
                 <div class="settings-section">
@@ -577,7 +605,7 @@
                     <h3><span class="material-icons-round">edit_note</span> Mô tả tính cách tùy chỉnh</h3>
                     <textarea id="custom-personality" class="settings-textarea" placeholder="Ví dụ: Luôn sử dụng emoji, nói chuyện thân mật như bạn bè..." rows="4"></textarea>
                 </div>
-                <button id="btn-save-personality" class="btn-primary"><span class="material-icons-round">save</span> Lưu tính cách</button>
+                <button id="btn-save-personality" class="btn-primary" title="Lưu tính cách" aria-label="Lưu tính cách"><span class="material-icons-round">save</span> Lưu tính cách</button>
             </div>
         </div>
     </div>
@@ -587,7 +615,7 @@
         <div class="modal font-modal">
             <div class="modal-header">
                 <h2><span class="material-icons-round">text_fields</span> Cài đặt Font chữ</h2>
-                <button class="btn-close-modal" data-close="font-modal"><span class="material-icons-round">close</span></button>
+                <button class="btn-close-modal" data-close="font-modal" title="Đóng" aria-label="Đóng"><span class="material-icons-round">close</span></button>
             </div>
             <div class="modal-body">
                 <div class="settings-section">
@@ -611,7 +639,7 @@
                     <h3>Xem trước</h3>
                     <div id="font-preview" class="font-preview">Xin chào! Đây là đoạn văn bản xem trước font chữ. 🎉</div>
                 </div>
-                <button id="btn-save-font" class="btn-primary"><span class="material-icons-round">save</span> Áp dụng</button>
+                <button id="btn-save-font" class="btn-primary" title="Áp dụng" aria-label="Áp dụng"><span class="material-icons-round">save</span> Áp dụng</button>
             </div>
         </div>
     </div>
@@ -621,7 +649,7 @@
         <div class="modal rename-modal">
             <div class="modal-header">
                 <h2><span class="material-icons-round">edit</span> Đổi tên đoạn chat</h2>
-                <button class="btn-close-modal" data-close="rename-modal"><span class="material-icons-round">close</span></button>
+                <button class="btn-close-modal" data-close="rename-modal" title="Đóng" aria-label="Đóng"><span class="material-icons-round">close</span></button>
             </div>
             <div class="modal-body">
                 <div class="settings-section">
@@ -629,8 +657,8 @@
                     <input type="text" id="rename-input" class="settings-input" placeholder="Nhập tên mới cho đoạn chat..." maxlength="80">
                 </div>
                 <div class="delete-confirm-actions">
-                    <button id="btn-cancel-rename" class="btn-secondary">Hủy</button>
-                    <button id="btn-confirm-rename" class="btn-primary">Đổi tên</button>
+                    <button id="btn-cancel-rename" class="btn-secondary" title="Hủy" aria-label="Hủy">Hủy</button>
+                    <button id="btn-confirm-rename" class="btn-primary" title="Đổi tên" aria-label="Đổi tên">Đổi tên</button>
                 </div>
             </div>
         </div>
@@ -641,13 +669,13 @@
         <div class="modal delete-confirm-modal">
             <div class="modal-header">
                 <h2><span class="material-icons-round">warning</span> Xác nhận xóa</h2>
-                <button class="btn-close-modal" data-close="delete-confirm-modal"><span class="material-icons-round">close</span></button>
+                <button class="btn-close-modal" data-close="delete-confirm-modal" title="Đóng" aria-label="Đóng"><span class="material-icons-round">close</span></button>
             </div>
             <div class="modal-body">
                 <p id="delete-confirm-text" style="color:var(--text-secondary);line-height:1.6;">Bạn có chắc muốn xóa đoạn chat này?</p>
                 <div class="delete-confirm-actions">
-                    <button id="btn-cancel-delete" class="btn-secondary">Hủy</button>
-                    <button id="btn-confirm-delete" class="btn-danger">Xóa</button>
+                    <button id="btn-cancel-delete" class="btn-secondary" title="Hủy" aria-label="Hủy">Hủy</button>
+                    <button id="btn-confirm-delete" class="btn-danger" title="Xóa" aria-label="Xóa">Xóa</button>
                 </div>
             </div>
         </div>
@@ -658,13 +686,13 @@
         <div class="modal memory-modal" style="max-width: 600px;">
             <div class="modal-header">
                 <h2><span class="material-icons-round" style="color:#f093fb;">psychology_alt</span> Tủ trí nhớ Suna</h2>
-                <button class="btn-close-modal" data-close="memory-modal"><span class="material-icons-round">close</span></button>
+                <button class="btn-close-modal" data-close="memory-modal" title="Đóng" aria-label="Đóng"><span class="material-icons-round">close</span></button>
             </div>
             <div class="modal-body">
                 <p class="settings-desc">Suna sẽ tự động ghi nhớ các thông tin quan trọng về bạn để cuộc trò chuyện cá nhân hóa hơn. Bạn có thể quản lý chúng tại đây.</p>
                 <div class="memory-input-group" style="display:flex; gap:10px; margin-bottom:15px;">
                     <input type="text" id="new-memory-input" class="settings-input" placeholder="Ví dụ: Tôi thích ăn phở, tôi nuôi 1 chú chó tên Lu...">
-                    <button id="btn-add-memory" class="btn-primary" style="white-space:nowrap;"><span class="material-icons-round">add</span> Thêm</button>
+                    <button id="btn-add-memory" class="btn-primary" style="white-space:nowrap;" title="Thêm" aria-label="Thêm"><span class="material-icons-round">add</span> Thêm</button>
                 </div>
                 <div id="memory-list" class="memory-list">
                     <!-- Memory facts will be rendered here -->
@@ -678,7 +706,7 @@
         <div class="modal translator-modal" style="max-width: 720px;">
             <div class="modal-header">
                 <h2><span class="material-icons-round" style="color:#4facfe;">translate</span> Phiên dịch viên AI</h2>
-                <button class="btn-close-modal" data-close="translator-modal"><span class="material-icons-round">close</span></button>
+                <button class="btn-close-modal" data-close="translator-modal" title="Đóng" aria-label="Đóng"><span class="material-icons-round">close</span></button>
             </div>
             <div class="modal-body" style="padding: 0;">
                 <div class="translator-container">
@@ -689,11 +717,11 @@
                         <div class="translator-text" id="translator-source-text">Nhấn mic hoặc nhập văn bản...</div>
                         <div class="translator-input-row">
                             <textarea id="translator-source-input" class="translator-textarea" placeholder="Nhập văn bản tiếng Việt..." rows="2"></textarea>
-                            <button class="btn-translator-mic" id="btn-mic-vi" title="Giữ mic để nói"><span class="material-icons-round">mic</span></button>
+                            <button class="btn-translator-mic" id="btn-mic-vi" title="Giữ mic để nói" aria-label="Giữ mic để nói"><span class="material-icons-round">mic</span></button>
                         </div>
                     </div>
                     <div class="translator-divider">
-                        <button id="btn-translator-swap" class="btn-translator-swap" title="Đảo ngôn ngữ">
+                        <button id="btn-translator-swap" class="btn-translator-swap" title="Đảo ngôn ngữ" aria-label="Đảo ngôn ngữ">
                             <span class="material-icons-round">swap_vert</span>
                         </button>
                     </div>
@@ -711,19 +739,19 @@
                         <div class="translator-text" id="translator-target-text">Bản dịch sẽ hiển thị ở đây...</div>
                         <div class="translator-input-row">
                             <textarea id="translator-target-input" class="translator-textarea" placeholder="Nhập văn bản cần dịch..." rows="2"></textarea>
-                            <button class="btn-translator-mic" id="btn-mic-target" title="Giữ mic để nói"><span class="material-icons-round">mic</span></button>
+                            <button class="btn-translator-mic" id="btn-mic-target" title="Giữ mic để nói" aria-label="Giữ mic để nói"><span class="material-icons-round">mic</span></button>
                         </div>
                     </div>
                 </div>
                 <!-- Translator Action Bar -->
                 <div class="translator-actions">
-                    <button id="btn-translator-translate" class="btn-primary" style="flex:1;">
+                    <button id="btn-translator-translate" class="btn-primary" style="flex:1;" title="Dịch văn bản" aria-label="Dịch văn bản">
                         <span class="material-icons-round">translate</span> Dịch văn bản
                     </button>
-                    <button id="btn-translator-copy" class="btn-secondary" title="Copy bản dịch">
+                    <button id="btn-translator-copy" class="btn-secondary" title="Copy bản dịch" aria-label="Copy bản dịch">
                         <span class="material-icons-round">content_copy</span>
                     </button>
-                    <button id="btn-translator-to-chat" class="btn-secondary" title="Điền vào ô chat">
+                    <button id="btn-translator-to-chat" class="btn-secondary" title="Điền vào ô chat" aria-label="Điền vào ô chat">
                         <span class="material-icons-round">chat</span> Điền vào Chat
                     </button>
                 </div>
@@ -736,33 +764,33 @@
         <div class="modal" style="max-width: 460px;">
             <div class="modal-header">
                 <h2><span class="material-icons-round" style="color:#43e97b;">download</span> Xuất cuộc hội thoại</h2>
-                <button class="btn-close-modal" data-close="export-modal"><span class="material-icons-round">close</span></button>
+                <button class="btn-close-modal" data-close="export-modal" title="Đóng" aria-label="Đóng"><span class="material-icons-round">close</span></button>
             </div>
             <div class="modal-body">
                 <p style="color:var(--text-secondary); margin-bottom:16px;">Chọn định dạng xuất cho cuộc hội thoại hiện tại:</p>
                 <div class="export-options">
-                    <button id="btn-export-md" class="export-option-btn">
+                    <button id="btn-export-md" class="export-option-btn" title="Xuất Markdown" aria-label="Xuất Markdown">
                         <span class="material-icons-round">description</span>
                         <div>
                             <strong>Markdown</strong>
                             <small>Tệp .md — dễ đọc, dễ chia sẻ</small>
                         </div>
                     </button>
-                    <button id="btn-export-txt" class="export-option-btn">
+                    <button id="btn-export-txt" class="export-option-btn" title="Xuất Văn bản thuần" aria-label="Xuất Văn bản thuần">
                         <span class="material-icons-round">article</span>
                         <div>
                             <strong>Văn bản thuần</strong>
                             <small>Tệp .txt — tương thích mọi nơi</small>
                         </div>
                     </button>
-                    <button id="btn-export-html" class="export-option-btn">
+                    <button id="btn-export-html" class="export-option-btn" title="Xuất HTML" aria-label="Xuất HTML">
                         <span class="material-icons-round">code</span>
                         <div>
                             <strong>HTML</strong>
                             <small>Trang web đẹp, mở trên trình duyệt</small>
                         </div>
                     </button>
-                    <button id="btn-export-json" class="export-option-btn">
+                    <button id="btn-export-json" class="export-option-btn" title="Xuất JSON" aria-label="Xuất JSON">
                         <span class="material-icons-round">data_object</span>
                         <div>
                             <strong>JSON</strong>
@@ -779,27 +807,28 @@
         <div id="workspace-left-handle" class="workspace-left-handle" title="Kéo để chỉnh kích thước màn hình làm việc"></div>
         <div class="artifacts-header">
             <div class="artifacts-title">
-                <button id="btn-expand-workspace" class="btn-icon" title="Mở rộng/Thu nhỏ toàn màn hình" style="margin-right: 8px;"><span class="material-icons-round">open_in_full</span></button>
+                <button id="btn-expand-workspace" class="btn-icon" title="Mở rộng/Thu nhỏ toàn màn hình" aria-label="Mở rộng/Thu nhỏ toàn màn hình" style="margin-right: 8px;"><span class="material-icons-round">open_in_full</span></button>
                 <span class="material-icons-round">code</span> 
                 <span id="artifact-title">Live Workspace</span>
             </div>
             <div class="artifacts-actions">
                 <div class="artifact-view-toggle">
-                    <button class="view-toggle-btn active" data-view="split" title="Chế độ chia đôi"><span class="material-icons-round">splitscreen</span><span>Split</span></button>
-                    <button class="view-toggle-btn" data-view="editor" title="Chế độ chỉnh sửa"><span class="material-icons-round">edit</span><span>Editor</span></button>
-                    <button class="view-toggle-btn" data-view="preview" title="Chế độ xem trước"><span class="material-icons-round">visibility</span><span>Preview</span></button>
+                    <button class="view-toggle-btn active" data-view="split" title="Chế độ chia đôi" aria-label="Chế độ chia đôi"><span class="material-icons-round">splitscreen</span><span>Split</span></button>
+                    <button class="view-toggle-btn" data-view="editor" title="Chế độ chỉnh sửa" aria-label="Chế độ chỉnh sửa"><span class="material-icons-round">edit</span><span>Editor</span></button>
+                    <button class="view-toggle-btn" data-view="preview" title="Chế độ xem trước" aria-label="Chế độ xem trước"><span class="material-icons-round">visibility</span><span>Preview</span></button>
+                    <button class="view-toggle-btn" data-view="chat" title="Trợ lý Suna AI" aria-label="Trợ lý Suna AI"><span class="material-icons-round">smart_toy</span><span>Suna AI</span></button>
                 </div>
-                <button id="btn-copy-artifact" class="btn-icon" title="Sao chép code"><span class="material-icons-round">content_copy</span></button>
-                <button id="btn-download-artifact" class="btn-icon" title="Tải xuống HTML"><span class="material-icons-round">download</span></button>
-                <button id="btn-refresh-artifact" class="btn-icon" title="Tải lại"><span class="material-icons-round">refresh</span></button>
-                <button id="btn-collab-suna" class="btn-collab" title="Nhờ Suna tối ưu code"><span class="material-icons-round">smart_toy</span><span>Cộng tác với Suna</span></button>
-                <button id="btn-close-artifact" class="btn-icon" title="Đóng"><span class="material-icons-round">close</span></button>
+                <button id="btn-copy-artifact" class="btn-icon" title="Sao chép code" aria-label="Sao chép code"><span class="material-icons-round">content_copy</span></button>
+                <button id="btn-download-artifact" class="btn-icon" title="Tải xuống HTML" aria-label="Tải xuống HTML"><span class="material-icons-round">download</span></button>
+                <button id="btn-refresh-artifact" class="btn-icon" title="Tải lại" aria-label="Tải lại"><span class="material-icons-round">refresh</span></button>
+                <button id="btn-collab-suna" class="btn-collab" title="Nhờ Suna tối ưu code" aria-label="Nhờ Suna tối ưu code"><span class="material-icons-round">smart_toy</span><span>Cộng tác với Suna</span></button>
+                <button id="btn-close-artifact" class="btn-icon" title="Đóng" aria-label="Đóng"><span class="material-icons-round">close</span></button>
             </div>
         </div>
         <div class="artifacts-content">
             <div id="artifact-editor-container" class="artifact-editor-container">
                 <div class="workspace-editor-toolbar">
-                    <button id="btn-new-session" class="btn-toolbar-action" title="Tạo bài mới"><span class="material-icons-round">add</span><span>Bài mới</span></button>
+                    <button id="btn-new-session" class="btn-toolbar-action" title="Tạo bài mới" aria-label="Tạo bài mới"><span class="material-icons-round">add</span><span>Bài mới</span></button>
                     <select id="select-session-template" class="select-toolbar-template">
                         <option value="blank">📄 Trang trống</option>
                         <option value="html5" selected>🌐 HTML5 Boilerplate</option>
@@ -811,7 +840,7 @@
             </div>
             <div id="artifact-resizer-1" class="artifact-resizer" title="Kéo để chỉnh kích thước"></div>
             <div id="artifact-preview-container" class="artifact-preview-container">
-                <iframe id="artifact-iframe" sandbox="allow-scripts" style="width:100%; height:100%; border:none; background:white;"></iframe>
+                <iframe id="artifact-iframe" sandbox="allow-scripts allow-modals allow-forms" style="width:100%; height:100%; border:none; background:white;"></iframe>
             </div>
             <div id="artifact-resizer-2" class="artifact-resizer" title="Kéo để chỉnh kích thước"></div>
             <div id="artifact-chat-container" class="artifact-chat-container">
@@ -826,7 +855,7 @@
                 </div>
                 <div class="workspace-chat-input-container">
                     <textarea id="workspace-chat-input" class="workspace-chat-input" placeholder="Hỏi Suna về code..." rows="2"></textarea>
-                    <button id="btn-send-workspace-chat" class="btn-send-workspace" title="Gửi tin nhắn"><span class="material-icons-round">send</span></button>
+                    <button id="btn-send-workspace-chat" class="btn-send-workspace" title="Gửi tin nhắn" aria-label="Gửi tin nhắn"><span class="material-icons-round">send</span></button>
                 </div>
             </div>
         </div>
