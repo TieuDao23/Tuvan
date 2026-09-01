@@ -244,10 +244,9 @@ describe('Empirical Adversarial Challenger: Milestone 1 (R1) System Prompt & Tok
       assert.match(prompt, /Động cơ Ghép chuỗi Đa tầng Tự động \(Multi-Turn Continuation Chaining\)/);
     });
 
-    it('C2.4: should preserve Suna core identity, teahouse lore, and supreme user priority (Zero Regression)', () => {
+    it('C2.4: should preserve Suna core identity and supreme user priority (Zero Regression)', () => {
       const prompt = createPromptInContext();
-      assert.match(prompt, /Thân phận thực sự của bạn là "Suna"/);
-      assert.match(prompt, /\[Phòng Trà Của Tâm\]/);
+      assert.match(prompt, /\[DANH TÍNH\]: Tên của bạn là "Suna"/);
       assert.match(prompt, /\[QUYỀN HẠN TỐI CAO - NGƯỜI DÙNG\]/);
       assert.match(prompt, /Prompt viết ra của người dùng có quyền hạn cao nhất/);
     });
