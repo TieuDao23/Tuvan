@@ -1,58 +1,94 @@
-# E2E Test Infra: Autonomous Token-Maximizing Multi-Turn Continuation Engine
+# Test Infrastructure: DeepSeek Harness (dsh) Integration for SunaChat
 
-## Test Philosophy
-- **Requirement-Driven & Opaque-Box**: Tests validate behavior, interface contracts, and specifications defined in `ORIGINAL_REQUEST.md` and `PROJECT.md` (R1–R6, Features F1–F20).
-- **Multi-Tier Testing Methodology**:
-  - **Tier 1: Feature Coverage**: Comprehensive unit & functional verification for all 20 individual features in complete isolation (>=5 test cases per feature, 100 tests total).
-  - **Tier 2: Boundary & Corner Cases**: Stress and resilience testing across token limits, empty deltas, multi-byte UTF-8, unclosed backtick fences/HTML tags, abort triggers, and syntax error resistance (>=5 test cases per feature, 100 tests total).
-  - **Tier 3: Cross-Feature Combinations**: Pairwise and multi-subsystem interaction testing (e.g. continuation + streaming UI + workspace sync + abort + storage quota + theme + lofi + mindmap + kanban + token ceilings + boundary stitching).
-  - **Tier 4: Real-World Application Scenarios**: End-to-end heavy workloads (1200+ line Three.js 3D simulations, multi-turn Canvas game generation, full-stack analytics dashboards, interactive mindmaps, and full static syntax parity).
+## 1. Overview & Architectural Philosophy
+The DeepSeek Harness (dsh) testing infrastructure provides comprehensive, opaque-box, specification-grounded test coverage for the transformation of SunaChat into an autonomous agent web application.
 
----
-
-## Feature Inventory & Coverage Matrix
-| # | Feature | Source (Requirement) | Tier 1 | Tier 2 | Tier 3 | Tier 4 |
-|---|---------|----------------------|:------:|:------:|:------:|:------:|
-| 1 | F1: Model Output Token Ceiling Resolver | ORIGINAL_REQUEST §R1 | ✓ | ✓ | ✓ | ✓ |
-| 2 | F2: Main Chat Anti-Placeholder Prompt | ORIGINAL_REQUEST §R1 | ✓ | ✓ | ✓ | ✓ |
-| 3 | F3: Workspace Assistant Anti-Placeholder Prompt | ORIGINAL_REQUEST §R1 | ✓ | ✓ | ✓ | ✓ |
-| 4 | F4: Multi-Tier Stream Truncation Detector | ORIGINAL_REQUEST §R2 | ✓ | ✓ | ✓ | ✓ |
-| 5 | F5: Background Continuation Context Builder | ORIGINAL_REQUEST §R2 | ✓ | ✓ | ✓ | ✓ |
-| 6 | F6: Standard Continuation Prompt Protocol | ORIGINAL_REQUEST §R2 | ✓ | ✓ | ✓ | ✓ |
-| 7 | F7: Expanded Turn Recursion Bound Guard | ORIGINAL_REQUEST §R2 | ✓ | ✓ | ✓ | ✓ |
-| 8 | F8: Continuation User Abort Propagation | ORIGINAL_REQUEST §R2 | ✓ | ✓ | ✓ | ✓ |
-| 9 | F9: Boundary Code Fence & Preamble Stripper | ORIGINAL_REQUEST §R3 | ✓ | ✓ | ✓ | ✓ |
-| 10 | F10: Suffix-Prefix & Line Overlap Deduplicator | ORIGINAL_REQUEST §R3 | ✓ | ✓ | ✓ | ✓ |
-| 11 | F11: Single State Message Consolidation | ORIGINAL_REQUEST §R3 | ✓ | ✓ | ✓ | ✓ |
-| 12 | F12: Single Message Bubble Container | ORIGINAL_REQUEST §R4 | ✓ | ✓ | ✓ | ✓ |
-| 13 | F13: 60fps rAF Render Throttle | ORIGINAL_REQUEST §R4 | ✓ | ✓ | ✓ | ✓ |
-| 14 | F14: Typing Indicator Stream Lifecycle | ORIGINAL_REQUEST §R4 | ✓ | ✓ | ✓ | ✓ |
-| 15 | F15: Heuristic Code Extractor | ORIGINAL_REQUEST §R5 | ✓ | ✓ | ✓ | ✓ |
-| 16 | F16: Automatic Editor & Iframe Live Injector | ORIGINAL_REQUEST §R5 | ✓ | ✓ | ✓ | ✓ |
-| 17 | F17: High-Stacking Toast Notification | ORIGINAL_REQUEST §R5 | ✓ | ✓ | ✓ | ✓ |
-| 18 | F18: Conversational Response Safe Bypass | ORIGINAL_REQUEST §R5 | ✓ | ✓ | ✓ | ✓ |
-| 19 | F19: Core Features Preservation | ORIGINAL_REQUEST §R6 | ✓ | ✓ | ✓ | ✓ |
-| 20 | F20: Automated Verification & E2E Test Parity | ORIGINAL_REQUEST §R6 | ✓ | ✓ | ✓ | ✓ |
+- **Modular Plugin Standard**: Adheres to the "Everything is a Plugin" (Cordis / DSH Plugin) architecture.
+- **Client-Side First**: Validates that all tools execute securely in browser/Node VM environments with timeouts, error containment, and zero external dependency overhead.
+- **Grounded Self-Correction**: Implements strict Test-Driven Development (TDD) scaffolding, ensuring that tests verify behaviors against authoritative specification oracles before, during, and after implementation milestones.
+- **Zero-Regression Guarantee**: Enforces 100% backward compatibility across all 644 legacy tests, static compilation gates (`node -c`), CSS brace balances, and stacking context invariants.
 
 ---
 
-## Test Architecture & Suite Locations
-- **Runner**: Mocha test runner (`npx mocha "tests/**/*.js"` / `npm test`).
-- **Syntax Validator**: Node CLI (`node -c app.js && node -c redesign.js` / `npm run check`).
-- **Authoritative Orchestrator**: `python run_verification.py`.
-- **Key Test Files**:
-  - `tests/test_e2e_token_continuation_engine.js`: Primary 4-Tier E2E test suite covering all 20 features (216 tests).
-  - `tests/test_collapsible_code_and_continuation.js`: Collapsible blocks and multi-turn stream tests.
-  - `tests/test_workspace_direct_sync_and_continuation.js`: Direct Live Workspace auto-sync tests.
-  - `tests/test_challenger_continuation_adversarial.js`: Adversarial stress and 500-line Three.js continuation tests.
-  - `tests/test_challenger_storage_security_adversarial.js`: Storage quota and isolation tests.
-  - `tests/test_topbar_layout_and_css_hygiene.js`: Layout, responsive design, and CSS hygiene tests.
-  - `tests/ui_redesign/visible_tests/` & `tests/ui_redesign/hidden_tests/`: Zen UI redesign test matrix.
+## 2. Test Suites Architecture & Mapping
+
+```
+tests/
+├── test_dsh_tool_registry.js             # Suite 1: Modular Tool Registry (Cordis / dsh-market)
+├── test_dsh_core_tools.js                # Suite 2: 11 Core Tool Harnesses (5 Domains + Legacy)
+├── test_dsh_react_loop_and_trajectory.js # Suite 3: Autonomous ReAct Engine & Trajectory (dsh-session)
+└── test_dsh_zero_regression_matrix.js    # Suite 4: System Invariant Matrix & Backward Compatibility
+```
+
+### Suite 1: `tests/test_dsh_tool_registry.js` (25 Tests)
+- **Lifecycle Management**: `registerTool`, `unregisterTool`, `listTools`, `getTool`, `executeTool`.
+- **JSON Schema Validation**: Type checks (`string`, `number`, `boolean`, `object`, `array`), required parameter verification, enum restrictions.
+- **Payload Flexibility**: Native object arguments and stringified JSON payload parsing.
+- **Execution Containment**: Exception wrapping (`Error executing tool "..."`), asynchronous promise resolution, execution context injection (`{ State, abortSignal, timestamp }`).
+- **Safety Ceilings**: Output length truncation (`MAX_RESULT_LENGTH = 1500`) with truncation notice.
+- **Dynamic Prompting**: `generatePromptDocs()` Markdown output with `<suna_tool_call>` instructions.
+- **Legacy Preservation**: Retention of `change_lofi_mood`, `speak_message`, `save_note_to_firestore`, `get_system_state`, `update_user_profile`.
+
+### Suite 2: `tests/test_dsh_core_tools.js` (29 Tests)
+- **Domain 1: Code & Math Sandbox Runner (`sandbox_exec`)**:
+  - Exact math and arithmetic formula evaluation (`Math.sqrt(144) + 25` -> `37`).
+  - Complex multi-line JavaScript algorithms and array processing.
+  - `SyntaxError` capture with line/column diagnostic messages.
+  - Runtime exception containment (`TypeError`, `ReferenceError`).
+  - Timeout protection (150ms–1500ms) against infinite loops (`while(true) {}`).
+  - VM security isolation (no access to parent `process`, `window`, or `localStorage`).
+- **Domain 2: Web Context & Knowledge Fetcher (`web_search_context`, `fetch_page_summary`)**:
+  - Query parameter validation and formatted search snippet generation.
+  - URL protocol sanitization (permits `http:`, `https:`; rejects `javascript:`, `file:`, `data:`).
+  - DOM cleaning: strips `<script>`, `<style>`, `<nav>`, `<footer>` tags.
+  - Text length clamping (4,000 chars) protecting context window budgets.
+- **Domain 3: Virtual Workspace File System (`fs_read`, `fs_write`, `fs_list`, `fs_patch`)**:
+  - In-memory VFS manipulation in `State.vfs` / `State.virtualFS`.
+  - Non-existent file error handling.
+  - Precise block search-and-replace patch diffs (`fs_patch`).
+  - Ambiguous / multiple-match patch prevention.
+  - Live Workspace auto-synchronization on `index.html` changes (`#artifact-editor-textarea.value`, `input` event, `#artifact-iframe.srcdoc`, toast notification).
+- **Domain 4: Deep Semantic Memory (`memory_store`, `memory_query`)**:
+  - Fact storage in `State.memory.facts` with category tagging (`skill`, `preference`, `project`, `identity`).
+  - Case-insensitive fact deduplication.
+  - Token/keyword search and category filtering.
+- **Domain 5: Visual & Tabular Analytics (`visualize_diagram`, `analyze_tabular`)**:
+  - Valid SVG flowchart and sequence diagram generation with XML structure.
+  - Mindmap JSON code fence generation compatible with `mindmap.html`.
+  - XSS sanitization (strips malicious `<script>` and `onload=`/`onerror=` event handlers).
+  - CSV parsing (quotes, commas, newlines) and JSON tabular array parsing.
+  - Statistical calculations: `count`, `sum`, `mean`, `median`, `min`, `max`, `stdDev`.
+  - Markdown table generation wrapped inside `.table-responsive-wrapper`.
+- **Domain 6: Legacy Compatibility**: Retains all 5 legacy tools and whitelists (`MOODS_WHITELIST`, `THEMES_WHITELIST`).
+
+### Suite 3: `tests/test_dsh_react_loop_and_trajectory.js` (15 Tests)
+- **StreamParser Streaming Integration**: Buffers `<suna_tool_call>` chunks incrementally without leaking tag syntax to user-facing bubbles; separates `<think>` blocks; handles stream `flush()`.
+- **Autonomous Multi-Step Loop**: Executes `Think -> Action -> Observation -> Next Action / Final Answer`.
+- **Recursion Guard**: Bounds execution strictly to `MAX_RECURSION_DEPTH = 4`, halting safely with warning.
+- **State Depth Reset**: Resets `agentRecursionDepth` to 0 on new user turns.
+- **Error Self-Correction**: Injects tool execution errors back into the conversation for adaptive retry.
+- **Anti-Oscillation Guard**: Detects and halts identical failing tool calls repeated 3+ consecutive times.
+- **AbortController Safety**: Halts in-flight loop immediately when `window.isAgentAborted = true` while retaining completed steps.
+- **Trajectory Trace & UI**: Structured `TrajectoryStep` data model and Zen Glassmorphic UI rendering (`.trajectory-chip` and collapsible `.trajectory-drawer` with `.trajectory-step-node`).
+
+### Suite 4: `tests/test_dsh_zero_regression_matrix.js` (22 Tests)
+- **Static Syntax Gates**: Compiles `app.js` and `redesign.js` with `node -c` (0 errors).
+- **CSS Hygiene**: Enforces balanced curly braces `{}` in `styles.css` and `.toast-container { z-index: 10000; }`.
+- **StreamParser Compatibility**: Standard text pass-through, inline code preservation, buffer flush.
+- **Live Workspace Sync**: Verifies `#artifact-editor-textarea`, `#artifact-iframe`, `#artifacts-panel`.
+- **Continuation Engine**: Token ceilings, `stitchContinuationChunks`, multi-tier truncation detection.
+- **Storage & Bridges**: User-isolated storage suffixes (`_user`, `_guest`), Mindmap `suna_active_mindmap_data`, Lofi player APIs.
+- **DOM Essentials**: Essential navigation, mobile media queries.
 
 ---
 
-## Coverage & Quality Thresholds
-- **Pass Rate**: 100% pass rate across all suites (497/497 tests passing).
-- **Syntax Integrity**: 0 syntax errors across `app.js`, `redesign.js`, and all test scripts.
-- **CSS Hygiene**: 100% balanced braces in `styles.css` with `.toast-container` at `z-index: 10000`.
-- **Test Integrity**: Pure opaque-box testing with explicit reference oracle models and zero facade shortcuts.
+## 3. Verification Execution Matrix
+
+| Verification Gate | Command | Passing Metric | Target |
+|---|---|---|---|
+| **Full Automated Harness** | `python run_verification.py` | 100% green exit code 0 | All 735 tests |
+| **Mocha Complete Suite** | `npx mocha "tests/**/*.js"` | 0 failures, 0 pending | All 735 tests |
+| **DSH Specific Suites** | `npx mocha "tests/test_dsh_*.js"` | 0 failures, 0 pending | 91 tests |
+| **Static Syntax Compilation** | `node -c app.js; node -c redesign.js` | 0 syntax errors | Clean parse |
+| **DSH Tests Syntax** | `node -c tests/test_dsh_*.js` | 0 syntax errors | Clean parse |
+| **CSS Hygiene & Toast** | `python run_verification.py` (Step 2) | Balanced braces & z-index: 10000 | 100% verified |

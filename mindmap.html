@@ -1093,17 +1093,37 @@
 
         // Initialize App
         function init() {
+            // Check for initial mindmap data passed from Suna Chat
+            let initialMarkdown = TEMPLATES.default;
+            try {
+                const extData = localStorage.getItem('suna_active_mindmap_data');
+                if (extData && extData.trim()) {
+                    initialMarkdown = extData.trim();
+                    localStorage.removeItem('suna_active_mindmap_data');
+                }
+            } catch (_) {}
+
             // Set default value in editor
-            markdownEditor.value = TEMPLATES.default;
+            markdownEditor.value = initialMarkdown;
             
             // Build root tree
-            parseAndLayout(TEMPLATES.default);
+            parseAndLayout(initialMarkdown);
             
             // Center viewport camera
             resetCamera();
             
             // Setup full Event Listeners
             setupEventListeners();
+
+            // Listen for postMessage from parent window / Suna Chat
+            window.addEventListener('message', (event) => {
+                if (event.data && event.data.type === 'LOAD_MINDMAP' && event.data.markdown) {
+                    markdownEditor.value = event.data.markdown.trim();
+                    parseAndLayout(event.data.markdown.trim());
+                    resetCamera();
+                    showToast('Đã tải sơ đồ tư duy từ Suna Chat!');
+                }
+            });
             
             // Re-render
             updateTransform();
