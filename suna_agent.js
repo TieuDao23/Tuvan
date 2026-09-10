@@ -1135,20 +1135,114 @@
       }));
     }
 
+    _boundObservation(value, maxChars) {
+      const limit = Math.max(256, Number(maxChars) || this.MAX_RESULT_LENGTH || 1500);
+      let serialized;
+      if (typeof value === 'string') {
+        serialized = value;
+      } else {
+        try { serialized = JSON.stringify(value); } catch (_) { serialized = String(value); }
+      }
+      if (serialized.length <= limit) {
+        return { value, text: serialized, truncated: false, originalLength: serialized.length };
+      }
+      const marker = `\n…[truncated ${serialized.length - limit} chars; use a narrower tool query]`;
+      const text = serialized.slice(0, Math.max(0, limit - marker.length)) + marker;
+      return { value: text, text, truncated: true, originalLength: serialized.length };
+    }
+
+    _normalizeDecision(rawDecision) {
+      if (rawDecision === null || rawDecision === undefined) return null;
+      if (typeof rawDecision === 'string') {
+        const calls = MultiSyntaxParser.parse(rawDecision);
+        if (calls.length > 0) return { type: 'tool', tool: calls[0].tool, args: calls[0].args || {} };
+        return { type: 'final', content: rawDecision };
+      }
+      if (Array.isArray(rawDecision)) {
+        return rawDecision.length > 0 ? this._normalizeDecision(rawDecision[0]) : null;
+      }
+      if (typeof rawDecision !== 'object') return null;
+      if (rawDecision.type === 'final' || rawDecision.final === true || rawDecision.done === true) {
+        return {
+          type: 'final',
+          content: rawDecision.content !== undefined
+            ? String(rawDecision.content)
+            : String(rawDecision.answer || rawDecision.message || '')
+        };
+      }
+      const nativeCalls = rawDecision.tool_calls || rawDecision.toolCalls;
+      if (Array.isArray(nativeCalls) && nativeCalls.length > 0) {
+        const first = nativeCalls[0];
+        const fn = first.function || first;
+        let args = fn.arguments || fn.args || {};
+        if (typeof args === 'string') {
+          try { args = JsonAutoRepair.safeParse(args); } catch (_) { args = { raw: args }; }
+        }
+        return { type: 'tool', tool: fn.name || first.name, args: args || {} };
+      }
+      const toolName = rawDecision.tool || rawDecision.name || rawDecision.tool_name;
+      if (toolName) {
+        let args = rawDecision.args || rawDecision.arguments || rawDecision.parameters || rawDecision.params || {};
+        if (typeof args === 'string') {
+          try { args = JsonAutoRepair.safeParse(args); } catch (_) { args = { raw: args }; }
+        }
+        return { type: 'tool', tool: toolName, args: args || {}, thought: rawDecision.thought || '' };
+      }
+      if (rawDecision.content !== undefined || rawDecision.answer !== undefined) {
+        return { type: 'final', content: String(rawDecision.content || rawDecision.answer || '') };
+      }
+      return null;
+    }
+
+    _awaitBounded(operation, timeoutMs, signal, label) {
+      if (signal && signal.aborted) {
+        const err = new Error(signal.reason ? String(signal.reason) : `${label} aborted`);
+        err.code = 'ABORTED';
+        return Promise.reject(err);
+      }
+      const timeout = Math.max(1, Number(timeoutMs) || 30000);
+      return new Promise((resolve, reject) => {
+        let settled = false;
+        const finish = (fn, value) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          if (signal && typeof signal.removeEventListener === 'function') signal.removeEventListener('abort', onAbort);
+          fn(value);
+        };
+        const onAbort = () => {
+          const err = new Error(signal.reason ? String(signal.reason) : `${label} aborted`);
+          err.code = 'ABORTED';
+          finish(reject, err);
+        };
+        const timer = setTimeout(() => {
+          const err = new Error(`${label} timed out after ${timeout}ms`);
+          err.code = 'TIMEOUT';
+          finish(reject, err);
+        }, timeout);
+        if (signal && typeof signal.addEventListener === 'function') signal.addEventListener('abort', onAbort, { once: true });
+        Promise.resolve().then(operation).then(value => finish(resolve, value), err => finish(reject, err));
+      });
+    }
+
     attachHarness(harnessController, options = {}) {
-      this.controller = harnessController;
-      this.harness = harnessController;
+      const facade = harnessController;
+      const resolvedController = facade && facade.controller && typeof facade.controller.executeAction === 'function'
+        ? facade.controller
+        : harnessController;
+      this.controller = resolvedController;
+      this.harness = facade;
 
-      const H = getHarnessComponents() || (harnessController && harnessController.constructor);
+      const H = getHarnessComponents() || (resolvedController && resolvedController.constructor);
 
-      this.vfs = (harnessController && harnessController.vfs) || options.vfs || (H && H.VfsSandbox ? new H.VfsSandbox() : null);
-      this.trajectory = (harnessController && harnessController.trajectory) || options.trajectory || (H && H.TrajectoryEngine ? new H.TrajectoryEngine() : null);
-      this.checkpoints = options.checkpoints || (harnessController && harnessController.checkpoints) || (H && H.CheckpointManager ? new H.CheckpointManager({ vfs: this.vfs }) : null);
-      this.eventBus = (harnessController && harnessController.bus) || options.bus || (H && H.InterHarnessEventBus ? new H.InterHarnessEventBus() : null);
+      this.vfs = options.vfs || (facade && facade.vfs) || (resolvedController && resolvedController.vfs) || (H && H.VfsSandbox ? new H.VfsSandbox() : null);
+      this.trajectory = options.trajectory || (facade && facade.trajectory) || (resolvedController && resolvedController.trajectory) || (H && H.TrajectoryEngine ? new H.TrajectoryEngine() : null);
+      this.checkpoints = options.checkpoints || (facade && (facade.checkpoints || facade.checkpoint)) || (resolvedController && (resolvedController.checkpoints || resolvedController.checkpointManager)) || (H && H.CheckpointManager ? new H.CheckpointManager({ vfs: this.vfs }) : null);
+      this.eventBus = options.bus || (facade && facade.bus) || (resolvedController && resolvedController.bus) || (H && H.InterHarnessEventBus ? new H.InterHarnessEventBus() : null);
 
       // Wire RunawayGuardrails to prevent runaway failure loops (Requirement R3)
       const GuardrailsClass = (H && (H.RunawayGuardrails || H.GuardrailSentinel)) || (typeof RunawayGuardrails !== 'undefined' ? RunawayGuardrails : null);
-      this.guardrails = options.guardrails || (harnessController && harnessController.guardrails) || this.guardrails || (GuardrailsClass ? new GuardrailsClass({
+      this.guardrails = options.guardrails || (facade && facade.guardrails) || (resolvedController && (resolvedController.guardrails || resolvedController.guardrail)) || this.guardrails || (GuardrailsClass ? new GuardrailsClass({
         vfs: this.vfs,
         maxConsecutiveFailures: this.maxConsecutiveFailures || 3
       }) : null);
@@ -1211,12 +1305,26 @@
 
       // Execute on ACI or local tool registry
       let result;
-      if (aci && typeof aci[toolName] === 'function') {
+      if (this.controller && typeof this.controller.executeAction === 'function' &&
+          this.controller.aci && typeof this.controller.aci[toolName] === 'function') {
+        result = await this.controller.executeAction(toolName, normalized);
+      } else if (aci && typeof aci[toolName] === 'function') {
         result = await aci[toolName](normalized);
       } else if (this.tools && this.tools[toolName]) {
         result = await this.tools[toolName](normalized);
       } else {
         throw new Error(`Tool "${toolName}" not found`);
+      }
+
+      // Preserve invokeAciTool's public rejection contract. HarnessController
+      // intentionally returns structured errors for direct low-level callers,
+      // but agent-level callers historically rely on rejected promises for
+      // correction, guardrails, and assert.rejects-compatible handling.
+      if (result && result.status === 'error' && result.success === false) {
+        const error = new Error(result.error || `Tool "${toolName}" failed`);
+        error.code = result.code || 'TOOL_EXECUTION_ERROR';
+        error.details = result;
+        throw error;
       }
 
       // If file modified, emit vfs_change for Live Workspace synchronization
@@ -1291,7 +1399,7 @@
       return true;
     }
 
-    async executeStep(promptOrStep) {
+    async executeStep(promptOrStep, executionOptions = {}) {
       // 0. Circuit Breaker / Abort Pre-condition: refuse execution if already halted
       if (this.status === 'halted' || this.isAgentAborted) {
         return {
@@ -1382,6 +1490,8 @@
         toolResult = { status: 'error', error: err.message };
       }
       const durationMs = Date.now() - startTime;
+      const boundedObservation = this._boundObservation(toolResult, executionOptions.maxObservationChars);
+      toolResult = boundedObservation.value;
 
       // 5. Cognitive Brain OODA: Observation Reflection
       const reflection = this.brain.reflectObservation(activeStep, toolResult, intent);
@@ -1482,6 +1592,8 @@
         observation: toolResult,
         reflection,
         status: stepEnvelope.status,
+        observationTruncated: boundedObservation.truncated,
+        observationOriginalLength: boundedObservation.originalLength,
         halted: this.status === 'halted',
         reason: this.haltReason || undefined
       };
@@ -1497,74 +1609,195 @@
     }
 
     /**
-     * Multi-turn autonomous execution engine with auto-replanning, reflection, and guardrails.
-     * @param {string} prompt
-     * @param {object} [options]
-     * @returns {Promise<object>}
+     * Observation-grounded autonomous execution engine. A caller-provided decision
+     * provider may be a local model, remote LLM, or deterministic policy. Explicit
+     * plans are also supported for low-resource, reproducible execution.
      */
     async run(prompt, options = {}) {
-      const maxTurns = options.maxTurns || (this.controller && this.controller.maxTurns) || 10;
-      const onTurnStart = options.onTurnStart || null;
-      const onStep = options.onStep || null;
-      const onComplete = options.onComplete || null;
+      const maxTurns = Math.max(1, Number(options.maxTurns || (this.controller && this.controller.maxTurns) || 10));
+      const decisionProvider = options.decideNextAction || options.decisionProvider || null;
+      const explicitPlan = Array.isArray(options.plan) ? options.plan.slice() : null;
+      if (!decisionProvider && !explicitPlan) return this._runLegacy(prompt, options);
 
+      const signal = options.signal || null;
+      const decisionTimeoutMs = options.decisionTimeoutMs || 30000;
+      const maxObservationChars = options.maxObservationChars || this.MAX_RESULT_LENGTH;
+      const turnResults = [];
+      let turn = 0;
+      let planIndex = 0;
+      let finalStatus = 'completed';
+      let finalAnswer = '';
+      let verification = null;
+
+      while (turn < maxTurns) {
+        if ((signal && signal.aborted) || this.isAgentAborted || this.status === 'halted') {
+          finalStatus = signal && signal.aborted ? 'aborted' : 'halted';
+          break;
+        }
+
+        let decision;
+        if (explicitPlan) {
+          if (planIndex >= explicitPlan.length) break;
+          const planned = explicitPlan[planIndex++];
+          decision = {
+            type: 'tool',
+            tool: planned.tool || (planned.action && (planned.action.tool || planned.action.name)),
+            args: planned.args || planned.params || (planned.action && (planned.action.args || planned.action.params)) || {},
+            id: planned.id,
+            name: planned.name,
+            thought: planned.thought
+          };
+        } else {
+          const lastResult = turnResults.length > 0 ? turnResults[turnResults.length - 1] : null;
+          const lastBounded = lastResult
+            ? this._boundObservation(lastResult.observation, maxObservationChars)
+            : { text: '', truncated: false, originalLength: 0 };
+          const context = {
+            prompt,
+            turn: turn + 1,
+            maxTurns,
+            tools: this.formatOpenAITools(),
+            lastObservation: lastResult ? {
+              status: lastResult.status,
+              tool: lastResult.step && lastResult.step.tool,
+              result: lastBounded.text,
+              truncated: lastBounded.truncated,
+              originalLength: lastBounded.originalLength
+            } : null,
+            trajectory: turnResults.slice(-5).map(item => ({
+              tool: item.step && item.step.tool,
+              status: item.status,
+              reflection: item.reflection && (item.reflection.reflection || item.reflection.reflectionText)
+            })),
+            memoryStateHash: this.memory && typeof this.memory.getStateHash === 'function' ? this.memory.getStateHash() : null,
+            steer: this.steerInstructions.length > 0 ? this.steerInstructions.shift() : null
+          };
+          try {
+            const rawDecision = await this._awaitBounded(
+              () => decisionProvider(context), decisionTimeoutMs, signal, 'Agent decision'
+            );
+            decision = this._normalizeDecision(rawDecision);
+          } catch (err) {
+            finalStatus = err && err.code === 'ABORTED' ? 'aborted' : (err && err.code === 'TIMEOUT' ? 'timeout' : 'decision_error');
+            this.haltReason = err.message;
+            break;
+          }
+        }
+
+        if ((signal && signal.aborted) || this.isAgentAborted || this.status === 'halted') {
+          finalStatus = signal && signal.aborted ? 'aborted' : 'halted';
+          break;
+        }
+        if (!decision || !decision.tool && decision.type !== 'final') {
+          finalStatus = 'decision_error';
+          this.haltReason = 'Decision provider returned no executable action or final answer.';
+          break;
+        }
+        if (decision.type === 'final') {
+          finalAnswer = decision.content || '';
+          break;
+        }
+
+        turn++;
+        if (typeof options.onTurnStart === 'function') {
+          try { options.onTurnStart(turn); } catch (_) {}
+        }
+        const stepResult = await this.executeStep({
+          id: decision.id || turn,
+          name: decision.name || decision.tool,
+          tool: decision.tool,
+          args: decision.args || {},
+          thought: decision.thought || ''
+        }, { maxObservationChars });
+        turnResults.push(stepResult);
+        if (typeof options.onStep === 'function') {
+          try { options.onStep(stepResult, turn); } catch (_) {}
+        }
+        if (stepResult.halted || this.status === 'halted' || this.isAgentAborted) {
+          finalStatus = 'halted';
+          break;
+        }
+        if (explicitPlan && stepResult.status !== 'success' && options.continueOnError !== true) {
+          finalStatus = 'failed';
+          break;
+        }
+      }
+
+      if (turn >= maxTurns && !finalAnswer && (!explicitPlan || planIndex < explicitPlan.length)) {
+        finalStatus = 'max_turns_exceeded';
+      }
+
+      if (['completed', 'max_turns_exceeded'].includes(finalStatus) && typeof options.verify === 'function') {
+        try {
+          const rawVerification = await this._awaitBounded(
+            () => options.verify({ prompt, results: turnResults, finalAnswer, agent: this, vfs: this.vfs }),
+            options.verificationTimeoutMs || decisionTimeoutMs,
+            signal,
+            'Completion verification'
+          );
+          verification = typeof rawVerification === 'object' && rawVerification !== null
+            ? Object.assign({ passed: Boolean(rawVerification.passed !== undefined ? rawVerification.passed : rawVerification.success) }, rawVerification)
+            : { passed: Boolean(rawVerification), reason: rawVerification ? '' : 'Completion verifier rejected the result.' };
+          if (!verification.passed) finalStatus = 'verification_failed';
+          else if (finalStatus === 'max_turns_exceeded') finalStatus = 'completed';
+        } catch (err) {
+          verification = { passed: false, reason: err.message };
+          finalStatus = err && err.code === 'ABORTED' ? 'aborted' : 'verification_failed';
+        }
+      } else if (finalStatus === 'completed') {
+        verification = { passed: true, reason: explicitPlan ? 'Executable plan completed.' : 'Decision provider returned a final answer.' };
+      }
+
+      const result = {
+        status: finalStatus,
+        turnsExecuted: turn,
+        results: turnResults,
+        finalAnswer,
+        verified: verification ? verification.passed : false,
+        verification,
+        trajectory: (this.trajectory && typeof this.trajectory.getEvents === 'function') ? this.trajectory.getEvents() : [],
+        haltReason: this.haltReason || null
+      };
+      if (typeof options.onComplete === 'function') {
+        try { options.onComplete(result); } catch (_) {}
+      }
+      return result;
+    }
+
+    async _runLegacy(prompt, options = {}) {
+      const maxTurns = options.maxTurns || (this.controller && this.controller.maxTurns) || 10;
       let turn = 0;
       let finalStatus = 'completed';
       const turnResults = [];
-
       while (turn < maxTurns) {
         turn++;
         if (this.isAgentAborted || this.status === 'halted') {
           finalStatus = 'halted';
           break;
         }
-
-        if (typeof onTurnStart === 'function') {
-          try { onTurnStart(turn); } catch (_) {}
+        if (typeof options.onTurnStart === 'function') {
+          try { options.onTurnStart(turn); } catch (_) {}
         }
-
         let currentPrompt = prompt;
         const latestSteer = this.memory && typeof this.memory.getFact === 'function' && this.memory.getFact('latest_steer');
-        if (latestSteer) {
-          currentPrompt = `${prompt}\n[User Steer Guidance]: ${latestSteer}`;
-        }
-
-        const stepResult = await this.executeStep(currentPrompt);
+        if (latestSteer) currentPrompt = `${prompt}\n[User Steer Guidance]: ${latestSteer}`;
+        const stepResult = await this.executeStep(currentPrompt, { maxObservationChars: options.maxObservationChars });
         turnResults.push(stepResult);
-
-        if (typeof onStep === 'function') {
-          try { onStep(stepResult, turn); } catch (_) {}
+        if (typeof options.onStep === 'function') {
+          try { options.onStep(stepResult, turn); } catch (_) {}
         }
-
         if (stepResult.halted || this.status === 'halted' || this.isAgentAborted) {
           finalStatus = 'halted';
           break;
         }
-
         const reflection = stepResult.reflection;
         if (reflection && reflection.satisfied === false && reflection.replanNeeded) {
-          if (turn >= maxTurns) {
-            finalStatus = 'max_turns_exceeded';
-            break;
-          }
+          if (turn >= maxTurns) finalStatus = 'max_turns_exceeded';
           continue;
         }
-
-        if (turn >= maxTurns) {
-          if (reflection && reflection.satisfied === false) {
-            finalStatus = 'max_turns_exceeded';
-          } else {
-            finalStatus = 'completed';
-          }
-          break;
-        }
-
-        if (reflection && reflection.satisfied !== false && !reflection.replanNeeded) {
-          finalStatus = 'completed';
-          break;
-        }
+        finalStatus = 'completed';
+        break;
       }
-
       const result = {
         status: finalStatus,
         turnsExecuted: turn,
@@ -1572,11 +1805,9 @@
         trajectory: (this.trajectory && typeof this.trajectory.getEvents === 'function') ? this.trajectory.getEvents() : [],
         haltReason: this.haltReason || null
       };
-
-      if (typeof onComplete === 'function') {
-        try { onComplete(result); } catch (_) {}
+      if (typeof options.onComplete === 'function') {
+        try { options.onComplete(result); } catch (_) {}
       }
-
       return result;
     }
 

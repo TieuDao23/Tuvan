@@ -3539,6 +3539,7 @@
       this.maxTurns = options.maxTurns || 15;
       this.maxTokens = options.maxTokens || 50000;
       this.timeoutMs = options.timeoutMs || 60000;
+      this.resourceMeter = options.resourceMeter || null;
       this.readOnly = Boolean(options.readOnly);
       this.metadata = options.metadata || {};
       this.turnsCompleted = 0;
@@ -3772,6 +3773,7 @@
       }
 
       try {
+        const actionStart = Date.now();
         let result;
         if (typeof this.aci[toolName] === 'function') {
           result = this.aci[toolName](args);
@@ -3780,11 +3782,41 @@
         } else {
           result = { error: `Tool ${toolName} not supported` };
         }
+        if (result && typeof result.then === 'function') {
+          const remainingMs = Math.max(1, this.timeoutMs - (Date.now() - this.startTime));
+          let timeoutHandle;
+          try {
+            result = await Promise.race([
+              result,
+              new Promise((_, reject) => {
+                timeoutHandle = setTimeout(() => {
+                  const err = new Error(`Tool "${toolName}" timed out after ${remainingMs}ms.`);
+                  err.code = 'EXECUTION_TIMEOUT';
+                  reject(err);
+                }, remainingMs);
+              })
+            ]);
+          } finally {
+            if (timeoutHandle) clearTimeout(timeoutHandle);
+          }
+        }
+        if (this.resourceMeter && typeof this.resourceMeter.recordOperation === 'function') {
+          let resultBytes = 0;
+          try { resultBytes = JSON.stringify(result).length * 2; } catch (_) { resultBytes = 0; }
+          this.resourceMeter.recordOperation(toolName, Date.now() - actionStart, resultBytes);
+          if (this.resourceMeter.isThrottled()) {
+            this.halt('RESOURCE_BUDGET_EXCEEDED', { diagnostic: this.resourceMeter.getDiagnostics() });
+          }
+        }
         return result;
       } catch (err) {
+        if (err && err.code === 'EXECUTION_TIMEOUT') {
+          this.halt('EXECUTION_TIMEOUT', { toolName, timeoutMs: this.timeoutMs });
+        }
         return {
           success: false,
           status: 'error',
+          code: err && err.code ? err.code : 'TOOL_EXECUTION_ERROR',
           error: err.message
         };
       }
@@ -8374,6 +8406,7 @@ ${bodyHtml}
       this.usedVirtualCpuMs = 0;
       this.usedMemoryBytes = 0;
       this.operations = [];
+      this.maxOperationHistory = Math.max(1, Number(options.maxOperationHistory) || 100);
       this.throttled = false;
       this.throttleReason = '';
     }
@@ -8387,6 +8420,9 @@ ${bodyHtml}
         memoryBytes,
         timestamp: Date.now()
       });
+      if (this.operations.length > this.maxOperationHistory) {
+        this.operations.splice(0, this.operations.length - this.maxOperationHistory);
+      }
 
       if (this.usedVirtualCpuMs > this.maxVirtualCpuMs) {
         this.throttled = true;
@@ -8505,15 +8541,23 @@ ${bodyHtml}
       const checkpoint = options.checkpoint || new CheckpointManager(vfs, options.memoryStore, trajectory);
       if (!checkpoint.trajectory) checkpoint.trajectory = trajectory;
       const guardrails = options.guardrails || new RunawayGuardrails(options.guardrailOptions);
+      const resourceMeter = options.resourceMeter || new VirtualResourceMeter(options.resourceMeterOptions);
+      const controllerOptions = Object.assign({}, options.controllerOptions);
+      if (options.maxTurns !== undefined) controllerOptions.maxTurns = options.maxTurns;
+      if (options.maxTokens !== undefined) controllerOptions.maxTokens = options.maxTokens;
+      if (options.tokenBudget !== undefined) controllerOptions.maxTokens = options.tokenBudget;
+      if (options.timeoutMs !== undefined) controllerOptions.timeoutMs = options.timeoutMs;
       const controller = options.controller || new HarnessController(Object.assign({
         vfs,
         bus,
         trajectory,
         checkpointManager: checkpoint,
-        guardrail: guardrails
-      }, options.controllerOptions));
+        guardrail: guardrails,
+        resourceMeter
+      }, controllerOptions));
       if (!controller.checkpointManager) controller.checkpointManager = checkpoint;
       if (!controller.guardrail) controller.guardrail = guardrails;
+      if (!controller.resourceMeter) controller.resourceMeter = resourceMeter;
       const aci = options.aci || new AciInterface(vfs, Object.assign({ controller }, options.aciOptions));
       const chaos = options.chaos || new ChaosFaultInjector();
 
@@ -8533,6 +8577,7 @@ ${bodyHtml}
         checkpointStore,
         chaos,
         guardrails,
+        resourceMeter,
 
         spawnSubHarness: (opts) => controller.spawnSubHarness(opts),
         mergeSubHarness: (child, opts) => controller.mergeSubHarness(child, opts),

@@ -5698,213 +5698,6 @@ body.light-mode .mermaid-wrapper.skeleton-loading {
   filter: drop-shadow(0 4px 12px rgba(232, 168, 124, 0.5));
 }
 
-@media (max-width: 768px) {
-  .mobile-hidden {
-    display: none !important;
-  }
-}
-
-/* ===== Suna Agent Integration Components ===== */
-.suna-action-card {
-  background: var(--bg-glass, rgba(255, 255, 255, 0.05));
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid var(--border-color, rgba(232, 168, 124, 0.15));
-  border-radius: var(--radius-md, 12px);
-  padding: 12px;
-  margin: 12px 0;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2), inset 0 1px 1px rgba(255, 255, 255, 0.05);
-  transition: all var(--transition, 0.25s ease);
-}
-
-.suna-action-card:hover {
-  border-color: var(--accent-1, #e8a87c);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25), 0 0 12px var(--accent-glow, rgba(232, 168, 124, 0.2));
-  transform: translateY(-1px);
-}
-
-/* Header style inside card */
-.suna-action-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.suna-action-title {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-weight: 600;
-  font-size: 0.95rem;
-  color: var(--text-primary, #ede8e3);
-}
-
-.suna-action-status {
-  font-size: 0.78rem;
-  padding: 2px 8px;
-  border-radius: var(--radius-pill);
-  font-weight: 500;
-  background: rgba(255, 255, 255, 0.08);
-  color: var(--text-secondary, #b5a99d);
-}
-
-.suna-action-status.running {
-  background: rgba(232, 168, 124, 0.15);
-  color: var(--accent-1, #e8a87c);
-  animation: pulseGlow 1.5s infinite ease-in-out;
-}
-
-.suna-action-status.success {
-  background: rgba(46, 204, 113, 0.15);
-  color: #2ecc71;
-}
-
-.suna-action-status.error,
-.suna-action-status.aborted {
-  background: rgba(231, 76, 60, 0.15);
-  color: #e74c3c;
-}
-
-/* Card Body / Details */
-.suna-action-body {
-  font-size: 0.88rem;
-  color: var(--text-secondary, #b5a99d);
-  line-height: 1.5;
-  background: rgba(0, 0, 0, 0.15);
-  padding: 8px 10px;
-  border-radius: var(--radius-sm, 12px);
-  border: 1px solid rgba(255, 255, 255, 0.03);
-}
-
-/* Actions footer */
-.suna-action-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-.suna-action-btn {
-  background: var(--bg-glass, rgba(255, 255, 255, 0.05));
-  border: 1px solid var(--border-color, rgba(232, 168, 124, 0.15));
-  color: var(--text-primary, #ede8e3);
-  padding: 5px 12px;
-  border-radius: var(--radius-pill);
-  font-size: 0.8rem;
-  font-weight: 500;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  transition: all var(--transition, 0.25s ease);
-}
-
-.suna-action-btn:hover {
-  background: var(--accent-gradient, linear-gradient(135deg, #e8a87c, #c0392b));
-  border-color: transparent;
-  color: white;
-}
-
-.suna-action-btn.abort-btn {
-  border-color: rgba(231, 76, 60, 0.3);
-  color: #f5576c;
-}
-
-.suna-action-btn.abort-btn:hover {
-  background: #e74c3c;
-  color: white;
-}
-
-/* Aborted state card override */
-.suna-action-card.aborted {
-  border-color: rgba(231, 76, 60, 0.4) !important;
-  background: rgba(231, 76, 60, 0.06) !important;
-  box-shadow: 0 4px 16px rgba(231, 76, 60, 0.1) !important;
-}
-
-.suna-action-card.aborted:hover {
-  border-color: #e74c3c !important;
-  box-shadow: 0 6px 20px rgba(231, 76, 60, 0.15), 0 0 10px rgba(231, 76, 60, 0.2) !important;
-}
-
-.suna-action-card.aborted .suna-action-title {
-  color: #f5576c !important;
-}
-
-.suna-action-card.aborted .suna-action-body {
-  border-color: rgba(231, 76, 60, 0.1) !important;
-  background: rgba(231, 76, 60, 0.03) !important;
-}
-
-/* Glow Divider styling */
-.suna-glow-divider {
-  position: relative;
-  height: 1px;
-  width: 100%;
-  background: linear-gradient(90deg, transparent 0%, var(--accent-1, #e8a87c) 50%, transparent 100%);
-  box-shadow: 0 0 8px var(--accent-glow, rgba(232, 168, 124, 0.35));
-  margin: 24px 0;
-  opacity: 0.65;
-}
-
-.suna-glow-divider::after {
-  content: "🌸";
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  background: var(--bg-primary, #0d0b14);
-  padding: 0 8px;
-  font-size: 0.85rem;
-}
-
-@keyframes pulseGlow {
-  0%, 100% {
-    opacity: 0.8;
-    box-shadow: 0 0 4px var(--accent-glow, rgba(232, 168, 124, 0.2));
-  }
-  50% {
-    opacity: 1;
-    box-shadow: 0 0 8px var(--accent-glow, rgba(232, 168, 124, 0.45));
-  }
-}
-
-/* Responsive Falls (Mobile-First overrides) */
-@media (max-width: 576px) {
-  .suna-action-card {
-    padding: 10px;
-    margin: 8px 0;
-    gap: 8px;
-    border-radius: var(--radius-sm, 12px);
-  }
-  
-  .suna-action-title {
-    font-size: 0.88rem;
-  }
-  
-  .suna-action-status {
-    font-size: 0.72rem;
-    padding: 1px 6px;
-  }
-  
-  .suna-action-body {
-    font-size: 0.8rem;
-    padding: 6px 8px;
-  }
-  
-  .suna-action-btn {
-    padding: 4px 8px;
-    font-size: 0.75rem;
-  }
-  
-  .suna-glow-divider {
-    margin: 16px 0;
-  }
-}
-
 /* =============================================
    MINDMAP - Premium Glassmorphic Sandbox
    ============================================= */
@@ -6371,12 +6164,6 @@ h1, h2, h3 {
 }
 
 /* Responsive Viewports for Tablet (max-width: 1024px) */
-@media (max-width: 1024px) {
-  .artifacts-panel {
-    width: 80%;
-  }
-}
-
 /* Comprehensive Mobile Viewport (max-width: 768px) */
 @media (max-width: 768px) {
   :root {
@@ -6454,14 +6241,6 @@ h1, h2, h3 {
     flex-shrink: 0;
   }
 
-  .mobile-hidden {
-    display: none !important;
-  }
-
-  .desktop-hidden {
-    display: flex !important;
-  }
-
   .current-model-display {
     padding: 4px 8px;
     font-size: 0.72rem;
@@ -6469,13 +6248,6 @@ h1, h2, h3 {
     max-width: 130px;
     border-radius: var(--radius-pill);
     cursor: pointer;
-  }
-
-  #current-model-name {
-    max-width: 80px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
 
   .mode-badge {
