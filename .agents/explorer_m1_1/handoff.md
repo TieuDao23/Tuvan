@@ -1,263 +1,102 @@
-# Milestone 1 Investigation & Strategy Handoff Report: Maximal Turn Token Utilization
+# Handoff Report: M1 Explorer 1 — Sub-Harness Lifecycle & VFS Isolation Modes
+
+**Agent:** `explorer_m1_1`  
+**Working Directory:** `d:\Suna Chat\.agents\explorer_m1_1`  
+**Milestone:** Milestone 1: Sub-harness Delegation & Event Bus (R1)  
+**Timestamp:** 2026-09-07T13:48:00Z  
+**Handoff Type:** Hard (Task Complete)  
+
+---
 
 ## 1. Observation
 
-Direct examination of `app.js` reveals the current API calling mechanisms and token ceiling limits:
+1. **`ORIGINAL_REQUEST.md` (lines 14–18)** explicitly mandates:
+   > "Cho phép Parent Harness sinh ra các Child Sub-harness độc lập (spawnSubHarness({ role, budget, vfsWorkspaceMode })) với các chế độ không gian làm việc linh hoạt (share dùng chung VFS, clone nhân bản độc lập, hoặc branch rẽ nhánh với khả năng merge ngược lại)."
+   > "Thiết lập kênh truyền nhận thông điệp có cấu trúc hai chiều giữa Parent và Sub-harness, hỗ trợ gửi chỉ thị tiếp theo, giám sát tiến độ và dừng khẩn cấp từ harness cha."
+   > "Tự động đính kèm toàn bộ chuỗi sự kiện thought -> action -> observation của sub-harness con vào dòng trajectory tổng thể của harness cha, hiển thị rõ ràng quan hệ phân cấp cây."
 
-### Observation 1.1: `makeApiRequest` in `app.js` (Lines 6232–6258)
-```javascript
-// app.js lines 6232-6258
-async function makeApiRequest(messages, targetModel) {
-  const modelToUse = targetModel || model;
-  const proxy = getProxyForModel(modelToUse);
-  const url = proxy.url + '/chat/completions';
-  const lastUserMessage = [...messages].reverse().find(m => m.role === 'user');
-  const userText = typeof lastUserMessage?.content === 'string' 
-    ? lastUserMessage.content 
-    : (Array.isArray(lastUserMessage?.content) 
-        ? lastUserMessage.content.map(p => p.text || '').join(' ') 
-        : '');
-  
-  const requiresUnlimited = /không giới hạn|unlimited|tối đa|hết cỡ|dài|chi tiết|write more|continue|viết tiếp|detailed|long|max/i.test(userText);
+2. **`suna_harness.js` Line Mapping for Current Governance & VFS**:
+   - `VfsSandbox` (lines 159–907): Implements in-memory POSIX filesystem, `writeFile`, `readFile`, `removeFile`, `createSnapshot()` (lines 797–818), `restoreSnapshot()` (lines 820–837), and event emission `_emit(eventType, path, data)` for `'write'`, `'change'`, `'delete'`, `'mkdir'`, `'rmdir'`, `'restore'` (lines 211, 246, 301, 302, 350, 385, 835).
+   - `HarnessController` (lines 1552–1740): Currently manages single-agent execution state (`turnsCompleted`, `tokensConsumed`, `isHalted`, `listeners: Map`, `executeAction`, `halt`). Lacks sub-harness hierarchy, parent/child tracking, and inter-harness messaging.
+   - `TrajectoryEngine` (lines 1745–1873): Records flat sequence of steps via `recordStep(stepData)` creating `makeImmutableEvent(rawEvent)`. Lacks `agent_id`, `role`, `depth`, and `children` arrays for tree representation.
+   - `createHarness()` (lines 3118–3136): Instantiates a single flat harness bundle (`vfs`, `controller`, `aci`, `trajectory`, `checkpoint`, `chaos`, `guardrails`).
 
-  const reqBody = {
-    model: modelToUse, messages, stream: true,
-    temperature: State.mode === 'flash' ? 0.3 : 0.75,
-    ...(requiresUnlimited ? {} : { max_tokens: State.mode === 'flash' ? 1024 : 4096 }),
-    ...(State.mode === 'flash' ? {
-      top_p: 0.85,
-      frequency_penalty: 0.1,
-      presence_penalty: 0.0
-    } : {
-      top_p: 0.95,
-      frequency_penalty: 0.15,
-      presence_penalty: 0.1
-    })
-  };
-```
-- **Finding**: By default, `max_tokens` is artificially constrained to `1024` in flash mode and `4096` in pro mode. When `requiresUnlimited` is triggered via regex, `max_tokens` is omitted (`{}`), leaving token limits to arbitrary server-side proxy defaults (frequently 2048 or 4096). There is no model-aware token ceiling resolver.
+3. **Current Test Suite Baseline**:
+   - Running `npm test` executes 38 test files resulting in `982 passing (4s)`.
+   - `tests/test_suna_harness.js` covers `HarnessController` unit tests at lines 527–576 (tests `T1-CTRL-01` through `T1-CTRL-05`), verifying turn limits, token budgets, read-only mode, turn counts, and timeouts.
 
-### Observation 1.2: `callWorkspaceChatApi` in `app.js` (Lines 2025–2088)
-```javascript
-// app.js lines 2045-2081
-      // First try with stream: true (supported by 100% of proxies, including stream-only proxies like gcli-fake-stream)
-      try {
-        const res = await fetch(url, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer ' + currentProxy.key
-          },
-          body: JSON.stringify({
-            model: model,
-            messages: apiMessages,
-            stream: true,
-            temperature: 0.7
-          }),
-          signal: _workspaceAbortController.signal
-        });
-
-        if (res.ok) {
-          const streamText = await parseAnyApiResponse(res, onChunk);
-          if (streamText && streamText.trim().length > 0) {
-            return streamText;
-          }
-        } else if (res.status === 400 || res.status === 404 || res.status === 405) {
-          // If stream: true failed with 400/404/405, fallback to stream: false on same proxy
-          const nonStreamRes = await fetch(url, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': 'Bearer ' + currentProxy.key
-            },
-            body: JSON.stringify({
-              model: model,
-              messages: apiMessages,
-              max_tokens: 4096,
-              stream: false
-            }),
-            signal: _workspaceAbortController.signal
-          });
-```
-- **Finding**: For streaming requests in Workspace Assistant, `max_tokens` is entirely omitted (`undefined`). In non-streaming fallback, `max_tokens` is hardcoded to `4096`. Furthermore, `signal` binds directly to global `_workspaceAbortController.signal` rather than the passed parameter `customSignal || _workspaceAbortController?.signal`.
-
-### Observation 1.3: System Prompts in `app.js` (Lines 1920–1926 and 5878–5915)
-- **Finding**: In `buildSystemPrompt()` (line 5878) and Workspace Assistant `systemPrompt` (line 1920), there is no strict prohibition against code placeholders (e.g. `// ... rest of code here ...`, `/* existing code unchanged */`), which allows LLMs to abbreviate code outputs and underutilize turn token budgets.
+4. **Document Artifacts Surveyed**:
+   - `d:\Suna Chat\.agents\explorer_survey_1\survey_report.md` (Sections 4.1 & 5.1).
+   - `d:\Suna Chat\.agents\spec_miner_survey_2\spec_report.md` (Sections 2.1–2.4, Table 6 Features 1–9, and Edge Cases 1–5).
 
 ---
 
 ## 2. Logic Chain
 
-1. **Token Underutilization Root Cause**:
-   - In `makeApiRequest`, setting `max_tokens: 1024` (flash) / `4096` (pro) or omitting it when unlimited is requested causes the LLM or proxy to truncate output prematurely or default to 2048/4096 tokens.
-   - Modern frontier models support significantly higher output token ceilings:
-     - 65,536 tokens: `o1`, `o3-mini`, `o4`, `gemini-2.5`, `gemini-3.1-pro-preview`, `claude-3-7-sonnet`, reasoning/thinking models.
-     - 16,384 tokens: `gpt-4o`, `gpt-4o-mini`, `gpt-4.1`, `gpt-4-turbo`, `gemini-2.0`, `qwen-2.5-coder`, `llama-3.3-70b`, `deepseek-chat`, `codestral`.
-     - 8,192 tokens: `claude-3-5-sonnet`, `gemini-1.5-pro`, `gemini-1.5-flash`, `qwen`, `llama`.
-     - 4,096 tokens: Legacy `gpt-4`, `gpt-3.5-turbo`, `claude-3-haiku`.
+1. **Hierarchy Integration (from Obs 1 & Obs 2)**:
+   Because `HarnessController` already possesses `this.vfs`, `this.aci`, turn/token tracking, and tool execution governance, extending `HarnessController` with `id`, `role`, `depth`, `parentId`, `parentController`, and `children = new Map()` allows any controller instance to act either as a root orchestrator or as a delegated sub-harness without duplicating execution logic.
 
-2. **System Prompt Anti-Placeholder Mandate**:
-   - Even with a high `max_tokens` ceiling, LLMs often elide code using comments unless explicitly instructed otherwise.
-   - Injecting an explicit, strict anti-placeholder directive in both `buildSystemPrompt()` and Workspace Assistant prompt forces 100% unabridged code generation.
+2. **VFS Workspace Partitioning (from Obs 1 & Obs 2)**:
+   - For `'share'` mode: assigning `childVfs = this.vfs` provides zero-copy, direct memory mutation of the parent workspace, satisfying collaborative agent patterns.
+   - For `'clone'` mode: calling `parent.vfs.createSnapshot()` followed by `childVfs.restoreSnapshot(snapshot)` provides complete isolation. Mutations in child do not touch parent, satisfying read-only/scratchpad patterns.
+   - For `'branch'` mode: combining `createSnapshot()` bookmarking (`_branchOriginSnapshot`), active change ledger tracking (`_branchLedger` listening to `VfsSandbox._emit` events), and delta comparison at merge time allows reliable conflict detection (`modified in branch AND modified in parent since origin`) and clean merging back to the parent VFS.
 
-3. **Proxy Fallback Safety**:
-   - Some legacy or strictly-configured third-party proxy gateways reject requests with `max_tokens > 4096` returning HTTP 400 Bad Request.
-   - Therefore, the request engine must implement token downgrade safety: if a proxy returns HTTP 400 with a token ceiling error, retry with a safe fallback (`4096` or omit `max_tokens`) before failing over to `altProxy`.
+3. **Inter-Harness Communication (from Obs 1 & Obs 2)**:
+   Introducing `InterHarnessEventBus` with targeted envelope routing (`from`, `to`, `type`, `payload`) enables parents to issue directives, inspect status, and trigger emergency halts (`emergencyStopSubHarness`). Propagating the halt downwards (`child.controller.halt('EMERGENCY_STOP_BY_PARENT')`) guarantees that any running or scheduled action by the sub-harness is immediately halted.
+
+4. **Hierarchical Trajectory Stitching (from Obs 1 & Obs 2)**:
+   Extending `TrajectoryEngine.recordStep` with `agent_id`, `role`, `depth`, and `children: []`, combined with `stitchChildTrajectory(subHarnessId, childTrajectory)`, attaches child event arrays as subtrees under the parent's `spawnSubHarness` event. This generates a structured hierarchical tree without disrupting the linear timeline.
+
+5. **Zero-Regression Invariant (from Obs 3)**:
+   All existing properties on `HarnessController` (`vfs`, `aci`, `maxTurns`, `maxTokens`, `timeoutMs`, `readOnly`, `turnsCompleted`, `tokensConsumed`, `isHalted`, `executeAction`, `incrementTurn`, `consumeTokens`, `halt`, `reset`) are preserved. Default parameters ensure that existing calls (`new HarnessController({ maxTurns: 5, maxTokens: 1000, vfs })`) behave identically to the baseline.
 
 ---
 
 ## 3. Caveats
 
-- **Proxy-Specific Ceiling Limits**: Different proxy providers (OpenRouter, OneAPI, Groq, custom reverse proxies) may have differing upper bounds. The resolver should target the highest supported tier and rely on HTTP 400 retry fallback for constrained proxies.
-- **Thinking/Reasoning Models Output Budget**: Reasoning models (e.g. `o1`, `o3-mini`, `deepseek-reasoner`, `gemini-2.0-flash-thinking`) use output tokens for internal chain-of-thought as well as final response. Setting `max_tokens` to 65,536 is essential to prevent thought-exhaustion truncation.
+1. **Concurrency Model**: JavaScript in Node.js and the browser is single-threaded. While multi-agent execution is conceptually parallel, in-process sub-harnesses execute asynchronously via interleaving microtasks/promises. Locking (`vfs.lockFile`) should be respected during tool calls.
+2. **Deep Recursion Ceiling**: While deep recursion is required for adversarial testing ($\ge 5$), an upper limit of `depth > 10` is enforced to prevent accidental infinite recursion loops.
+3. **M1 vs M2 Diff Dependency**: In M1, `mergeSubHarness` uses direct snapshot object key/content comparison for conflict detection. When M2 (`VfsDiffEngine`) is implemented, `mergeSubHarness` can optionally invoke `VfsDiffEngine.compareSnapshots` for hunk-level three-way diffing.
 
 ---
 
-## 4. Conclusion & Concrete Fix Strategy
+## 4. Conclusion
 
-### Step 1: Implement Centralized Token Ceiling Resolver `resolveModelMaxTokens`
-Add the helper function in `app.js` (around line 5634 alongside `getProxyForModel` / `getActiveModel`):
-```javascript
-function resolveModelMaxTokens(modelName, mode = 'pro') {
-  if (!modelName || typeof modelName !== 'string') {
-    return mode === 'flash' ? 4096 : 8192;
-  }
-  const m = modelName.toLowerCase();
+The implementation strategy for Milestone 1 is fully specified and documented in `d:\Suna Chat\.agents\explorer_m1_1\m1_strategy.md`.
 
-  // Tier 1: 65,536 Tokens (Reasoning, Thinking, Extended-Output Models)
-  if (
-    m.includes('o1') || 
-    m.includes('o3') || 
-    m.includes('o4') || 
-    m.includes('thinking') || 
-    m.includes('reasoner') || 
-    m.includes('gemini-2.5') || 
-    m.includes('gemini-3') ||
-    m.includes('claude-3-7') ||
-    m.includes('claude-3.7')
-  ) {
-    return 65536;
-  }
-
-  // Tier 2: 16,384 Tokens (GPT-4o, GPT-4.1, Gemini 2.0, Qwen 2.5 Coder, Llama 3.3/3.1, DeepSeek)
-  if (
-    m.includes('gpt-4o') || 
-    m.includes('gpt-4.1') || 
-    m.includes('gpt-4-turbo') || 
-    m.includes('gemini-2.0') || 
-    m.includes('gemini-2') ||
-    m.includes('qwen-2.5') || 
-    m.includes('qwen2.5') || 
-    m.includes('coder') ||
-    m.includes('llama-3.3') || 
-    m.includes('llama-3.1') ||
-    m.includes('deepseek') ||
-    m.includes('mistral-large') ||
-    m.includes('codestral')
-  ) {
-    return 16384;
-  }
-
-  // Tier 3: 8,192 Tokens (Claude 3.5, Gemini 1.5, Modern General LLMs)
-  if (
-    m.includes('claude-3-5') || 
-    m.includes('claude-3.5') || 
-    m.includes('gemini-1.5') || 
-    m.includes('gemini-1') ||
-    m.includes('qwen') ||
-    m.includes('llama') ||
-    m.includes('glm-4')
-  ) {
-    return 8192;
-  }
-
-  // Tier 4: 4,096 Tokens (Legacy Models)
-  if (m.includes('claude-3') || m.includes('gpt-4') || m.includes('gpt-3.5')) {
-    return 4096;
-  }
-
-  // Default fallback based on active mode
-  return mode === 'flash' ? 4096 : 8192;
-}
-```
-
-### Step 2: Refactor `makeApiRequest` in `app.js` (around line 6245)
-- Replace lines 6243-6258 with:
-```javascript
-      const maxTokensCeiling = resolveModelMaxTokens(modelToUse, State.mode);
-
-      const reqBody = {
-        model: modelToUse, 
-        messages, 
-        stream: true,
-        temperature: State.mode === 'flash' ? 0.3 : 0.75,
-        max_tokens: maxTokensCeiling,
-        ...(State.mode === 'flash' ? {
-          top_p: 0.85,
-          frequency_penalty: 0.1,
-          presence_penalty: 0.0
-        } : {
-          top_p: 0.95,
-          frequency_penalty: 0.15,
-          presence_penalty: 0.1
-        })
-      };
-```
-- In proxy error handling (around lines 6267-6287), if response status is `400` and `reqBody.max_tokens > 4096`, retry with `reqBody.max_tokens = 4096` before failing over to `altProxy`.
-
-### Step 3: Refactor `callWorkspaceChatApi` in `app.js` (around line 2050)
-- Resolve `const maxTokensCeiling = resolveModelMaxTokens(model, 'pro');`
-- Set `max_tokens: maxTokensCeiling` in the `stream: true` payload:
-```javascript
-          body: JSON.stringify({
-            model: model,
-            messages: apiMessages,
-            stream: true,
-            max_tokens: maxTokensCeiling,
-            temperature: 0.7
-          }),
-          signal: customSignal || _workspaceAbortController?.signal
-```
-- In `stream: false` fallback (line 2077), set `max_tokens: maxTokensCeiling`.
-
-### Step 4: Refactor System Prompts for Anti-Placeholder Generation
-- In `buildSystemPrompt()` (around line 5878), add:
-```javascript
-  parts.push(`[NGUYÊN TẮC TOÀN VẸN MÃ NGUỒN & KHAI THÁC TOKEN TỐI ĐA]:
-- Tuyệt đối KHÔNG viết mã nguồn rút gọn, tóm tắt, hoặc sử dụng các chú thích placeholder (như "// ... rest of code ...", "// code cũ giữ nguyên", "/* TODO */", "// ... implement here ...").
-- Luôn triển khai 100% đầy đủ, chi tiết từng hàm, từng module, toàn bộ logic và cấu trúc dữ liệu không bỏ sót bất kỳ dòng nào để khai thác tối đa dung lượng token của lượt gọi.`);
-```
-- In `sendWorkspaceMessage()` (around line 1920), update `systemPrompt`:
-```javascript
-    const systemPrompt = `[DANH TÍNH]: Bạn là Suna AI Workspace Assistant, trợ lý ảo chuyên trách hỗ trợ học tập và phát triển mã nguồn trực quan.
-[MỤC TIÊU]: Phân tích, hướng dẫn hoặc chỉnh sửa trực tiếp mã nguồn HTML/CSS/JS hiện tại của người dùng.
-[NGUYÊN TẮC MÃ NGUỒN TOÀN VẸN]: Khi tạo hoặc chỉnh sửa code, BẮT BUỘC viết mã nguồn hoàn chỉnh 100% không rút gọn. TUYỆT ĐỐI NGHIÊM CẤM dùng các chú thích placeholder (như "// ... rest of code ...", "// code cũ giữ nguyên", "/* ... */").
-[MÃ NGUỒN HIỆN TẠI TRONG EDITOR]:
-\`\`\`html
-${currentCode}
-\`\`\`
-Nếu người dùng yêu cầu chỉnh sửa hoặc viết lại code, hãy trả về toàn bộ hoặc khối mã nguồn HTML/CSS/JS hoàn chỉnh có thể chạy trực tiếp (Live Preview) nằm trong khối code fenced \`\`\`html ... \`\`\` để hệ thống tự động đồng bộ vào Live Workspace.`;
-```
+Key components ready for implementation:
+1. `InterHarnessEventBus` class placed before `HarnessController` in `suna_harness.js`.
+2. `VfsSandbox.prototype.branch()` providing cloned VFS, origin bookmark, and mutation ledger.
+3. `HarnessController.prototype.spawnSubHarness({ role, budget, vfsWorkspaceMode, ... })` managing sub-agent lifecycle and resource boundaries.
+4. `HarnessController.prototype.mergeSubHarness(childId, options)` providing conflict-aware branch merging.
+5. `HarnessController.prototype.emergencyStopSubHarness(childId, reason)` for parent-driven containment.
+6. `TrajectoryEngine` extensions for hierarchical trajectory stitching.
+7. `createHarness()` facade extensions exposing the multi-agent delegation API.
 
 ---
 
 ## 5. Verification Method
 
-1. **Unit & Property Verification**:
-   - Call `resolveModelMaxTokens` with:
-     - `'gemini-3.1-pro-preview'` -> returns `65536`
-     - `'o1-preview'` -> returns `65536`
-     - `'claude-3-7-sonnet'` -> returns `65536`
-     - `'gpt-4o'` -> returns `16384`
-     - `'qwen-2.5-coder-32b'` -> returns `16384`
-     - `'claude-3-5-sonnet-20241022'` -> returns `8192`
-     - `'gpt-4'` -> returns `4096`
-     - `''` or `null` -> returns `8192` (pro) / `4096` (flash)
-2. **Payload Verification**:
-   - Verify `makeApiRequest` generates `reqBody.max_tokens` matching model ceiling.
-   - Verify `callWorkspaceChatApi` includes `max_tokens` in `fetch` body for both `stream: true` and `stream: false`.
-3. **System Prompt Verification**:
-   - Check `buildSystemPrompt()` output string contains anti-placeholder instructions.
-   - Check workspace system prompt contains `[NGUYÊN TẮC MÃ NGUỒN TOÀN VẸN]`.
-4. **Automated Verification Parity**:
-   - Run `python run_verification.py` to ensure JavaScript syntax check (`node -c app.js && node -c redesign.js`), CSS hygiene, and 100% Mocha test pass.
+1. **Static Analysis & Syntax Verification**:
+   ```bash
+   node -c suna_harness.js
+   ```
+   Must pass with exit code 0.
+
+2. **Regression Verification**:
+   ```bash
+   npm test
+   ```
+   All 982 existing Mocha tests must pass (100% green).
+
+3. **Targeted Sub-Harness Unit Test Execution**:
+   Add test block in `tests/test_suna_harness.js` under `Tier 1: Feature Coverage` validating:
+   - `spawnSubHarness` in `'share'`, `'clone'`, and `'branch'` modes.
+   - Live mutations in `'share'` mode reflected in parent.
+   - Scratchpad mutations in `'clone'` mode completely isolated from parent.
+   - Branch modifications staged and merged cleanly via `mergeSubHarness`.
+   - Conflict detection when both parent and branch modify the same file with `strategy: 'abort_on_conflict'`.
+   - Directive sending and progress telemetry over `InterHarnessEventBus`.
+   - Immediate halting upon `emergencyStopSubHarness`.
+   - Trajectory tree nesting verified via `trajectory.getHierarchicalTree()`.
+   - Deep recursion ($\ge 5$ levels) without call stack overflow.

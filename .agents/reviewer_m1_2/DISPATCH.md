@@ -1,16 +1,36 @@
-﻿## 2026-08-27T15:23:53Z
+# Task Assignment: Reviewer M1-2 — Interface Conformance & Backward Compatibility Review
 
-You are reviewer_m1_2 (teamwork_preview_reviewer).
-Your working directory is: d:\Suna Chat\.agents\reviewer_m1_2
-The authoritative original user request is at: d:\Suna Chat\.agents\ORIGINAL_REQUEST.md
-The project specification is at: d:\Suna Chat\PROJECT.md
-The E2E readiness is at: d:\Suna Chat\TEST_READY.md
-Worker report: d:\Suna Chat\.agents\worker_m1_1\handoff.md
+## Milestone
+Milestone 1: Sub-harness Delegation & Event Bus (R1)
 
-Task:
-1. Independently examine code changes in pp.js and 	ests/test_token_maximization_and_system_prompts.js for Milestone 1 (R1).
-2. Verify that existing features (Lofi, Mindmap, Kanban, Theme, Storage Quota) and existing test suites (281 baseline tests + 216 E2E tests + 15 M1 tests) are preserved without regressions.
-3. Run verification commands: 
-ode -c app.js && node -c redesign.js and python run_verification.py.
-4. Document your evaluation and explicit verdict (APPROVE or REQUEST_CHANGES) in d:\Suna Chat\.agents\reviewer_m1_2\handoff.md.
-5. Send a message to your parent with verdict and handoff path.
+## Objectives
+- Read `d:\Suna Chat\.agents\ORIGINAL_REQUEST.md` and `d:\Suna Chat\.agents\orchestrator_1\PROJECT.md`.
+- Read worker handoff: `d:\Suna Chat\.agents\worker_m1\handoff.md`.
+- Read contracts: `d:\Suna Chat\.agents\explorer_m1_3\m1_contracts.md`.
+- Examine `suna_harness.js` for interface conformance and potential side effects:
+  - Verify UMD exports and backward compatibility with `app.js`.
+  - Check error codes (`MAX_RECURSION_DEPTH_EXCEEDED`, `DELEGATION_CYCLE_DETECTED`, `BRANCH_CONFLICT`, `ALREADY_MERGED`, `INVALID_VFS_MODE`).
+  - Verify memory leak protection (listener cleanup, child instance tracking).
+  - Verify that no existing methods or properties were broken.
+- Run builds/tests:
+  - `node -c suna_harness.js && node -c app.js && node -c redesign.js`
+  - `npm test`
+  - `python run_verification.py`
+- Issue a clear verdict: `APPROVE` or `REQUEST_CHANGES`.
+- Write your review to `d:\Suna Chat\.agents\reviewer_m1_2\review.md` and your `handoff.md`.
+
+## 2026-09-07T14:01:50Z
+<USER_REQUEST>
+You are reviewer_m1_2.
+Your working directory is d:\Suna Chat\.agents\reviewer_m1_2.
+Before starting work, you MUST read:
+- d:\Suna Chat\.agents\ORIGINAL_REQUEST.md
+- d:\Suna Chat\.agents\orchestrator_1\PROJECT.md
+- d:\Suna Chat\.agents\reviewer_m1_2\DISPATCH.md
+- d:\Suna Chat\.agents\worker_m1\handoff.md
+
+Your task:
+Review the Milestone 1 (R1) implementation in suna_harness.js for interface conformance, backward compatibility, error code fidelity, and memory safety. Run tests (node -c, npm test, python run_verification.py).
+Issue a verdict: APPROVE or REQUEST_CHANGES.
+Write findings to d:\Suna Chat\.agents\reviewer_m1_2\review.md and handoff.md. Report back via send_message.
+</USER_REQUEST>

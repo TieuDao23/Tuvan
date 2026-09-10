@@ -62,6 +62,17 @@
   - Implement heuristic code block prioritization in `extractWorkspaceCode`: search first for runnable HTML/SVG/Canvas blocks (`html`, `svg`, `xml` or content containing `<canvas`, `<!DOCTYPE`, `<html`), fall back to JS/CSS, and ignore non-runnable blocks (bash, json, etc.).
   - Pure text replies and inline markdown spans (`` `code` ``) return `null`, guaranteeing that `autoApplyWorkspaceCode` leaves `#artifact-editor-textarea` and `#artifact-iframe.srcdoc` completely untouched without false toast notifications.
   - Dispatch `new Event('input', { bubbles: true })` on editor update to ensure event-delegated listeners, auto-save timers, and syntax highlighters trigger seamlessly.
-  - Guard network operations with an `AbortController` lifecycle: abort any previous in-flight request upon submitting a new query, enforce a 45s safety timeout, and cleanly remove typing indicators in both `try` and `catch` blocks.
+## 12. Multi-Account Data Partitioning, Guest UID Persistence & Resilient Auth Lifecycle
+- **Problem**: 
+  - Dynamic timestamp UIDs on reload (`guest-${Date.now()}`) caused complete chat history loss for guest users upon page reload (F5).
+  - Cross-account pollution occurred when in-memory RAM state from a prior user or guest session leaked into a newly registered or switched account, causing 3-way merge to push dirty data into Firestore.
+  - Quota exhaustion handlers previously purged `suna_deleted_chats` tombstones, causing previously deleted chats to resurrect upon the next cloud sync.
+  - Unexpected network glitches or deliberate logouts misfired "Phiên đăng nhập đã hết hạn" toasts.
+- **Solution**:
+  - Stable Guest Identity: Generate and persist `suna_guest_uid` (`guest_<randomUUID>`) in localStorage on first run, maintaining stable storage suffixes (`_guest_<id>`) across reloads.
+  - Pure RAM Scrubbing: Provide `clearInMemoryState()` with zero disk write side effects to clean `State.chats`, `State.settings`, `State.memory`, `State.vfs` before account loading or upon sign-out.
+  - Tombstone Immortality & Skew Immunity: Protect deletion tombstones during storage quota recovery; enforce clock-drift resistant checks so future-skewed remote timestamps cannot resurrect deleted items unless `createdAt > tombstone`.
+  - Explicit Sign-Out Flag: Use `AuthState._isExplicitSignOut` to differentiate deliberate sign-out from revoked tokens, suppressing false expiration toasts on manual logout.
+  - Defensive DOM Guards: Safeguard `renderChatList()` and `renderMessages()` against missing DOM nodes (`if (!el) return;`), ensuring robustness across headless testing environments and partial layout renders.
 
 

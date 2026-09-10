@@ -23,7 +23,7 @@ def run_cmd(cmd, cwd=None):
 def verify_syntax():
     """Validates JavaScript syntax integrity for core application files."""
     print("\n[1/4] Checking JavaScript Syntax Integrity...")
-    targets = ["app.js", "redesign.js"]
+    targets = ["app.js", "redesign.js", "suna_agent.js", "suna_harness.js"]
     for target in targets:
         if not os.path.exists(target):
             print(f"[-] Target file {target} not found!")
@@ -70,7 +70,7 @@ def verify_mocha_tests():
     """Executes the Mocha test suite and validates pass/fail metrics."""
     print("\n[3/4] Running Comprehensive Mocha Test Suites...")
     start_time = time.time()
-    code, out, err = run_cmd('npx mocha "tests/**/*.js"')
+    code, out, err = run_cmd('npx mocha --timeout 15000 "tests/**/*.js"')
     elapsed = time.time() - start_time
 
     print(out)

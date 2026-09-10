@@ -1,31 +1,40 @@
-# BRIEFING — 2026-08-27T15:18:00Z
+# BRIEFING — 2026-09-07T13:45:00Z
 
 ## Mission
-Investigate buildSystemPrompt() and sendWorkspaceMessage() in app.js, and formulate precise anti-placeholder system prompt directives for 100% unabridged code generation.
+Investigate and formulate the concrete implementation strategy for InterHarnessEventBus and TrajectoryEngine hierarchical tree representation for Milestone 1.
 
 ## 🔒 My Identity
-- Archetype: teamwork_preview_explorer
+- Archetype: teamwork_explorer
 - Roles: [explorer, analyst]
 - Working directory: d:\Suna Chat\.agents\explorer_m1_2
-- Original parent: b5bb109f-65cd-45b2-9501-db6808511939
-- Milestone: M1 (token_maximization_and_system_prompts)
+- Original parent: 54f8a5c6-f5e1-47fc-bcb2-f13faec46da4
+- Milestone: Milestone 1: Sub-harness Delegation & Event Bus (R1)
 
 ## 🔒 Key Constraints
-- Read-only investigation — do NOT implement
-- Scope: R1 System Prompt Anti-Placeholder Directives in app.js (buildSystemPrompt and sendWorkspaceMessage)
+- Read-only investigation — do NOT implement in production source files
+- Must detail InterHarnessEventBus (pub/sub, point-to-point, envelopes: directive, status_query, emergency_stop, progress, completed, failed)
+- Must detail TrajectoryEngine hierarchical tree representation (TrajectoryTreeNode, stitchChildTrajectory, getHierarchicalTree)
+- Must provide concrete method definitions, event structures, and hook points in suna_harness.js
+- Output findings in m1_strategy.md and handoff.md; report back via send_message
 
 ## Current Parent
-- Conversation ID: b5bb109f-65cd-45b2-9501-db6808511939
+- Conversation ID: 54f8a5c6-f5e1-47fc-bcb2-f13faec46da4
 - Updated: not yet
 
 ## Investigation State
-- **Explored paths**: ORIGINAL_REQUEST.md, PROJECT.md, full-output-enforcement SKILL.md, app.js (buildSystemPrompt lines 5813-5917, sendWorkspaceMessage lines 1920-1926, buildApiMessages line 6188, buildTextOnlyMessages line 5795, continuation prompts lines 1982 & 6351).
-- **Key findings**: Identified permissive snippet language in Workspace Assistant that causes workspace corruption if partial fragments are returned. Formulated exhaustive anti-placeholder and unabridged code generation prompt directives for both Main Chat and Workspace Assistant.
-- **Unexplored areas**: None within Milestone 1 scope.
+- **Explored paths**: ORIGINAL_REQUEST.md, PROJECT.md, survey_report.md, spec_report.md, suna_harness.js (lines 98-114, 1550-1880, 3090-3258), tests/test_suna_harness.js (lines 550-650).
+- **Key findings**:
+  - Existing `TrajectoryEngine.recordStep` deeply freezes events with `makeImmutableEvent`. In-place modification of parent events is prohibited by design.
+  - Formulated dual-reference architecture: child trajectories registered in `this.childTrajectories` map; `getHierarchicalTree()` dynamically constructs mutable `TrajectoryTreeNode` hierarchies.
+  - Detailed complete `InterHarnessEventBus` implementation with point-to-point, broadcast (`*`), Promise-based request/response (`bus.request()`), and all 6 required envelopes (`directive`, `status_query`, `emergency_stop`, `progress`, `completed`, `failed`).
+- **Unexplored areas**: None within Milestone 1 Explorer 2 scope.
 
 ## Key Decisions Made
-- Formulated explicit token blacklist (// ..., /* TODO */, /* unchanged */, <!-- ... -->, etc.) and mandatory full HTML/CSS/JS document rules.
-- Coordinated directives with Multi-Turn Continuation Chaining and Direct Workspace Live Sync.
+- Implemented `InterHarnessEventBus` with try/catch error isolation per subscriber to prevent rogue child handlers from crashing the bus.
+- Preserved 100% backward compatibility for flat `exportMarkdown()` while adding `{ hierarchical: true }` support.
+- Defined 13 specific test cases (`M1-BUS-01..07`, `M1-TRAJ-01..06`) for `tests/test_suna_harness.js`.
 
 ## Artifact Index
+- d:\Suna Chat\.agents\explorer_m1_2\m1_strategy.md — Detailed M1 implementation strategy (InterHarnessEventBus & TrajectoryEngine tree stitching)
 - d:\Suna Chat\.agents\explorer_m1_2\handoff.md — Complete 5-component handoff report
+

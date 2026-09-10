@@ -1,40 +1,40 @@
-# BRIEFING — 2026-08-27T15:33:30Z
+# BRIEFING — 2026-09-07T14:15:30Z
 
 ## Mission
-Investigate R2 Abort Safety, Error Recovery, Partial Response Preservation, and Formulate a 4-tier Mocha test suite for Multi-turn Chaining & Truncation Detection.
+Formulate formal specifications and contracts for Milestone 2 (VfsDiffEngine and AciSchemaValidator edge cases, ReDoS defense, Vietnamese UTF-8, and M2 Worker Checklist).
 
 ## 🔒 My Identity
-- Archetype: explorer
-- Roles: investigation, synthesis
+- Archetype: specification_miner
+- Roles: specification mining, edge case formalization, contracts specification
 - Working directory: d:\Suna Chat\.agents\explorer_m2_3
-- Original parent: b5bb109f-65cd-45b2-9501-db6808511939
-- Milestone: Milestone 2 (R2)
+- Original parent: 54f8a5c6-f5e1-47fc-bcb2-f13faec46da4
+- Milestone: Milestone 2 (Unified Git Diff & JSON Schema Validator - R2)
 
 ## 🔒 Key Constraints
-- Read-only investigation — do NOT modify project source files
-- Formulate 4-tier Mocha test suite proposal and verification analysis
-- Write outputs only inside `d:\Suna Chat\.agents\explorer_m2_3\`
-- Keep 100% compatibility with existing 557 tests
+- Read-only investigation — do NOT implement anything or modify project code (suna_harness.js, app.js, tests)
+- Prioritize authoritative sources over prior knowledge (ORIGINAL_REQUEST.md, PROJECT.md, survey_report.md, spec_report.md)
+- Do NOT skip any edge case: empty files, identical files, no newline at EOF, large files (>10k lines), Vietnamese UTF-8 strings, prototype pollution, negative/inverted line ranges, schema injection, ReDoS
+- Write outputs only inside `d:\Suna Chat\.agents\explorer_m2_3\` (`m2_contracts.md`, `handoff.md`, `progress.md`)
+- Report back to parent via `send_message`
 
 ## Current Parent
-- Conversation ID: b5bb109f-65cd-45b2-9501-db6808511939
-- Updated: 2026-08-27T15:33:30Z
+- Conversation ID: 54f8a5c6-f5e1-47fc-bcb2-f13faec46da4
+- Updated: 2026-09-07T14:15:30Z
 
-## Investigation State
-- **Explored paths**: `app.js` (lines 1708-2105, 3605-3625, 6170-6700, 7390-7420), `PROJECT.md`, `ORIGINAL_REQUEST.md`, `tests/**/*.js`, `run_verification.py`.
-- **Key findings**:
-  1. `State.abortController` is bound to `makeApiRequest`, halts continuation loop via `State.abortController?.signal?.aborted`, appends `*(Đã dừng)*` marker in catch block and saves partial response.
-  2. `_workspaceAbortController` provides active cancellation, 45s safety timeout, and handles continuation loop in Workspace Assistant.
-  3. Typing indicator uses `typingRemoved` flag in Main Chat (removed on 1st delta, never recreated on turn N) and DOM id removal in Workspace Assistant.
-  4. Formulated 28-test 4-Tier Mocha test suite `tests/test_multi_turn_chaining_and_truncation_detection.js` which passed 28/28 tests cleanly in standalone execution.
-  5. 100% compatibility verified with all 557 existing tests passing under `run_verification.py`.
-- **Unexplored areas**: None within M2 R2 scope.
+## Task Summary
+- **What to mine**: Exact edge cases and behavioral contracts for `VfsDiffEngine` and `AciSchemaValidator`, plus concrete M2 Worker Implementation Checklist.
+- **Success criteria**: Comprehensive, mathematically and structurally sound formal specification in `m2_contracts.md` and `handoff.md`.
+- **Interface contracts**: `d:\Suna Chat\.agents\orchestrator_1\PROJECT.md` § Interface Contracts (M1 ↔ M2, M1/M2 ↔ M3, M1/M2/M3 ↔ M4).
+- **Code layout**: `d:\Suna Chat\suna_harness.js` (UMD module, zero dependencies), `tests/test_suna_harness.js`.
 
 ## Key Decisions Made
-- Validated all 28 test cases for R2 in `proposed_test_multi_turn_chaining_and_truncation_detection.js`.
-- Compiled comprehensive 5-component handoff report for Milestone 2 implementers and reviewers.
+- Analyzed Git patch unified diff specification (RFC 3986 / Git diff format), Myers LCS algorithm, and unified hunk header semantics (`@@ -l,s +l,s @@`).
+- Formalized boundary behaviors for empty-to-empty, empty-to-content, content-to-empty, identical files, trailing newline (`\ No newline at end of file`), and large scale diffs (>10k lines).
+- Defined defensive sanitization and validation rules for ACI tools against prototype pollution (`__proto__`, `constructor`), ReDoS regexes, and inverted line bounds (`startLine > endLine`).
 
 ## Artifact Index
-- `d:\Suna Chat\.agents\explorer_m2_3\progress.md` — Progress tracker & heartbeat
-- `d:\Suna Chat\.agents\explorer_m2_3\proposed_test_multi_turn_chaining_and_truncation_detection.js` — Validated 28-test Mocha suite
-- `d:\Suna Chat\.agents\explorer_m2_3\handoff.md` — 5-component handoff report
+- `d:\Suna Chat\.agents\explorer_m2_3\DISPATCH.md` — Dispatch record
+- `d:\Suna Chat\.agents\explorer_m2_3\BRIEFING.md` — Situational awareness
+- `d:\Suna Chat\.agents\explorer_m2_3\progress.md` — Liveness heartbeat
+- `d:\Suna Chat\.agents\explorer_m2_3\m2_contracts.md` — Definitive M2 Worker specifications and checklist
+- `d:\Suna Chat\.agents\explorer_m2_3\handoff.md` — 5-component self-contained handoff report

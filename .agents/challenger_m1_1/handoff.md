@@ -1,104 +1,76 @@
-# Empirical Challenger Report: Milestone 1 Token Maximization & System Prompt Directives
-
-**Agent**: `challenger_m1_1` (teamwork_preview_challenger)  
-**Milestone**: M1 (Token Maximization & System Prompt Directives)  
-**Date**: 2026-08-27  
-
----
+# Handoff Report — Milestone 1: Sub-harness Lifecycle & VFS Isolation
 
 ## 1. Observation
-
-Direct empirical inspection and stress-testing of `app.js` and the test infrastructure revealed the following concrete observations:
-
-1. **`resolveModelMaxTokens(modelName, mode)` (`app.js:5652–5714`)**:
-   - Implements 4-tier model hierarchy with case normalization (`m = modelName.toLowerCase()`) and safe type guarding (`if (!modelName || typeof modelName !== 'string') return mode === 'flash' ? 4096 : 8192;`).
-   - Tier 1 (65,536 tokens): matches `o1`, `o3`, `o4`, `thinking`, `reasoner`, `gemini-2.5`, `gemini-3`, `claude-3-7`, `claude-3.7`.
-   - Tier 2 (16,384 tokens): matches `gpt-4o`, `gpt-4.1`, `gpt-4-turbo`, `gemini-2.0`, `gemini-2`, `qwen-2.5`, `qwen2.5`, `coder`, `llama-3.3`, `llama-3.1-405b`, `llama-3.1-70b`, `deepseek`, `mistral-large`, `codestral`.
-   - Tier 3 (8,192 tokens): matches `claude-3-5`, `claude-3.5`, `gemini-1.5`, `gemini-1`, `qwen`, `llama`, `glm-4`.
-   - Tier 4 (4,096 tokens): matches `claude-3`, `gpt-4`, `gpt-3.5`.
-   - Mode-aware fallback: returns 4,096 for `mode === 'flash'` and 8,192 for pro/other modes.
-
-2. **`makeApiRequest(messages, targetModel)` (`app.js:6313–6395`)**:
-   - Binds `max_tokens: resolveModelMaxTokens(modelToUse, State.mode)`.
-   - Intercepts HTTP 400 when `reqBody.max_tokens > 4096` to execute an automated downgrade retry with `max_tokens: 4096` on the primary proxy before attempting secondary proxy failover.
-   - Preserves user cancellation (`err.name === 'AbortError'`) without redundant proxy retries.
-
-3. **`callWorkspaceChatApi(model, apiMessages, customSignal, onChunk)` (`app.js:2027–2105`)**:
-   - Resolves `maxTokensCeiling = resolveModelMaxTokens(model, 'pro')`.
-   - Passes `max_tokens: maxTokensCeiling` to `stream: true` request and the `stream: false` fallback.
-   - Binds `signal: customSignal || _workspaceAbortController?.signal`, properly forwarding external caller signals.
-
-4. **System Prompts (`app.js:1920–1928, 5965–5971`)**:
-   - `buildSystemPrompt()` injects `[NGUYÊN TẮC TOÀN VẸN MÃ NGUỒN & KHAI THÁC TOKEN TỐI ĐA]` explicitly prohibiting placeholders (`// ... rest of code`, `// code cũ giữ nguyên`, `/* TODO */`, `/* unchanged */`, `<!-- ... rest of code ... -->`).
-   - `sendWorkspaceMessage()` enforces 100% full file implementations (`[QUY TẮC BẮT BUỘC VỀ MÃ NGUỒN - 100% TOÀN VẸN & KHÔNG PLACEHOLDER]`) and eliminates permissive partial fragment phrasing (`hãy trả về toàn bộ hoặc đoạn mã nguồn mới`).
-
-5. **Empirical Test Suite Execution**:
-   - `npx mocha tests/test_challenger_m1_token_maximization.js`: 18/18 tests passed (90ms).
-   - `npx mocha tests/test_challenger_m1_token_and_prompt_adversarial.js`: 27/27 tests passed (196ms).
-   - `npx mocha tests/test_token_maximization_and_system_prompts.js`: 15/15 tests passed (22ms).
-   - `python run_verification.py`: 557/557 tests passed across all 23 test suites with 0 failures (13.41s).
-
----
+- Target files inspected and executed:
+  - `d:\Suna Chat\suna_harness.js`:
+    - `VfsSandbox.prototype.branch` (lines 907-944) and `getBranchChanges` (lines 946-977)
+    - `HarnessController.prototype.spawnSubHarness` (lines 2092-2282)
+    - `HarnessController.prototype.mergeSubHarness` (lines 2284-2569)
+    - `HarnessController.prototype.emergencyStopSubHarness` (lines 2571-2605)
+    - `TrajectoryEngine.prototype.stitchChildTrajectory` and `getHierarchicalTree` (lines 2800-2905)
+  - `d:\Suna Chat\tests\test_challenger_m1_adversarial_vfs_lifecycle.js`:
+    - 19 comprehensive adversarial stress tests covering all requirements.
+- Verification and execution observations:
+  - Command: `npx mocha tests/test_challenger_m1_adversarial_vfs_lifecycle.js`
+    - Result: `19 passing (51ms)`, 0 failing.
+  - Command: `cmd /c "node -c suna_harness.js && node -c app.js && node -c redesign.js"`
+    - Result: Exit code 0, 0 syntax errors.
+  - Command: `npm test`
+    - Result: `1001 passing (9s)`, 0 failing.
+  - Command: `python run_verification.py`
+    - Verbatim output:
+      ```
+      [+] JavaScript syntax verification PASSED.
+      [+] CSS hygiene verification PASSED.
+      [+] Mocha test suite PASSED: 1001 tests passing, 0 failing (took 25.68s)
+      [+] Discovered 39 test suite files across test matrix.
+      [+] Active Feature & E2E Suites: 8
+      [+] Hidden & Adversarial Suites: 15
+      ==================================================================
+      >>> VERIFICATION PASSED: ALL CHECKS 100% GREEN (1001 TESTS) <<<
+      ==================================================================
+      ```
+- Specific empirical observations:
+  - `share` mode: Writes, modifications, and deletions in child VFS are visible instantaneously in parent VFS. `parent.mergeSubHarness` on share mode throws `HarnessError: INVALID_VFS_MODE`.
+  - `clone` mode: Complete memory isolation. Post-spawn mutations in child do not leak to parent; mutations in parent do not leak to child. `parent.mergeSubHarness` on clone mode throws `HarnessError: INVALID_VFS_MODE`.
+  - `branch` mode: Operates on isolated branch VFS with snapshot tracking. `getBranchChanges()` computes `added`, `modified`, and `deleted` sets accurately.
+  - `mergeSubHarness`:
+    - Disjoint file modifications merge cleanly while preserving parent edits.
+    - Identical file additions resolve cleanly with 0 conflicts.
+    - All 4 conflict types correctly classified: `modify_modify_conflict`, `modify_delete_conflict`, `delete_modify_conflict`, `add_add_conflict`.
+    - Under `strategy: 'safe'`, conflict throws `BRANCH_CONFLICT` (or returns `{ success: false }` if `throwOnConflict: false`) and parent VFS remains 100% unpolluted.
+    - Under `strategy: 'force'`, child changes overwrite parent conflicts.
+    - Double-merging without `{ force: true }` throws `ALREADY_MERGED`.
+  - Recursion guard: Spawning sequentially from depth 0 through depth 5 succeeds; spawning from depth 5 throws `MAX_RECURSION_DEPTH_EXCEEDED` with `{ currentDepth: 5, maxDepth: 5 }`. Custom `maxDepth` is respected.
+  - Delegation cycle guard: Self-delegation (`childId === this.id`) and ancestor delegation (`this.lineage.includes(childId)`) reliably throw `DELEGATION_CYCLE_DETECTED`.
+  - Cascading emergency stop: Halts child controller and all descendant sub-harnesses recursively, blocking subsequent spawns with `PARENT_HALTED`.
+  - Trajectory stitching: `parentTrajectory.getHierarchicalTree()` outputs hierarchical tree where child steps are nested under parent spawn step with step indexing and role attribution.
 
 ## 2. Logic Chain
-
-1. **Model Resolution Tier Precedence**:
-   - Models like `claude-3-7-sonnet` contain substrings for both `claude-3-7` and `claude-3`. Because Tier 1 is evaluated before Tier 4, `claude-3-7-sonnet` correctly resolves to 65,536 tokens without collision corruption.
-   - Similarly, `gemini-2.0-flash-thinking-exp` contains `thinking` (Tier 1) and `gemini-2.0` (Tier 2); evaluating Tier 1 first guarantees maximum token ceiling allocation (65,536 tokens) for reasoning models.
-   - `gpt-4o` (Tier 2: 16,384) is evaluated before legacy `gpt-4` (Tier 4: 4,096), preventing premature truncation on modern OpenAI models.
-
-2. **Casing, Diacritics & Type Robustness**:
-   - Testing with uppercase strings (`O1-PREVIEW`, `GPT-4O-MINI`), mixed case (`Gemini-2.5-Pro`), surrounding whitespace (`  o1-mini  `, `\tgpt-4o\n`), and Unicode/Vietnamese context (`mô hình o3-mini`, `claude-3.7-✨`) confirmed 100% resolution accuracy.
-   - Testing invalid types (`null`, `undefined`, `12345`, `true`, `{}`, `[]`, `NaN`) confirmed safe fallback to mode defaults (8,192 for pro, 4,096 for flash) without throwing exceptions.
-
-3. **Proxy Downgrade & Abort Resilience in `makeApiRequest`**:
-   - When a proxy rejects requests exceeding 4,096 tokens with HTTP 400, the downgrade loop automatically retries with 4,096 tokens. If the downgraded call succeeds, execution resumes without unnecessary failover.
-   - If the downgrade retry fails or returns HTTP 500, failover to `altProxy` engages with the original full ceiling, providing high availability across multi-proxy environments.
-   - AbortController signals propagate immediately with zero lingering retries or memory leaks.
-
-4. **Workspace Full-File Integrity in `callWorkspaceChatApi`**:
-   - Setting `max_tokens` to `resolveModelMaxTokens(model, 'pro')` in both streaming and non-streaming requests guarantees that complex interactive web apps (Three.js, Canvas, multi-module scripts) receive maximum output capacity.
-   - Strict system prompt directives in both Main Chat and Workspace eliminate lazy placeholder comments and ensure that every generated response is 100% complete and immediately runnable in Live Workspace.
-
----
+- Step 1: `ORIGINAL_REQUEST.md` (R1) and `PROJECT.md` define the specification for Sub-harness delegation, workspace isolation (`share`, `clone`, `branch`), 3-way reconciliation, recursion limits, and circular delegation guards.
+- Step 2: Inspection of `suna_harness.js` verified the presence of full logic for each requirement:
+  - `vfsWorkspaceMode` branching with origin snapshots in `VfsSandbox.prototype.branch`.
+  - 3-way reconciliation algorithm evaluating `originFiles`, `parentFiles`, and `childFiles` across all 4 conflict classes in `mergeSubHarness`.
+  - Cycle detection against `this.lineage` and `currentDepth >= 5` recursion guards in `spawnSubHarness`.
+- Step 3: An empirical adversarial test harness was authored in `tests/test_challenger_m1_adversarial_vfs_lifecycle.js` to stress-test these mechanisms with edge cases (tampered baselines, circular references, depleted budgets, cascading halts).
+- Step 4: Execution of the challenger test suite (`19/19 passing`), the global test suite (`1,001/1,001 passing`), syntax checks (0 errors), and the authoritative verification runner confirmed zero regressions, zero data leakage, and exact compliance with interface contracts.
+- Step 5: Therefore, the implementation of Milestone 1 is verified as robust, safe, and correct.
 
 ## 3. Caveats
-
-- **Third-Party Model Naming Divergence**: Unconventional proxy aliases that do not contain recognizable model substrings (e.g. `my-custom-proxy-endpoint-v1`) will fall back to mode-based defaults (8,192 tokens in pro mode, 4,096 in flash mode). This is safe and conservative.
-- **Provider Hard Limits**: For certain endpoints that enforce lower physical quotas (e.g. 2,048 tokens), the HTTP 400 downgrade loop handles the initial downgrade to 4,096; subsequent Milestone 2 Multi-Turn Continuation Chaining will handle any remaining turn continuation automatically.
-
----
+- No caveats. All core sub-harness delegation, VFS isolation modes, conflict reconciliation classes, and lifecycle guards were directly and empirically verified in runtime execution.
 
 ## 4. Conclusion
-
-**Verdict: VERIFIED & ROBUST (GREEN)**
-
-The Milestone 1 implementation in `app.js` is empirically correct, resilient to hostile inputs, and satisfies all R1 acceptance criteria:
-1. `resolveModelMaxTokens` reliably resolves model output ceilings up to 65,536 tokens across all model families with zero tier collision.
-2. `makeApiRequest` dynamically maximizes tokens and gracefully handles proxy 400 rejections via automatic downgrade retry.
-3. `callWorkspaceChatApi` applies model ceilings to all request branches and properly binds `customSignal`.
-4. System prompts in Main Chat and Workspace Assistant strictly enforce 100% complete, placeholder-free code generation.
-5. All 557 project tests pass with 0 syntax errors and 0 regressions.
-
----
+- **Verdict**: **APPROVE**.
+- Milestone 1 (R1: Multi-Agent Sub-harness Delegation & Event Bus) is fully validated and approved.
+- All 4 conflict classes, safe and force merge strategies, depth limit (5), circular delegation protection, and VFS isolation modes function flawlessly.
 
 ## 5. Verification Method
-
-To independently reproduce and verify these findings, run the following commands:
-
-```powershell
-# 1. Check JavaScript syntax integrity
-node -c app.js && node -c redesign.js
-
-# 2. Run Milestone 1 Feature Test Suite
-npx mocha tests/test_token_maximization_and_system_prompts.js
-
-# 3. Run Challenger Exhaustive Stress Suite
-npx mocha tests/test_challenger_m1_token_maximization.js
-
-# 4. Run Challenger Adversarial Suite
-npx mocha tests/test_challenger_m1_token_and_prompt_adversarial.js
-
-# 5. Run Full Authoritative Project Verification (all 557 tests)
-python run_verification.py
-```
+To independently reproduce and verify:
+1. Run challenger test suite:
+   `npx mocha tests/test_challenger_m1_adversarial_vfs_lifecycle.js`
+2. Run full automated test matrix:
+   `npm test`
+3. Run authoritative integrity verification script:
+   `python run_verification.py`
+4. Run syntax verification:
+   `cmd /c "node -c suna_harness.js && node -c app.js && node -c redesign.js"`

@@ -1,95 +1,77 @@
-# BRIEFING — 2026-08-27T15:34:50Z
+# BRIEFING — 2026-09-07T14:19:30Z
 
 ## Mission
-Implement the Autonomous Token-Maximizing Multi-Turn Continuation Chaining Engine for Suna Chat and Live Workspace according to all requirements R1-R6 and Acceptance Criteria in ORIGINAL_REQUEST.md.
+Orchestrate the design, implementation, and rigorous verification of Suna Agent Harness advanced capabilities (R1 Sub-harness, R2 Diff & Schema, R3 UI Visualizer & Persistence, R4 Testing & Zero Regression).
 
 ## 🔒 My Identity
-- Archetype: teamwork_preview_orchestrator
+- Archetype: orchestrator
 - Roles: orchestrator, user_liaison, human_reporter, successor
 - Working directory: d:\Suna Chat\.agents\orchestrator_1
-- Original parent: parent
-- Original parent conversation ID: 6572041a-e2ee-469b-91c9-0a52344280e6
+- Original parent: sentinel
+- Original parent conversation ID: cb2895b1-8bcf-4a71-a445-ed6b7433e3cd
 
 ## 🔒 My Workflow
-- **Pattern**: Project Pattern (Dual Track: Implementation Track + E2E Testing Track)
-- **Scope document**: d:\Suna Chat\PROJECT.md
-1. **Decompose**: Survey full scope with 3 parallel Explorers/Spec Miners, merge feature inventory, define milestones and interface contracts in PROJECT.md.
+- **Pattern**: Project
+- **Scope document**: d:\Suna Chat\.agents\orchestrator_1\PROJECT.md
+1. **Decompose**: Survey codebase with Explorers -> establish feature inventory -> decompose into 4 Milestones (M1, M2, M3, M4).
 2. **Dispatch & Execute**:
-   - Implementation Track: Sub-orchestrators for milestones (Direct iteration loop: Explorer -> Worker -> Reviewer -> Challenger -> Auditor -> Gate).
-   - E2E Testing Track: E2E Testing Orchestrator (Opaque-box test harness & suites Tiers 1-4, publishing TEST_READY.md).
-   - Final Milestone: Pass 100% E2E tests (Tiers 1-4) + Adversarial Coverage Hardening (Tier 5).
-3. **On failure**: Retry -> Replace -> Skip -> Redistribute -> Redesign -> Escalate.
-4. **Succession**: Self-succeed at 16 spawns, write handoff.md, spawn successor.
-- **Work items**:
-  1. Survey & Feature Inventory [done]
-  2. E2E Testing Track (Tiers 1-4) [done - TEST_READY.md published]
-  3. Milestone 1: Token Maximization & Turn Config [done - GATE PASS]
-  4. Milestone 2: Multi-Turn Loop & Truncation Detection [in-progress: handed off to gen2]
-  5. Milestone 3: Smart Boundary Stitching & Deduplication [pending]
-  6. Milestone 4: Single-Bubble Seamless Live Streaming UI [pending]
-  7. Milestone 5: Direct Workspace Live Sync [pending]
-  8. Milestone 6: Final Integration, Regression & E2E Validation [pending]
-- **Current phase**: 2 (Succession Executed)
-- **Current focus**: orchestrator_2 (d82a1afd-8f22-4d02-b33c-128bc37d1852) active
+   - Survey: Completed & baseline verified (982 tests green).
+   - M1: Sub-harness Delegation & Event Bus (R1). COMPLETED & PASSED. (1,034 tests green, 0 syntax errors, CLEAN audit).
+   - M2: Unified Git Diff & JSON Schema Validator (R2). 3 Explorers completed blueprints and contracts. Worker `worker_m2` dispatched.
+   - M3: UI Visualizer & Checkpoint Persistence (R3).
+   - M4: Comprehensive Testing, Adversarial Fuzzing & Zero-Regression Verification (R4).
+3. **On failure**: Retry -> Replace -> Skip (except Auditor) -> Redistribute -> Redesign -> Escalate.
+4. **Succession**: Threshold 16 spawns.
 
 ## 🔒 Key Constraints
 - NEVER write, modify, or create source code files directly.
-- NEVER run build/test commands directly.
-- NEVER investigate or explore problem at code level directly — dispatch Explorers.
-- Audit is a binary veto (Integrity violation = immediate failure).
-- Never reuse subagents after handoff.
-- Pass 100% of E2E tests and run_verification.py before declaring completion.
+- NEVER run build/test commands yourself — require workers to do so.
+- NEVER investigate or explore the problem at the code level — dispatch Explorers for technical investigation.
+- Use file-editing tools ONLY for metadata/state files (.md) in .agents/ folder.
+- Binary veto on Forensic Auditor violations.
 
 ## Current Parent
-- Conversation ID: 6572041a-e2ee-469b-91c9-0a52344280e6
-- Updated: not yet
+- Conversation ID: cb2895b1-8bcf-4a71-a445-ed6b7433e3cd
+- Updated: 2026-09-07T14:19:30Z
 
 ## Key Decisions Made
-- Survey, Architecture, E2E Testing Track, Milestone 1, and Milestone 2 Exploration completed.
-- Spawn threshold 16/16 reached with 0 pending subagents.
-- Soft handoff written to .agents/orchestrator_1/handoff.md.
-- Successor orchestrator_2 spawned with conversation ID d82a1afd-8f22-4d02-b33c-128bc37d1852.
+- Milestone 1 certified and passed.
+- Milestone 2 exploration completed.
+- Dispatched worker_m2 for Milestone 2 implementation.
 
 ## Team Roster
 | Agent | Type | Work Item | Status | Conv ID |
 |-------|------|-----------|--------|---------|
-| spec_miner_0 | teamwork_preview_spec_miner | Survey requirements & feature inventory | completed | 04dd9b5c-3c19-4e10-8c96-593ec9cded5c |
-| explorer_chat_0 | teamwork_preview_explorer | Survey chat streaming & multi-turn chaining | completed | 8a1b1c04-584e-4389-8017-702cdc03f188 |
-| explorer_workspace_0 | teamwork_preview_explorer | Survey workspace live sync & test harness | completed | 54bd535b-17e8-4d2f-bd1f-9e8822348ac9 |
-| e2e_test_writer_1 | teamwork_preview_test_writer | E2E Test Suite (Tiers 1-4) & TEST_READY.md | completed | 4dcd4ba9-a15b-422a-96d8-501994c1a46d |
-| explorer_m1_1 | teamwork_preview_explorer | M1: Token Ceiling parameter investigation | completed | f18d4a42-788f-4299-ac6a-e112f0a64e6f |
-| explorer_m1_2 | teamwork_preview_explorer | M1: System Prompt anti-placeholder investigation | completed | e795efd5-8fe0-4ab1-8949-86dc182f7a63 |
-| explorer_m1_3 | teamwork_preview_explorer | M1: Regression safety & test assertions | completed | a8fd12be-f533-49c8-b4f5-ae316c5a44ec |
-| worker_m1_1 | teamwork_preview_worker | M1: Implement token ceilings & system prompts | completed | 4aee3f27-fae3-474a-a802-244acb884c37 |
-| reviewer_m1_1 | teamwork_preview_reviewer | M1 Gate: Code review & test verification | completed (APPROVE) | abecf6c8-d9ca-4453-975c-9af7951f0376 |
-| reviewer_m1_2 | teamwork_preview_reviewer | M1 Gate: Regression review & feature preservation | completed (APPROVE) | 029c3d29-1a0c-4705-a15e-91d972bb795b |
-| challenger_m1_1 | teamwork_preview_challenger | M1 Gate: Empirical stress-testing of token resolver | completed (APPROVE) | 4b571e3f-7677-4e35-92c1-7f01175f6588 |
-| challenger_m1_2 | teamwork_preview_challenger | M1 Gate: Adversarial testing of system prompts | completed (APPROVE) | 482b0d5b-c20c-4633-93b9-dcf544ba407d |
-| auditor_m1_1 | teamwork_preview_auditor | M1 Gate: Forensic integrity audit | completed (CLEAN) | b3c88a8b-20f7-499b-aa37-aaeb68f0968f |
-| explorer_m2_1 | teamwork_preview_explorer | M2: Truncation detector investigation | completed | 5b87a303-bc95-47a7-b239-e5ef45b73111 |
-| explorer_m2_2 | teamwork_preview_explorer | M2: Continuation context & loop bounds | completed | 82ba6ecb-9d37-40c7-9a24-df8c1bbc8279 |
-| explorer_m2_3 | teamwork_preview_explorer | M2: Abort safety & test suite formulation | completed | 35ed727b-0c15-4af4-9324-e96c3d6430bd |
-| orchestrator_2 | teamwork_preview_worker | Successor Orchestrator (Generation 2) | in-progress | d82a1afd-8f22-4d02-b33c-128bc37d1852 |
+| explorer_survey_1 | teamwork_preview_explorer | Survey SunaHarness & VFS architecture | COMPLETED | 5d1bfe27-cf5c-429b-9430-deeb05653db5 |
+| spec_miner_survey_2 | teamwork_preview_spec_miner | Mine specs for R1, R2, R3, R4 | COMPLETED | 1ae8484b-1c58-4abc-a7c0-35f4d17a966a |
+| explorer_survey_3 | teamwork_preview_explorer | Survey tests baseline (982 tests) & UI | COMPLETED | e05d29e7-11e3-474e-b590-aa581374d37b |
+| explorer_m1_1 | teamwork_preview_explorer | M1 Sub-harness lifecycle & VFS modes | COMPLETED | 7dc0a2a3-16a9-4fef-993f-47f533d8553c |
+| explorer_m1_2 | teamwork_preview_explorer | M1 Event Bus & Trajectory stitching | COMPLETED | 8bb524b9-d8c4-42de-b85d-0db39781b223 |
+| explorer_m1_3 | teamwork_preview_spec_miner | M1 Contracts & conflict resolution | COMPLETED | e2749b5e-35e5-4fcc-b6c1-2e01516a040b |
+| worker_m1 | teamwork_preview_worker | M1 Implementation in suna_harness.js | COMPLETED | 4af4c933-c707-4f72-a781-279f99508189 |
+| reviewer_m1_1 | teamwork_preview_reviewer | M1 Code review & robustness | COMPLETED | 32f34d9e-1c91-4395-8b53-e654d23c3890 |
+| reviewer_m1_2 | teamwork_preview_reviewer | M1 Interface & compatibility review | COMPLETED | a4a87a17-64d0-4329-90f2-d16232fa1f21 |
+| challenger_m1_1 | teamwork_preview_challenger | M1 Empirical test: lifecycle & VFS | COMPLETED | b82144a6-0268-4684-af73-f1e8b8db8f2c |
+| challenger_m1_2 | teamwork_preview_challenger | M1 Empirical test: EventBus & Traj | COMPLETED | a908ac99-f0bc-4765-ad6b-d9cbf2c2563c |
+| auditor_m1_1 | teamwork_preview_auditor | M1 Forensic integrity audit | COMPLETED | db6c3184-ee10-4036-871a-873c65e321c6 |
+| explorer_m2_1 | teamwork_preview_explorer | M2 VfsDiffEngine strategy | COMPLETED | 6c967db5-0778-4d88-86f2-f70fd32aacd4 |
+| explorer_m2_2 | teamwork_preview_explorer | M2 AciSchemaValidator strategy | COMPLETED | a54637a4-f1f5-4824-9a65-59626e64f3c4 |
+| explorer_m2_3 | teamwork_preview_spec_miner | M2 Contracts & edge cases | COMPLETED | 4b64ccb3-54fa-4a64-9edc-c54e714b5c4d |
+| worker_m2 | teamwork_preview_worker | M2 Implementation in suna_harness.js | IN_PROGRESS | 0899691e-bb11-40cd-b67e-7db12b6001da |
 
 ## Succession Status
-- Succession required: yes (executed)
+- Succession required: pending completion of active subagents (spawn count: 16 / 16)
 - Spawn count: 16 / 16
-- Pending subagents: none
+- Pending subagents: 0899691e-bb11-40cd-b67e-7db12b6001da
 - Predecessor: none
-- Successor spawned: d82a1afd-8f22-4d02-b33c-128bc37d1852
-- Successor generation: gen2
+- Successor: not yet spawned
 
 ## Active Timers
-- Heartbeat cron: killed for succession
+- Heartbeat cron: 54f8a5c6-f5e1-47fc-bcb2-f13faec46da4/task-12 (every 10m)
 - Safety timer: none
 
 ## Artifact Index
-- d:\Suna Chat\.agents\ORIGINAL_REQUEST.md — Original User Request
-- d:\Suna Chat\PROJECT.md — Global Architecture, Feature Inventory & Milestones
-- d:\Suna Chat\TEST_INFRA.md — Test Infrastructure Architecture
-- d:\Suna Chat\TEST_READY.md — E2E Test Suite Readiness Signal
-- d:\Suna Chat\.agents\orchestrator_1\GATE_STATUS.md — Gate Verdict Tracking
-- d:\Suna Chat\.agents\orchestrator_1\handoff.md — Soft Handoff for Successor
-- d:\Suna Chat\.agents\orchestrator_1\DISPATCH.md — Orchestrator Dispatch Record
-- d:\Suna Chat\.agents\orchestrator_1\BRIEFING.md — Persistent Working Memory
-- d:\Suna Chat\.agents\orchestrator_1\progress.md — Liveness and State Checkpoint
+- d:\Suna Chat\.agents\ORIGINAL_REQUEST.md — Authoritative user requirements
+- d:\Suna Chat\.agents\orchestrator_1\PROJECT.md — Architecture, feature inventory, milestones
+- d:\Suna Chat\.agents\orchestrator_1\GATE_STATUS.md — Gate tracking (M1: PASS)
+- d:\Suna Chat\.agents\worker_m2\DISPATCH.md — Worker M2 dispatch

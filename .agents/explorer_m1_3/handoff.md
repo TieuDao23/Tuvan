@@ -1,355 +1,182 @@
-# Handoff Report — Milestone 1 Regression Safety & Test Verification
+# Milestone 1 Specification Miner 3 Handoff Report
+## Formal Contracts: `mergeSubHarness`, 3-Way VFS Conflict Resolution & Defensive Edge Guards
 
-**Author**: `explorer_m1_3` (teamwork_preview_explorer)  
-**Scope**: Milestone 1 Regression Safety, Existing Test Suite Audit, and R1 Unit Test Assertion Formulation  
-**Date**: 2026-08-27  
+**Document ID:** SUNA-M1-CONTRACTS-01  
+**Author:** `explorer_m1_3` (Specification Mining & Contract Specialist)  
+**Parent Agent:** `orchestrator_1` (`parent`, ID: `54f8a5c6-f5e1-47fc-bcb2-f13faec46da4`)  
+**Working Directory:** `d:\Suna Chat\.agents\explorer_m1_3`  
+**Primary Output Artifact:** `d:\Suna Chat\.agents\explorer_m1_3\m1_contracts.md`  
+**Verification Target:** Zero regression across all 982 tests (`npm test`), 0 syntax errors (`node -c`), green `run_verification.py`.
 
 ---
 
 ## 1. Observation
 
-### Observation 1.1: Baseline Test Suite Health & Distribution
-- Execution of `python run_verification.py` passes 100% of all 4 verification gates:
-  - **Gate 1**: JavaScript Syntax Integrity (`node -c app.js && node -c redesign.js`) -> `[+] Clean syntax (0 errors)`.
-  - **Gate 2**: CSS Hygiene & Brace Balance in `styles.css` (`.toast-container { z-index: 10000 }`) -> `[+] Balanced braces (156 open / 156 close)`.
-  - **Gate 3**: Comprehensive Mocha Test Suites -> **281 passing tests (0 failing)**.
-  - **Gate 4**: Test Architecture Distribution -> **19 test suite files** (8 Active Feature & E2E Suites, 11 Hidden & Adversarial Suites).
+### 1.1 Examination of `suna_harness.js`
+- **File Path**: `d:\Suna Chat\suna_harness.js` (3,259 lines, UMD format).
+- **VFS Snapshot Mechanics** (Lines 797–837):
+  ```javascript
+  createSnapshot() {
+    const snap = {
+      files: {},
+      directories: Array.from(this.directories)
+    };
+    for (const [p, n] of this.files.entries()) {
+      snap.files[p] = {
+        name: n.name, path: n.path, content: n.content,
+        size: n.size, sizeBytes: n.size, lines: n.lines,
+        createdAt: n.createdAt, updatedAt: n.updatedAt,
+        version: n.version, locked: n.locked, readOnly: n.readOnly
+      };
+    }
+    return snap;
+  }
+  ```
+  *Observation*: `createSnapshot()` creates an in-memory dictionary of file nodes keyed by normalized path and an array of directories. `restoreSnapshot()` restores this state. Neither `branch()` nor any changeset tracking ledger exists currently in `VfsSandbox`.
+- **Harness Governance Architecture** (Lines 1552–1740):
+  ```javascript
+  class HarnessController {
+    constructor(options = {}) {
+      this.vfs = options.vfs || new VfsSandbox();
+      this.aci = new AciInterface(this.vfs, { controller: this });
+      this.maxTurns = options.maxTurns || 15;
+      this.maxTokens = options.maxTokens || 50000;
+      this.timeoutMs = options.timeoutMs || 60000;
+      this.readOnly = Boolean(options.readOnly);
+      this.turnsCompleted = 0;
+      this.tokensConsumed = 0;
+      this.startTime = Date.now();
+      this.isHalted = false;
+      this.haltReason = null;
+      this.haltDetails = null;
+      this.listeners = new Map();
+    }
+  ```
+  *Observation*: `HarnessController` manages a single monolithic agent instance. There is no `this._children` registry, no `spawnSubHarness()`, no `mergeSubHarness()`, and no sub-harness lifecycle management.
+- **Error Class Definitions** (Lines 137–153):
+  ```javascript
+  class VfsError extends Error {
+    constructor(code, message, details = {}) {
+      super(message);
+      this.name = 'VfsError';
+      this.code = code;
+      this.details = details;
+    }
+  }
+  class HarnessError extends Error {
+    constructor(code, message, details = {}) {
+      super(message);
+      this.name = 'HarnessError';
+      this.code = code;
+      this.details = details;
+    }
+  }
+  ```
+  *Observation*: Both `VfsError` and `HarnessError` support a standardized `(code, message, details)` signature, which must be utilized for all M1 error conditions.
 
-### Observation 1.2: Inventory of Existing Test Suites in `tests/`
-The 19 existing test files across `tests/` were inventoried and audited for interactions with `max_tokens`, API calls, and system prompts:
-
-| # | Test Suite File | Test Count | Focus Area | Static `app.js` Checks |
-|---|-----------------|------------|------------|------------------------|
-| 1 | `test_challenger_adversarial_suite.js` | 19 | Resizers, storage quota, UTF-8 base64, typing indicator cleanup | `_workspaceAbortController`, `45000ms` timeout, `typingEl.remove()` |
-| 2 | `test_challenger_collapsible_adversarial.js` | 42 | Collapsible code blocks, overlays, DOM toggles, parseKanban | Slices `app.js` between function signatures (`formatMessage`, `parseKanban`, `toggleCodeBlock`) |
-| 3 | `test_challenger_continuation_adversarial.js` | 41 | Multi-turn streaming continuation, deduplication, unclosed fences | Checks `MAX_CONTINUATION_TURNS = 5`, `while (turnCount < MAX_CONTINUATION_TURNS)`, continuation prompt string |
-| 4 | `test_challenger_storage_security_adversarial.js` | 32 | `safeSaveLocalStorage`, quota exhaustion, iframe sandbox, KaTeX | Slices `safeSaveLocalStorage`, `pruneChatMessages`, `loadState`, `renderMindmapIframe` |
-| 5 | `test_challenger_workspace_live_sync_adversarial.js` | 24 | Workspace code auto-apply, iframe injection, synthetic `input` event | Sandboxed execution of `extractWorkspaceCode` and `autoApplyWorkspaceCode` |
-| 6 | `test_collapsible_code_and_continuation.js` | 33 | Markdown formatting, code collapse (>12 lines), copy button | Tests `formatMessage` with collapsible wrapper markup |
-| 7 | `test_performance_shortcuts_storage_security.js` | 28 | Keyboard shortcuts, theme toggles, KaTeX safety | Checks shortcut listeners and error handling |
-| 8 | `test_thinking_blocks_stream_parser_adversarial.js` | 18 | DeepSeek `<think>` block parsing, incremental streaming | Regex parser for thinking blocks |
-| 9 | `test_topbar_layout_and_css_hygiene.js` | 14 | Topbar layout, Lofi player, z-index, `node -c` checks | Runs `node -c app.js && node -c redesign.js`, checks model selector click |
-| 10 | `test_workspace_direct_sync_and_continuation.js` | 20 | Live Workspace auto-sync (Tiers 1-4) | `sendWorkspaceMessage` early return `if (!text) return;`, `45000ms` timeout |
-| 11 | `ui_redesign/adversarial_tests/test_adversarial_state_and_resilience.js` | 5 | Storage isolation, Unicode, HTML escaping in workspace messages | Tests `formatWorkspaceMessageContent` |
-| 12 | `ui_redesign/hidden_tests/test_contrast_ratio.js` | 1 | WCAG 4.5:1 text contrast in dark/light mode | CSS color token inspection |
-| 13 | `ui_redesign/hidden_tests/test_css_fallbacks.js` | 1 | Font-family generic fallbacks | CSS inspection |
-| 14 | `ui_redesign/hidden_tests/test_transition_perf.js` | 1 | CSS transition properties | CSS inspection |
-| 15 | `ui_redesign/hidden_tests/test_workspace_resizers_and_storage.js` | 6 | Pointer lock, localStorage suffix sync, workspace abort controller | Checks `_workspaceAbortController` and `signal: _workspaceAbortController.signal` |
-| 16 | `ui_redesign/visible_tests/test_color_palette.js` | 3 | Ink charcoal background, glassmorphic panels | CSS palette inspection |
-| 17 | `ui_redesign/visible_tests/test_layout_elements.js` | 1 | Interactive element transitions | CSS inspection |
-| 18 | `ui_redesign/visible_tests/test_typography.js` | 2 | Google Fonts import, serif headers | CSS & HTML inspection |
-| 19 | `ui_redesign/visible_tests/test_workspace_layout.js` | 2 | 3-pane split containers and responsive rules | HTML & CSS inspection |
-
-### Observation 1.3: Audit of Existing Static Assertions on `app.js`
-The following exact regex and string assertions on `app.js` must be strictly preserved during any M1 refactoring:
-
-1. **Workspace Abort Controller & Timeout** (`test_challenger_adversarial_suite.js:39-43`, `test_workspace_direct_sync_and_continuation.js:438`, `test_workspace_resizers_and_storage.js:32-33`):
-   ```javascript
-   assert.match(appJs, /if\s*\(_workspaceAbortController\)\s*\{\s*_workspaceAbortController\.abort\(\);/);
-   assert.match(appJs, /setTimeout\(\(\)\s*=>\s*\{[\s\S]*?_workspaceAbortController\.abort\(\);[\s\S]*?45000\)/);
-   assert.match(appJs, /signal:\s*_workspaceAbortController\.signal/);
-   ```
-2. **Workspace Typing Cleanup** (`test_challenger_adversarial_suite.js:48-50`):
-   ```javascript
-   assert.match(appJs, /const\s+typingEl\s*=\s*document\.getElementById\(typingMsgId\);\s*if\s*\(typingEl\)\s*typingEl\.remove\(\);/);
-   assert.match(appJs, /catch\s*\(err\)\s*\{[\s\S]*?if\s*\(typingEl\)\s*typingEl\.remove\(\);/);
-   ```
-3. **Workspace Message Empty Input Early Return** (`test_workspace_direct_sync_and_continuation.js:447-451`):
-   ```javascript
-   const sendFnMatch = appJs.match(/async\s+function\s+sendWorkspaceMessage\s*\(\s*\)\s*\{[\s\S]*?\n  \}/);
-   assert.match(sendFnMatch[0], /if\s*\(!text\)\s*return;/);
-   ```
-4. **Continuation Loop & Prompt in Main Chat** (`test_challenger_continuation_adversarial.js:1305-1309`):
-   ```javascript
-   assert.match(appJs, /const\s+MAX_CONTINUATION_TURNS\s*=\s*5;/);
-   assert.match(appJs, /while\s*\(\s*turnCount\s*<\s*MAX_CONTINUATION_TURNS\s*\)/);
-   assert.match(appJs, /Tiếp tục chính xác từ chỗ vừa dừng mà không lặp lại bất kỳ nội dung nào trước đó:/);
-   assert.match(appJs, /turnFinishReason\s*===\s*['"]length['"]/);
-   assert.match(appJs, /assistantContent\.match\(\/```\/g\)/);
-   ```
-
-### Observation 1.4: Existing System Prompt and Token Limits in Codebase
-- In `app.js:6248`: `makeApiRequest` currently caps `max_tokens` at `State.mode === 'flash' ? 1024 : 4096` (or `{}` if `requiresUnlimited` regex matches).
-- In `app.js:2077`: `callWorkspaceChatApi` non-streaming fallback hardcodes `max_tokens: 4096`.
-- In `app.js:5813–5917` (`buildSystemPrompt()`): Contains persona, mode guidelines, and formatting hints, but lacks strict negative prohibitions against placeholder comments (`// ... rest of code ...`, `/* unchanged */`).
-- In `app.js:1920–1926` (Workspace Assistant System Prompt): Permissive wording (`hãy trả về toàn bộ hoặc đoạn mã nguồn mới`) allows partial code fragments.
+### 1.2 Examination of `tests/test_suna_harness.js`
+- **Test Suite Volume**: 2,127 lines, 149 test assertions across Tiers 1–4.
+- Lines 526–576 verify `HarnessController` turn budgeting, token ceiling, read-only mode, and timeout. All constructors and baseline methods must remain backward-compatible to prevent regressions.
 
 ---
 
 ## 2. Logic Chain
 
-1. **Non-Breaking Safety Analysis of Milestone 1 Changes**:
-   - **`resolveModelMaxTokens` Addition**: Adding `resolveModelMaxTokens(modelName, mode)` in `app.js` is purely additive. It introduces new helper capabilities without modifying existing exported signatures.
-   - **`makeApiRequest` Parameter Update**: Replacing `{ max_tokens: State.mode === 'flash' ? 1024 : 4096 }` with `max_tokens: resolveModelMaxTokens(modelToUse, State.mode)` does not affect any existing test. None of the 281 tests assert on the static string `1024` or `4096` inside `makeApiRequest`.
-   - **`buildSystemPrompt()` Refinement**: Adding `[NGUYÊN TẮC TOÀN VẸN MÃ NGUỒN & KHAI THÁC TOKEN TỐI ĐA]` into `buildSystemPrompt()` preserves all existing prompt headers (`[DANH TÍNH]`, `[QUYỀN HẠN TỐI CAO - NGƯỜI DÙNG]`, `[CHẾ ĐỘ FLASH]`, `[CHẾ ĐỘ PRO]`, `[ĐỊNH DẠNG ĐẶC BIỆT]`), guaranteeing 100% backwards compatibility.
-   - **`sendWorkspaceMessage()` Prompt Refinement**: Updating the `systemPrompt` template string in `sendWorkspaceMessage()` to mandate 100% full file outputs preserves `async function sendWorkspaceMessage()`, `if (!text) return;`, `_workspaceAbortController`, `45000` timeout, and typing cleanup, satisfying all static regex tests.
-   - **Verification Harness Parity**: `python run_verification.py` executes `node -c app.js && node -c redesign.js`, CSS checks, all Mocha tests, and distribution checks. Zero regressions will occur across all 4 gates.
+1. **Need for 3-Way Snapshot Diffing in `mergeSubHarness`**:
+   - In a multi-agent system, when a child harness branches from parent VFS at time $T_0$, it receives an isolated copy of the parent VFS ($\mathcal{S}_{\text{base}}$).
+   - While the child executes mutations ($\mathcal{S}_{\text{child}}$), the parent or peer harnesses may concurrently mutate the parent VFS ($\mathcal{S}_{\text{parent}}$).
+   - A naive 2-way comparison between $\mathcal{S}_{\text{child}}$ and $\mathcal{S}_{\text{parent}}$ cannot distinguish whether a difference was caused by the child or the parent.
+   - Therefore, a formal **3-Way Reconciliation** against $\mathcal{S}_{\text{base}}$ is mandatory:
+     - If $C \neq B \land P == B \implies$ Clean child mutation (apply to parent).
+     - If $C == B \land P \neq B \implies$ Clean parent mutation (preserve parent).
+     - If $C \neq B \land P \neq B \land C \neq P \implies$ **True Conflict**.
 
-2. **Formulation of Required R1 Test Suite**:
-   - A dedicated test suite (`tests/test_token_maximization_and_system_prompts.js`) will verify all R1 deliverables deterministically.
-   - Using Node.js `vm` sandbox isolation, the suite tests `resolveModelMaxTokens`, `buildSystemPrompt`, `sendWorkspaceMessage` prompt assembly, and API payload structures without requiring live network calls.
+2. **Conflict Taxonomy & Operational Handling**:
+   - Four deterministic conflict states arise:
+     1. `modify_modify_conflict`: Both modified same file with different content.
+     2. `modify_delete_conflict`: Child modified, Parent deleted.
+     3. `delete_modify_conflict`: Child deleted, Parent modified.
+     4. `add_add_conflict`: Both added same path with different content.
+   - For predictability:
+     - `'safe'` strategy (default) guarantees zero unverified mutations: it detects all conflicts, leaves parent VFS 100% pristine, and throws `HarnessError('BRANCH_CONFLICT', ...)`.
+     - `'force'` strategy applies child modifications over parent while logging conflict records.
+
+3. **Sub-Harness Recursion Depth Invariant ($\text{depth} \ge 5$)**:
+   - In hierarchical agent workflows, agents can delegate sub-tasks. Without a hard depth bound, an agent that gets stuck or generates recursive sub-tasks will trigger exponential fork-bombs and stack overflow.
+   - A deterministic bound ($\text{depth} \le 4$, with spawn at $\text{depth} \ge 5$ throwing `MAX_RECURSION_DEPTH_EXCEEDED`) enforces safe termination.
+
+4. **Lineage Cycle Prevention**:
+   - By propagating an immutable ancestry array `this.lineage = Object.freeze([...parent.lineage, parent.id])`, any delegation or spawn target can be checked against `this.lineage` in $O(N)$ time ($N \le 5$). Circular calls immediately throw `DELEGATION_CYCLE_DETECTED`.
+
+5. **Hierarchical Resource Conservation**:
+   - Child budgets must be strictly bounded by parent remaining budgets (`min(requested, parent.remaining)`).
+   - Real-time token consumption in child must debit parent in real time so parent token ceilings are never bypassed.
+   - If parent hits its limit or user requests cancellation, cascading emergency stop halts all descendants recursively and protects VFS isolation.
 
 ---
 
 ## 3. Caveats
 
-1. **Continuation Constants in `app.js`**: `tests/test_challenger_continuation_adversarial.js` statically matches `const MAX_CONTINUATION_TURNS = 5;` and the exact Vietnamese continuation prompt `'Tiếp tục chính xác từ chỗ vừa dừng mà không lặp lại bất kỳ nội dung nào trước đó:'`. During M1, implementers must not modify these continuation identifiers or prompts.
-2. **Proxy HTTP 400 Fallback**: Some custom third-party proxies reject `max_tokens > 4096`. The request engine should implement automatic downgrade retry (`4096` or omission) upon receiving HTTP 400 with token-related error messages.
-3. **Flash Mode Brevity vs. Code Completeness**: In Flash mode, textual responses should remain concise (bullet points, 2-4 sentences), but whenever code generation is requested, the code block itself must be 100% complete and devoid of placeholders.
+- **Line-level 3-Way Merge**: The current specification establishes file-level conflict detection and branch reconciliation. Full line-level AST or hunk merging (e.g. diff3 with `<<<<<<<` conflict markers) can be layered on top of this model in Milestone 2 when `VfsDiffEngine` is completed, without changing the method signatures or contract.
+- **Zero Regression**: New methods on `HarnessController` (`spawnSubHarness`, `mergeSubHarness`, `emergencyStopSubHarness`) are additive. Existing methods (`executeAction`, `halt`, `canExecute`, `reset`) must remain intact.
 
 ---
 
-## 4. Conclusion & Proposed Unit Test Assertions
+## 4. Conclusion & Discovered Feature Tables
 
-### Proposed Unit Test Suite: `tests/test_token_maximization_and_system_prompts.js`
+The formal contractual blueprint has been fully detailed and written to `d:\Suna Chat\.agents\explorer_m1_3\m1_contracts.md`.
 
-The following complete, executable Mocha test suite is formulated to verify Milestone 1 (R1) across 4 comprehensive tiers:
+## Features Discovered
+| # | Category | Feature | Description | Inputs | Outputs | Error Behavior | Discovered Via |
+|---|----------|---------|-------------|--------|---------|----------------|----------------|
+| 1 | Sub-Harness | `spawnSubHarness` | Spawns child sub-harness with role, budget, and workspace mode | `{ role, budget, vfsWorkspaceMode, id, metadata }` | `SubHarnessInstance` | Rejects invalid modes or budgets with `HarnessError` | `ORIGINAL_REQUEST.md` R1 |
+| 2 | Sub-Harness | VFS Share Mode | Sub-harness operates directly on parent VFS reference | Tool mutations | Instant mutations in parent VFS | Throws `INVALID_VFS_MODE` if `mergeSubHarness` attempted | `ORIGINAL_REQUEST.md` R1 |
+| 3 | Sub-Harness | VFS Clone Mode | Sub-harness operates on isolated snapshot clone | Tool mutations | Isolated mutations; parent untouched | Throws `INVALID_VFS_MODE` if `mergeSubHarness` attempted | `ORIGINAL_REQUEST.md` R1 |
+| 4 | Sub-Harness | VFS Branch Mode | Sub-harness operates on branch with change tracking | Tool mutations | Staged branch mutations ready for merge | Tracked for 3-way reconciliation | `ORIGINAL_REQUEST.md` R1 |
+| 5 | Sub-Harness | `mergeSubHarness` | Reconciles branch changes to parent VFS with conflict detection | `childId, { strategy, throwOnConflict, autoCommit }` | `MergeResult` | Throws `BRANCH_CONFLICT` in safe mode if conflict exists | `ORIGINAL_REQUEST.md` R1 |
+| 6 | Sub-Harness | Conflict Classification | 3-way analysis into 4 distinct conflict types | Base, Parent, Child snapshots | Array of `BranchConflict` objects | Categorizes modify/modify, modify/delete, delete/modify, add/add | `ORIGINAL_REQUEST.md` R1 |
+| 7 | Sub-Harness | Strategy `'safe'` | Aborts merge without mutating parent VFS on conflict | Merge options | Error or `{ success: false, conflicts }` | Leaves Parent VFS 100% pristine | `ORIGINAL_REQUEST.md` R1 |
+| 8 | Sub-Harness | Strategy `'force'` | Overwrites conflicting files while logging conflict details | Merge options | `{ success: true, filesMerged, conflicts }` | Applies child files regardless of parent edits | `ORIGINAL_REQUEST.md` R1 |
+| 9 | Edge Guard | Recursion Depth Guard | Halts nesting when depth reaches or exceeds 5 | `spawnSubHarness` call | New sub-harness or rejection | Throws `MAX_RECURSION_DEPTH_EXCEEDED` at `depth >= 5` | `ORIGINAL_REQUEST.md` R4 |
+| 10 | Edge Guard | Cycle Detection | Prevents delegation back to any ancestor in lineage | `targetId, lineage` | Validation pass or error | Throws `DELEGATION_CYCLE_DETECTED` if cycle found | `ORIGINAL_REQUEST.md` R1 |
+| 11 | Budget | Hierarchical Allocation | Clamps child budget to remaining parent resources | `budget: { maxTurns, maxTokens, timeoutMs }` | Clamped child budget | Throws `BUDGET_EXHAUSTED` if parent remaining $\le 0$ | `ORIGINAL_REQUEST.md` R1 |
+| 12 | Budget | Upstream Debiting | Real-time forwarding of child token usage to parent | Consumed tokens | Parent `tokensConsumed` incremented | Parent halts child if aggregate budget exceeded | `ORIGINAL_REQUEST.md` R1 |
+| 13 | Emergency | `emergencyStopSubHarness` | Halts specific child or all active children | `childId, reason` | Children transitioned to `'halted'` | Freezes execution; protects VFS isolation | `ORIGINAL_REQUEST.md` R1 |
+| 14 | Emergency | Cascading Descendant Halt | Recursively halts all grandchildren and active timers | Child descriptor | All descendants halted | Prevents orphaned background loops | `ORIGINAL_REQUEST.md` R1 |
 
-```javascript
-/**
- * tests/test_token_maximization_and_system_prompts.js
- * Milestone 1 (R1) Verification Suite:
- * 1. Model Output Token Ceiling Resolver (resolveModelMaxTokens)
- * 2. Main Chat System Prompt Anti-Placeholder Directives (buildSystemPrompt)
- * 3. Workspace Assistant Anti-Placeholder & Full-File Mandates (sendWorkspaceMessage)
- * 4. API Request Payload Ceilings & Fallback Resilience (makeApiRequest & callWorkspaceChatApi)
- */
-
-const fs = require('fs');
-const assert = require('assert');
-const vm = require('vm');
-
-describe('Milestone 1 (R1): Token Maximization & System Prompt Anti-Placeholder Verification', () => {
-  let appJs;
-
-  before(() => {
-    appJs = fs.readFileSync('app.js', 'utf8');
-  });
-
-  // =========================================================================
-  // SUITE 1: Model Output Token Ceiling Resolver (resolveModelMaxTokens)
-  // =========================================================================
-  describe('1. Model Output Token Ceiling Resolver (resolveModelMaxTokens)', () => {
-    let resolveModelMaxTokens;
-
-    before(() => {
-      const sandbox = { window: {}, State: { mode: 'pro' } };
-      vm.createContext(sandbox);
-      const resolverMatch = appJs.match(/function\s+resolveModelMaxTokens\s*\([\s\S]*?\n\}/);
-      if (resolverMatch) {
-        vm.runInContext(resolverMatch[0], sandbox);
-        resolveModelMaxTokens = sandbox.resolveModelMaxTokens;
-      }
-    });
-
-    it('T1.1: should resolve Tier 1 reasoning & extended-output models to 65,536 tokens', () => {
-      const tier1Models = [
-        'o1-preview', 'o1-mini', 'o3-mini', 'o4',
-        'gemini-2.5-pro', 'gemini-3.1-pro-preview',
-        'claude-3-7-sonnet', 'claude-3.7-sonnet',
-        'deepseek-reasoner', 'gemini-2.0-flash-thinking-exp'
-      ];
-      tier1Models.forEach(model => {
-        const ceiling = resolveModelMaxTokens ? resolveModelMaxTokens(model, 'pro') : 65536;
-        assert.strictEqual(ceiling, 65536, `Model ${model} must resolve to 65,536 tokens`);
-      });
-    });
-
-    it('T1.2: should resolve Tier 2 frontier & coding models to 16,384 tokens', () => {
-      const tier2Models = [
-        'gpt-4o', 'gpt-4o-2024-11-20', 'gpt-4o-mini', 'gpt-4.1',
-        'gemini-2.0-flash', 'gemini-2.0-pro',
-        'qwen-2.5-coder-32b', 'qwen2.5-72b-instruct',
-        'llama-3.3-70b-instruct', 'llama-3.1-405b',
-        'deepseek-chat', 'codestral-latest'
-      ];
-      tier2Models.forEach(model => {
-        const ceiling = resolveModelMaxTokens ? resolveModelMaxTokens(model, 'pro') : 16384;
-        assert.strictEqual(ceiling, 16384, `Model ${model} must resolve to 16,384 tokens`);
-      });
-    });
-
-    it('T1.3: should resolve Tier 3 modern standard models to 8,192 tokens', () => {
-      const tier3Models = [
-        'claude-3-5-sonnet-20241022', 'claude-3.5-sonnet',
-        'gemini-1.5-pro', 'gemini-1.5-flash',
-        'qwen-plus', 'llama-3.1-8b-instruct', 'glm-4-plus'
-      ];
-      tier3Models.forEach(model => {
-        const ceiling = resolveModelMaxTokens ? resolveModelMaxTokens(model, 'pro') : 8192;
-        assert.strictEqual(ceiling, 8192, `Model ${model} must resolve to 8,192 tokens`);
-      });
-    });
-
-    it('T1.4: should resolve Tier 4 legacy models to 4,096 tokens', () => {
-      const tier4Models = ['gpt-4', 'gpt-3.5-turbo', 'claude-3-haiku-20240307'];
-      tier4Models.forEach(model => {
-        const ceiling = resolveModelMaxTokens ? resolveModelMaxTokens(model, 'pro') : 4096;
-        assert.strictEqual(ceiling, 4096, `Model ${model} must resolve to 4,096 tokens`);
-      });
-    });
-
-    it('T1.5: should resolve unknown or empty model strings safely to mode-based defaults', () => {
-      const proDefault = resolveModelMaxTokens ? resolveModelMaxTokens('custom-unknown-model', 'pro') : 8192;
-      const flashDefault = resolveModelMaxTokens ? resolveModelMaxTokens('custom-unknown-model', 'flash') : 4096;
-      const nullDefault = resolveModelMaxTokens ? resolveModelMaxTokens(null, 'pro') : 8192;
-
-      assert.strictEqual(proDefault, 8192, 'Unknown model in pro mode must default to 8,192');
-      assert.strictEqual(flashDefault, 4096, 'Unknown model in flash mode must default to 4,096');
-      assert.strictEqual(nullDefault, 8192, 'Null model must default to safe 8,192');
-    });
-  });
-
-  // =========================================================================
-  // SUITE 2: Main Chat System Prompt Anti-Placeholder Directives
-  // =========================================================================
-  describe('2. Main Chat Anti-Placeholder System Prompt (buildSystemPrompt)', () => {
-    let buildSystemPrompt;
-
-    before(() => {
-      const sandbox = {
-        State: {
-          mode: 'pro',
-          settings: { systemPrompt: '', userPurpose: '', tone: 'friendly' },
-          webSearchEnabled: false
-        },
-        getMemoryPrompt: () => ''
-      };
-      vm.createContext(sandbox);
-      const promptFnMatch = appJs.match(/function\s+buildSystemPrompt\s*\([\s\S]*?\n\}/);
-      if (promptFnMatch) {
-        vm.runInContext(promptFnMatch[0], sandbox);
-        buildSystemPrompt = sandbox.buildSystemPrompt;
-      }
-    });
-
-    it('T2.1: should inject explicit anti-placeholder prohibitions into buildSystemPrompt', () => {
-      assert.ok(buildSystemPrompt, 'buildSystemPrompt must be defined');
-      const prompt = buildSystemPrompt();
-
-      assert.match(prompt, /placeholder/i, 'Prompt must mention placeholder prohibition');
-      assert.match(prompt, /\/\/ \.\.\./, 'Prompt must explicitly ban // ... comments');
-      assert.match(prompt, /100%/, 'Prompt must enforce 100% full implementation');
-    });
-
-    it('T2.2: should explicitly forbid truncated code patterns in system prompt', () => {
-      const prompt = buildSystemPrompt();
-      const bannedPatterns = [
-        '// ... rest of code',
-        '// code cũ giữ nguyên',
-        '/* TODO */',
-        '/* unchanged */'
-      ];
-      bannedPatterns.forEach(pattern => {
-        assert.ok(
-          prompt.toLowerCase().includes(pattern.toLowerCase()),
-          `Prompt must explicitly list banned pattern: ${pattern}`
-        );
-      });
-    });
-
-    it('T2.3: should preserve Suna identity, user supreme priority, and special formats', () => {
-      const prompt = buildSystemPrompt();
-      assert.match(prompt, /\[DANH TÍNH\]: Tên của bạn là "Suna"/);
-      assert.match(prompt, /\[QUYỀN HẠN TỐI CAO - NGƯỜI DÙNG\]/);
-      assert.match(prompt, /\[Sơ đồ tư duy \(Mindmap\)\]/);
-      assert.match(prompt, /\[Giao diện\/Live Workspace\]/);
-    });
-  });
-
-  // =========================================================================
-  // SUITE 3: Workspace Assistant Anti-Placeholder & Full-File Mandates
-  // =========================================================================
-  describe('3. Workspace Assistant Anti-Placeholder & Full-File Mandate', () => {
-    it('T3.1: should enforce 100% complete HTML/CSS/JS file in sendWorkspaceMessage system prompt', () => {
-      assert.match(
-        appJs,
-        /\[QUYỀN TẮC MÃ NGUỒN TOÀN VẸN|NGUYÊN TẮC MÃ NGUỒN TOÀN VẸN|100% TOÀN VẸN/i,
-        'Workspace system prompt must include 100% complete code section'
-      );
-      assert.match(
-        appJs,
-        /TUYỆT ĐỐI (?:NGHIÊM )?CẤM/i,
-        'Workspace prompt must strictly ban placeholders'
-      );
-    });
-
-    it('T3.2: should not contain permissive wording allowing partial fragments in workspace prompt', () => {
-      const sendWorkspaceFnMatch = appJs.match(/async\s+function\s+sendWorkspaceMessage[\s\S]*?\n  \}/);
-      assert.ok(sendWorkspaceFnMatch, 'sendWorkspaceMessage must be defined in app.js');
-      
-      // Permissive fragment phrase must be eliminated
-      assert.doesNotMatch(
-        sendWorkspaceFnMatch[0],
-        /hãy trả về toàn bộ hoặc đoạn mã nguồn mới/,
-        'Permissive partial fragment phrasing must be removed from workspace prompt'
-      );
-    });
-
-    it('T3.3: should inject active editor code into [MÃ NGUỒN HIỆN TẠI TRONG EDITOR] block', () => {
-      assert.match(
-        appJs,
-        /\[MÃ NGUỒN HIỆN TẠI TRONG EDITOR\]:\s*\\n```html\\n\$\{currentCode\}\\n```/,
-        'Workspace prompt must inject ${currentCode} inside ```html ``` block'
-      );
-    });
-  });
-
-  // =========================================================================
-  // SUITE 4: Request Payload & Static Integrity Checks
-  // =========================================================================
-  describe('4. API Request Payload Ceilings & Static Integrity', () => {
-    it('T4.1: should bind max_tokens to resolveModelMaxTokens in makeApiRequest', () => {
-      assert.match(
-        appJs,
-        /max_tokens:\s*resolveModelMaxTokens\(/,
-        'makeApiRequest must use resolveModelMaxTokens for max_tokens payload parameter'
-      );
-    });
-
-    it('T4.2: should bind max_tokens to resolveModelMaxTokens in callWorkspaceChatApi', () => {
-      assert.match(
-        appJs,
-        /max_tokens:\s*maxTokensCeiling|max_tokens:\s*resolveModelMaxTokens\(/,
-        'callWorkspaceChatApi must set max_tokens to model ceiling in stream: true and fallback payloads'
-      );
-    });
-
-    it('T4.3: should preserve critical workspace abort controller, timeout, and typing cleanup', () => {
-      assert.match(appJs, /if\s*\(_workspaceAbortController\)\s*\{\s*_workspaceAbortController\.abort\(\);/);
-      assert.match(appJs, /setTimeout\(\(\)\s*=>\s*\{[\s\S]*?_workspaceAbortController\.abort\(\);[\s\S]*?45000\)/);
-      assert.match(appJs, /const\s+typingEl\s*=\s*document\.getElementById\(typingMsgId\);\s*if\s*\(typingEl\)\s*typingEl\.remove\(\);/);
-    });
-
-    it('T4.4: should preserve MAX_CONTINUATION_TURNS = 5 and continuation prompt structure', () => {
-      assert.match(appJs, /const\s+MAX_CONTINUATION_TURNS\s*=\s*5;/);
-      assert.match(appJs, /while\s*\(\s*turnCount\s*<\s*MAX_CONTINUATION_TURNS\s*\)/);
-      assert.match(appJs, /Tiếp tục chính xác từ chỗ vừa dừng mà không lặp lại bất kỳ nội dung nào trước đó:/);
-    });
-  });
-});
-```
+## Edge Cases
+| # | Feature | Input | Observed Behavior |
+|---|---------|-------|-------------------|
+| 1 | `mergeSubHarness` | Both Parent and Child modified `server.js` with conflicting text | In `'safe'` mode, aborts merge, leaves parent VFS untouched, throws `HarnessError('BRANCH_CONFLICT')` containing both versions. |
+| 2 | `mergeSubHarness` | Child modified `app.js` but Parent deleted `app.js` | Identified as `modify_delete_conflict`; aborts in safe mode without recreating file in parent. |
+| 3 | `mergeSubHarness` | Child deleted `config.json` but Parent modified `config.json` | Identified as `delete_modify_conflict`; aborts in safe mode without deleting parent file. |
+| 4 | `mergeSubHarness` | Both Parent and Child created `utils.js` with identical content | Clean 3-way merge; added to parent without conflict. |
+| 5 | `mergeSubHarness` | Both Parent and Child created `utils.js` with different content | Identified as `add_add_conflict`; aborts in safe mode. |
+| 6 | `mergeSubHarness` | Called with invalid child ID `sub_unknown` | Throws `HarnessError('SUB_HARNESS_NOT_FOUND')`. |
+| 7 | `mergeSubHarness` | Called on sub-harness with `vfsWorkspaceMode: 'share'` | Throws `HarnessError('INVALID_VFS_MODE')` (already shared). |
+| 8 | `mergeSubHarness` | Called on sub-harness with `vfsWorkspaceMode: 'clone'` | Throws `HarnessError('INVALID_VFS_MODE')` (scratchpad isolation). |
+| 9 | `mergeSubHarness` | Duplicate call after successful merge | Throws `HarnessError('ALREADY_MERGED')` unless `options.force` is specified. |
+| 10 | Recursion Guard | Root (0) -> Child (1) -> Grandchild (2) -> Great-Grandchild (3) -> Great-Great-Grandchild (4) -> Attempt 5th Spawn | 5th spawn attempt rejected with `HarnessError('MAX_RECURSION_DEPTH_EXCEEDED')`. |
+| 11 | Cycle Guard | Child 2 attempts to spawn or delegate back to Root or Child 1 | Lineage verification detects cycle; throws `HarnessError('DELEGATION_CYCLE_DETECTED')`. |
+| 12 | Budget Exhaustion | Parent has 2 turns remaining; child requests 10 turns | Child budget clamped to 2 turns; execution bounded. |
+| 13 | Budget Exhaustion | Parent has 0 turns remaining; attempt to spawn child | Throws `HarnessError('BUDGET_EXHAUSTED')`. |
+| 14 | Upstream Debiting | Child consumes 15,000 tokens causing parent total to exceed `parent.maxTokens` | Parent immediately triggers `emergencyStop` on child and halts itself with `MAX_TOKENS_EXCEEDED`. |
+| 15 | Emergency Stop | Parent calls `emergencyStopSubHarness()` while child is mid-action | Child controller marked halted; subsequent action calls return `{ allowed: false, code: 'HALTED' }`; branch mutations isolated. |
 
 ---
 
 ## 5. Verification Method
 
-To independently verify regression safety and the M1 deliverables:
+To verify the integrity of the specification and ensure zero regression before and after worker implementation:
 
-1. **Baseline Test Count Check**:
-   ```bash
-   npx mocha "tests/**/*.js"
-   ```
-   *Expected*: Passes 281 existing tests + new M1 tests (0 failures).
-
-2. **Verification Runner Check**:
-   ```bash
-   python run_verification.py
-   ```
-   *Expected*: Output `>>> VERIFICATION PASSED: ALL CHECKS 100% GREEN <<<` with returncode `0`.
-
-3. **Syntax Integrity Check**:
-   ```bash
-   node -c app.js && node -c redesign.js
-   ```
-   *Expected*: Returncode `0` with 0 syntax errors.
+1. **Inspect Specification Artifacts**:
+   - Read `d:\Suna Chat\.agents\explorer_m1_3\m1_contracts.md` to confirm all signatures, error codes, and checklist items are present.
+2. **Syntax Validation**:
+   - In shell: `node -c suna_harness.js && node -c app.js && node -c redesign.js`
+   - Must exit 0 with zero output.
+3. **Mocha Test Suite Execution**:
+   - In shell: `npm test`
+   - Must pass 100% of all 982 existing tests without any broken suites.
+4. **Full Automated Verification**:
+   - In shell: `python run_verification.py`
+   - Must display full green checkmarks across all phases.

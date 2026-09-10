@@ -1,51 +1,73 @@
-# Project: Suna Chat & Live Workspace Upgrade
+# Project: Suna Agent Harness Advanced Capabilities (R1–R4)
 
 ## Architecture
-- **Frontend Architecture**: Vanilla JavaScript (ES2022+), Single-Page Architecture (`index.html`, `app.js`, `redesign.js`, `styles.css`).
-- **Data Flow & Storage**: Hybrid `localStorage` + `IndexedDB` caching, zero external runtime frontend dependencies.
-- **Live Workspace & Artifacts**: Split-pane layout with Monaco/Textarea editor (`#artifact-editor-textarea`) and sandboxed live preview iframe (`#artifact-iframe`).
-- **Streaming Pipeline**: SSE stream reader with token parsing, multi-turn infinite stream continuation loop, and throttled DOM rendering.
+- Subsystems within `suna_harness.js`:
+  - `VfsSandbox`: Virtual in-memory filesystem with snapshot, restore, and branch merging.
+  - `InterHarnessEventBus`: Message broker for parent-child harness communication.
+  - `HarnessController`: Central agent harness lifecycle manager supporting `spawnSubHarness`, resource budgets, and delegation.
+  - `VfsDiffEngine`: Standard Git unified diff engine (LCS/Myers, hunk headers `@@ -l,s +l,s @@`, context lines, snapshot comparison, UTF-8 Vietnamese safe).
+  - `AciSchemaValidator`: JSON Schema validator for 6 SWE-agent ACI tools with alias normalization and structured diagnostics.
+  - `TrajectoryEngine`: Hierarchical trajectory event store with `stitchChildTrajectory()` and `getHierarchicalTree()`.
+  - `CheckpointManager` & `IndexedDbCheckpointStorage`: Dual-layer checkpoint persistence supporting in-memory, localStorage, and IndexedDB (`suna_harness_checkpoints_<uid>`).
+  - `SunaHarnessVisualizer`: Component rendering Trajectory Tree, Scorecard ($SR$, $\eta$, $FRR$), and Diff Viewer (DOM & `renderToString()`).
+  - Integration bridge with `app.js` and test matrix in `tests/test_suna_harness.js`.
+
+## Code Layout
+- Core Engine: `d:\Suna Chat\suna_harness.js` (UMD module, zero npm dependencies).
+- Application Bridge: `d:\Suna Chat\app.js` (UI integration and SunaAgent harness bridge).
+- Test Suites: `d:\Suna Chat\tests\test_suna_harness.js` (comprehensive Tiers 1-4 & adversarial fuzzing).
+- System Verification: `d:\Suna Chat\run_verification.py` and `d:\Suna Chat\package.json` (`npm test`).
 
 ## Feature Inventory
-| # | Feature | Description | Milestone | Source | Status |
-|---|---------|-------------|-----------|--------|--------|
-| 1 | Collapsible Code Blocks (Main Chat) | Automatically collapse code blocks >12 lines in `#chat-area` with toggle & badge | M1 | ORIGINAL_REQUEST §R1 | DONE |
-| 2 | Collapsible Code Blocks (Workspace Chat) | Automatically collapse code blocks >12 lines in `#workspace-chat-messages` | M1 | ORIGINAL_REQUEST §R1 | DONE |
-| 3 | Line Counter Badge | Display number of lines (e.g. "24 dòng") in code block header | M1 | ORIGINAL_REQUEST §R1 | DONE |
-| 4 | Toggle Action Button | "Mở rộng mã nguồn" / "Thu gọn" button with icon | M1 | ORIGINAL_REQUEST §R1 | DONE |
-| 5 | Gradient Overlay Fade | Smooth bottom gradient fade in collapsed state | M1 | ORIGINAL_REQUEST §R1 | DONE |
-| 6 | Copy Code Action Preservation | Copy full code content regardless of collapsed/expanded state | M1 | ORIGINAL_REQUEST §R1 | DONE |
-| 7 | Preview Action Preservation | Open full code preview regardless of collapsed/expanded state | M1 | ORIGINAL_REQUEST §R1 | DONE |
-| 8 | Collapsible Thinking Blocks | Fold `<think>` blocks with accordion toggle, pulse animation, and summary | M1 | ORIGINAL_REQUEST §R1 | DONE |
-| 9 | Direct Workspace Code Extraction | Regex extract HTML/JS/CSS/SVG code blocks from workspace assistant replies | M2 | ORIGINAL_REQUEST §R3 | DONE |
-| 10 | Direct Editor Textarea Sync | Auto-update `#artifact-editor-textarea` and dispatch `input` event | M2 | ORIGINAL_REQUEST §R3 | DONE |
-| 11 | Direct Live Iframe Sync | Auto-update `#artifact-iframe.srcdoc` with extracted code | M2 | ORIGINAL_REQUEST §R3 | DONE |
-| 12 | Direct Sync Toast Notification | Show success toast notification upon direct workspace modification | M2 | ORIGINAL_REQUEST §R3 | DONE |
-| 13 | Manual Apply Backward Compatibility | Preserve `.btn-workspace-apply` and `applyWorkspaceCode` for compatibility | M2 | Codebase Survey | DONE |
-| 14 | Truncation Detection (Finish Reason) | Detect `finish_reason === 'length'` in SSE stream | M3 | ORIGINAL_REQUEST §R2 | DONE |
-| 15 | Truncation Detection (Unclosed Fence) | Detect unclosed code block fences at stream end | M3 | ORIGINAL_REQUEST §R2 | DONE |
-| 16 | Multi-Turn Continuation Loop | Auto-send background continuation prompt to LLM | M3 | ORIGINAL_REQUEST §R2 | DONE |
-| 17 | Single Message Bubble Stitching | Seamlessly append continuation chunks into the same bubble | M3 | ORIGINAL_REQUEST §R2 | DONE |
-| 18 | Continuation Turn Safety Guard | Limit auto-continuation turns (max 5) to prevent infinite loops | M3 | ORIGINAL_REQUEST §R2 | DONE |
-| 19 | AbortController Cancellation | Cancel all ongoing continuation turns when user hits stop/abort | M3 | ORIGINAL_REQUEST §R2 | DONE |
-| 20 | E2E Testing Suite (Tiers 1-4) | 4-tier Mocha test suite covering features, boundaries, combinations, workloads | M0 / M4 | ORIGINAL_REQUEST §R4 | DONE |
-| 21 | Automated Verification Script | `run_verification.py` verifying syntax (`node -c`) and all tests | M0 / M4 | ORIGINAL_REQUEST §R4 | DONE |
-| 22 | Adversarial Hardening (Tier 5) | White-box stress tests for token stitching, error injection, DOM edge cases | M4 | System Prompt | DONE |
-| 23 | Forensic Integrity Verification | 0 dummy/mock violations, genuine implementations | M4 | System Prompt | DONE |
+| # | Feature | Description | Milestone | Source |
+|---|---------|-------------|-----------|--------|
+| 1 | Sub-harness Spawning | `spawnSubHarness({ role, budget, vfsWorkspaceMode })` lifecycle management | M1 | survey |
+| 2 | VFS Share Mode | Sub-harness operates on shared parent VFS reference | M1 | survey |
+| 3 | VFS Clone Mode | Sub-harness operates on isolated snapshot clone | M1 | survey |
+| 4 | VFS Branch Mode | Sub-harness operates on branch with change tracking ledger | M1 | survey |
+| 5 | Branch Merging | `mergeSubHarness(childId)` merges branch back to parent VFS with conflict detection | M1 | survey |
+| 6 | Inter-Harness Event Bus | Two-way message broker with structured envelopes | M1 | survey |
+| 7 | Parent Directives | Parent sends `directive`, `status_query`, `emergency_stop` | M1 | survey |
+| 8 | Child Telemetry | Child reports `progress`, `completed`, `failed` | M1 | survey |
+| 9 | Hierarchical Trajectory | `TrajectoryTreeNode` data structures with parent-child links | M1 | survey |
+| 10 | Trajectory Stitching | `stitchChildTrajectory()` attaches child steps into parent tree | M1 | survey |
+| 11 | Tree Traversal | `getHierarchicalTree()` outputs structured tree representations | M1 | survey |
+| 12 | Unified Git Diff | `VfsDiffEngine` computes Git patch with `@@ -l,s +l,s @@` hunk headers | M2 | survey |
+| 13 | Context Grouping | 3-line context grouping and clean patch generation | M2 | survey |
+| 14 | Snapshot Diffing | `compareSnapshots(snapA, snapB)` detects added/modified/deleted files with `/dev/null` | M2 | survey |
+| 15 | Unicode / UTF-8 Safety | Safe multi-byte string handling for Vietnamese diacritics and special characters | M2 | survey |
+| 16 | ACI Tool Schemas | JSON Schema definitions for all 6 ACI tools (`view_file`, `replace_file_content`, etc.) | M2 | survey |
+| 17 | Pre-Validation Diagnostics | Rejection of invalid types/missing required fields before VFS execution | M2 | survey |
+| 18 | Alias Normalization | Parameter alias resolution (`TargetFile`/`path`, `TargetContent`/`targetContent`, etc.) | M2 | survey |
+| 19 | UI Trajectory Tree | DOM rendering of hierarchical trajectory with status, metrics, and filtering | M3 | survey |
+| 20 | Benchmark Scorecard | Scorecard display with $SR$, $\eta$, and $FRR$ metric calculations | M3 | survey |
+| 21 | Visual Diff Viewer | Side-by-side and unified diff viewer with added (green) and deleted (red) styling | M3 | survey |
+| 22 | Headless HTML Renderer | `renderToString()` for DOM components enabling Node.js testability | M3 | survey |
+| 23 | IndexedDB Persistence | Checkpoint serialization to IndexedDB `suna_harness_checkpoints_<uid>` | M3 | survey |
+| 24 | Storage Fallbacks | Automatic fallback to `localStorage` or in-memory map | M3 | survey |
+| 25 | Tier 1-4 Test Matrix | Comprehensive unit, boundary, interaction, and scenario tests in `tests/test_suna_harness.js` | M4 | survey |
+| 26 | Adversarial Fuzzing | Fuzzing deep recursion $\ge 5$, schema injection, and large diffs (>10k lines) | M4 | survey |
+| 27 | Zero-Regression Gate | 100% pass on 982+ tests, `node -c` clean, `python run_verification.py` green | M4 | survey |
 
 ## Milestones
 | # | Name | Scope | Dependencies | Status |
 |---|------|-------|-------------|--------|
-| M0 | E2E Testing Track | Test suites (`test_collapsible_code_and_continuation.js`, `test_workspace_direct_sync_and_continuation.js`, `run_verification.py`), `TEST_READY.md` | none | DONE |
-| M1 | Collapsible Code & Thinking UI | Collapsible code (>12 lines), badge, toggle, gradient overlay, thinking accordion, anti-slop styling | none | DONE |
-| M2 | Direct Workspace Live Sync | Auto-extract code in `sendWorkspaceMessage()`, auto-update editor & iframe, toast notifications | none | DONE |
-| M3 | Infinite Token Stream Continuation | SSE finish_reason/fence truncation detection, multi-turn continuation loop, single bubble stitching | M1 | DONE |
-| M4 | Final Integration & Adversarial Verification | 100% E2E test pass, `run_verification.py`, Tier 5 adversarial tests, Forensic Integrity Audit | M0, M1, M2, M3 | DONE |
+| M1 | Sub-harness Delegation & Event Bus (R1) | Features 1–11: `spawnSubHarness`, `share`/`clone`/`branch` VFS modes, `mergeSubHarness`, `InterHarnessEventBus`, trajectory tree stitching | none | DONE |
+| M2 | Unified Git Diff & JSON Schema Validator (R2) | Features 12–18: `VfsDiffEngine` (Git hunks, snapshot diffs, UTF-8 safety), `AciSchemaValidator` (schemas, diagnostics, aliases) | none | PLANNED |
+| M3 | UI Visualizer & Checkpoint Persistence (R3) | Features 19–24: `SunaHarnessVisualizer` (Trajectory Tree, Scorecard, Diff Viewer, `renderToString()`), `IndexedDbCheckpointStorage` | M1, M2 | PLANNED |
+| M4 | Comprehensive Testing, Adversarial Fuzzing & Zero-Regression Verification (R4) | Features 25–27: Extend `tests/test_suna_harness.js` (Tiers 1–4, fuzzing), verify 982+ tests, `node -c`, `run_verification.py` | M1, M2, M3 | PLANNED |
 
-## Code Layout
-- `app.js`: Core application logic, markdown formatting (`formatMessage`, `formatWorkspaceMessageContent`), SSE streaming & continuation (`generateAIResponse`), workspace management (`sendWorkspaceMessage`, `applyWorkspaceCode`).
-- `styles.css`: CSS styling for collapsible code blocks (`.code-block-wrapper.is-collapsible`, `.code-line-badge`, `.btn-toggle-code`, `.code-collapse-overlay`), thinking blocks, toast notifications.
-- `index.html`: DOM structure for main chat and workspace layout.
-- `tests/test_collapsible_code_and_continuation.js`: Unit & integration tests for R1 and R2.
-- `tests/test_workspace_direct_sync_and_continuation.js`: Unit & integration tests for R3 and workspace continuation.
-- `run_verification.py`: Automated project verification script.
+## Interface Contracts
+### M1 ↔ M2 (Sub-harness & Diff/Schema)
+- `VfsSandbox.prototype.branch()`: returns cloned VFS with `_branchOriginSnapshot`.
+- `VfsDiffEngine.compareSnapshots(snapA, snapB)`: used by `mergeSubHarness` to compute diffs and detect conflicts.
+- `AciSchemaValidator.validate(toolName, args)`: called at entry of `AciInterface.execute(toolName, args)`.
+
+### M1/M2 ↔ M3 (Visualizer & Persistence)
+- `TrajectoryEngine.prototype.getHierarchicalTree()`: consumed by `SunaHarnessVisualizer.renderTrajectoryTree()`.
+- `VfsDiffEngine`: consumed by `SunaHarnessVisualizer.renderDiffView(diffText, mode)`.
+- `CheckpointManager.exportSnapshot(checkpointId)`: serialized to `IndexedDbCheckpointStorage.save(uid, checkpointId, data)`.
+
+### M1/M2/M3 ↔ M4 (Testing)
+- All new subsystems exported via UMD pattern in `suna_harness.js`.
+- Mock helpers (`createMockDOM`, `createMockIndexedDBStore`) available in test environment.

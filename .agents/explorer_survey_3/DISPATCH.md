@@ -1,15 +1,19 @@
-## 2026-08-27T08:31:39Z
+# Task Assignment: Survey 3 — Test Suite & Verification Baseline Survey
 
-<USER_REQUEST>
-You are Survey Explorer 3 (Test Parity & Ponytail).
-Your working directory is: d:\Suna Chat\.agents\explorer_survey_3\
-Read the authoritative user request at: d:\Suna Chat\.agents\ORIGINAL_REQUEST.md
+## 2026-09-07T13:35:22Z
 
-Your mission:
-1. Thoroughly investigate `tests/` directory, all existing test files, test runners, and project files focusing on:
-   - R5: Current automated tests in `tests/**/*.js`, how tests are run (e.g. `node tests/...`), test framework / runners, current pass/fail status, and coverage gaps across R1-R4.
-   - Syntax validation methods (`node -c app.js`, `node -c redesign.js`).
-   - Identifying temp/unused files for Ponytail cleanup and redundant/over-engineered code.
-2. Detail how to design comprehensive automated tests to achieve 100% pass rate.
-3. Write your complete findings to `d:\Suna Chat\.agents\explorer_survey_3\handoff.md` and send a message when complete.
-</USER_REQUEST>
+You are explorer_survey_3.
+Your working directory is d:\Suna Chat\.agents\explorer_survey_3.
+Before starting work, you MUST read:
+- d:\Suna Chat\.agents\ORIGINAL_REQUEST.md
+- d:\Suna Chat\.agents\explorer_survey_3\DISPATCH.md
+
+Your task:
+1. Investigate the existing test setup in d:\Suna Chat:
+   - Examine tests/test_suna_harness.js, package.json test scripts, mocha test suites, and run_verification.py.
+   - Run the baseline test checks or check existing test logs to understand how the 982 tests pass and how long they take.
+   - Examine the browser / UI code in d:\Suna Chat (e.g. app.js, redesign.js, index.html) to understand the DOM environment and how UI components are loaded/rendered.
+2. Detail how new tests can be cleanly integrated into tests/test_suna_harness.js (or modular test files) without breaking any of the existing 982 tests.
+3. Document any testing helpers, mock VFS/mock DOM utilities needed for tests.
+4. Write your findings to d:\Suna Chat\.agents\explorer_survey_3\test_ui_survey_report.md.
+5. Create your handoff.md in d:\Suna Chat\.agents\explorer_survey_3\handoff.md and report back to your parent orchestrator.

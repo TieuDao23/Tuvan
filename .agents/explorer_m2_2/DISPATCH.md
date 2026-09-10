@@ -1,20 +1,44 @@
-## 2026-08-27T15:29:18Z
+# Task Assignment: M2 Explorer 2 — AciSchemaValidator Architecture & Tool Integration
 
-You are explorer_m2_2 (teamwork_preview_explorer).
-Your working directory is: d:\Suna Chat\.agents\explorer_m2_2
-The authoritative original user request is at: d:\Suna Chat\.agents\ORIGINAL_REQUEST.md
-The project specification is at: d:\Suna Chat\PROJECT.md
+## Milestone
+Milestone 2: Unified Git Diff & JSON Schema Validator (R2)
 
-Milestone 2 Scope: R2 Background Continuation Context & Turn Loop:
-1. Read `ORIGINAL_REQUEST.md` §R2 and `PROJECT.md`.
-2. Investigate continuation loop structures in `generateAIResponse` (lines 6338-6500) and `sendWorkspaceMessage` (lines 1960-2015).
-3. Analyze how continuation payloads should be built:
-   - System prompt retained.
-   - Original user query/attachments retained.
-   - Accumulated assistant response from prior turns retained.
-   - Standard Vietnamese continuation directive: `"Tiếp tục chính xác từ đoạn mã/câu từ đang dang dở từ chỗ bị ngắt, không lặp lại bất kỳ đoạn nào đã tạo."` (also preserving backwards compatibility with existing test matches).
-   - Turn bounds: expand to 10-20 turns for complex 3D Three.js / Canvas apps while maintaining safety.
-   - Zero-progress detection: breaking immediately if a turn yields 0 new characters.
-4. Formulate the concrete implementation strategy for `app.js`.
-5. Write your handoff report to `d:\Suna Chat\.agents\explorer_m2_2\handoff.md`.
-6. Send a message to your parent when done.
+## Objectives
+- Read `d:\Suna Chat\.agents\ORIGINAL_REQUEST.md` and `d:\Suna Chat\.agents\orchestrator_1\PROJECT.md`.
+- Read prior survey artifacts:
+  - `d:\Suna Chat\.agents\explorer_survey_1\survey_report.md`
+  - `d:\Suna Chat\.agents\spec_miner_survey_2\spec_report.md`
+- Detail the implementation strategy for `AciSchemaValidator` in `suna_harness.js`:
+  1. JSON Schema specifications for all 6 SWE-agent ACI tools:
+     - `view_file`: path/file required, optional line range (`startLine`, `endLine`).
+     - `replace_file_content`: path required, `targetContent`, `replacementContent`, optional line range.
+     - `grep_search`: query required, optional path.
+     - `find_by_name`: pattern required, optional directory.
+     - `list_dir`: directory required.
+     - `run_sandboxed_command`: command required, timeout optional.
+  2. Parameter alias normalization:
+     - Map `TargetFile` -> `path`, `TargetContent` -> `targetContent`, `Query` -> `query`, etc. so existing tests and callers succeed seamlessly.
+  3. Pre-validation diagnostic responses:
+     - Check types, required fields, and range bounds *before* executing VFS methods.
+     - Return structured diagnostic errors (`{ valid: false, errors: [...] }`) with hints for `SelfCorrectionLoop`.
+  4. Hook into `AciInterface.prototype.execute(toolName, args)` and export on `SunaHarness`.
+- Write findings to `d:\Suna Chat\.agents\explorer_m2_2\m2_schema_strategy.md` and `handoff.md`.
+
+## 2026-09-07T14:12:47Z
+You are explorer_m2_2.
+Your working directory is d:\Suna Chat\.agents\explorer_m2_2.
+Before starting work, you MUST read:
+- d:\Suna Chat\.agents\ORIGINAL_REQUEST.md
+- d:\Suna Chat\.agents\orchestrator_1\PROJECT.md
+- d:\Suna Chat\.agents\explorer_m2_2\DISPATCH.md
+- d:\Suna Chat\.agents\explorer_survey_1\survey_report.md
+- d:\Suna Chat\.agents\spec_miner_survey_2\spec_report.md
+
+Your task:
+1. Detail the implementation strategy for AciSchemaValidator in suna_harness.js:
+   - Complete JSON Schema specifications for all 6 ACI tools (view_file, replace_file_content, grep_search, find_by_name, list_dir, run_sandboxed_command).
+   - Parameter alias normalization (TargetFile -> path, TargetContent -> targetContent, etc.).
+   - Pre-validation diagnostics and error structures.
+   - Hook points in AciInterface.prototype.execute and exports on SunaHarness.
+2. Provide concrete class definitions, schema dictionaries, and diagnostic formatting methods.
+3. Write your findings to d:\Suna Chat\.agents\explorer_m2_2\m2_schema_strategy.md and your handoff.md. Report back via send_message.

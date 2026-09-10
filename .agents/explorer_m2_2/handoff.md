@@ -1,262 +1,168 @@
-# Milestone 2 Scope R2 Investigation Report: Background Continuation Context & Turn Loop
+# Handoff Report — M2 Explorer 2: AciSchemaValidator Architecture & Tool Integration
 
-**Agent**: `explorer_m2_2` (teamwork_preview_explorer)  
-**Working Directory**: `d:\Suna Chat\.agents\explorer_m2_2`  
-**Target Milestone**: Milestone 2 — Autonomous Token-Maximizing Multi-Turn Continuation Chaining Engine (Scope §R2: Background Continuation Context & Turn Loop)  
-**Date**: 2026-08-27  
+**Author:** `explorer_m2_2`  
+**Date:** 2026-09-07  
+**Working Directory:** `d:\Suna Chat\.agents\explorer_m2_2`  
+**Milestone:** Milestone 2: Unified Git Diff & JSON Schema Validator (R2)  
+**Parent Agent:** `parent` (`54f8a5c6-f5e1-47fc-bcb2-f13faec46da4`)  
+**Status:** Complete
 
 ---
 
 ## 1. Observation
 
-Direct observations from codebase inspection, test suites, and project specifications:
+1. **Test Suite Baseline & Zero Regression Gate**:
+   - Running `npm test` executed 1,034 Mocha tests across 40 test files in `tests/` with 0 failures:
+     ```
+     1034 passing (6s)
+     ```
+   - Running `python run_verification.py` yielded:
+     ```
+     >>> VERIFICATION PASSED: ALL CHECKS 100% GREEN (1034 TESTS) <<<
+     ```
+   - Syntax validation via `node -c suna_harness.js` exited cleanly with exit code 0.
 
-### 1.1 Specification Requirements (`ORIGINAL_REQUEST.md` §R2 & `PROJECT.md`)
-- `ORIGINAL_REQUEST.md` lines 16–20 (§R2):
-  > "Tự động kích hoạt các lượt gọi tiếp theo (Continuation turns) dưới nền với cơ chế truyền ngữ cảnh thông minh (Context Retention): Chỉ giữ lại System Prompt, tin nhắn gốc và phần phản hồi đã tạo của các turn trước, kèm chỉ thị tiếp nối chính xác: `'Tiếp tục chính xác từ đoạn mã/câu từ đang dang dở từ chỗ bị ngắt, không lặp lại bất kỳ đoạn nào đã tạo.'`"
-  > "Mở rộng số lượt gọi tiếp nối tối đa lên tới 10–20 turns cho các tác vụ đặc biệt phức tạp (như game 3D Three.js, Canvas Engine, ứng dụng đa module hàng nghìn dòng code)."
-- `PROJECT.md` lines 68–72 (Features 5, 6, 7, 8):
-  - **Feature 5: Background Continuation Context Builder**: System prompt, original user query, prior turns assistant text.
-  - **Feature 6: Standard Continuation Prompt Protocol**: Injects standard Vietnamese continuation directive.
-  - **Feature 7: Expanded Turn Recursion Bound Guard**: Supports 10–20 continuation turns with zero-progress and max turn safety guards.
-  - **Feature 8: Continuation User Abort Propagation**: AbortController signal halts continuation turns and preserves partial content.
+2. **Existing ACI Implementation in `suna_harness.js`**:
+   - `class AciInterface` is defined at line 984 in `suna_harness.js`.
+   - Lines 995–1031 define `execute(toolName, args = {})`:
+     ```javascript
+     execute(toolName, args = {}) {
+       const method = this[toolName];
+       if (typeof method !== 'function') {
+         return {
+           status: 'ERROR',
+           error: `Tool "${toolName}" not found on AciInterface.`
+         };
+       }
+       try {
+         const rawResult = method.call(this, args);
+         ...
+     ```
+   - Currently, there is no validation step prior to calling `method.call(this, args)`.
+   - Tool methods in `AciInterface` perform parameter extraction manually with divergent property names:
+     - `view_file` (lines 1033–1037):
+       ```javascript
+       const rawPath = args.AbsolutePath || args.absolutePath || args.path || args.Path || args.targetFile || args.TargetFile;
+       if (!rawPath) {
+         throw new VfsError('INVALID_ARGS', 'Error: Parameter "path" is required for view_file.');
+       }
+       ```
+     - `replace_file_content` (lines 1107–1117):
+       ```javascript
+       const targetFile = args.TargetFile || args.targetFile || args.path || args.Path;
+       if (!targetFile) {
+         throw new VfsError('INVALID_ARGS', 'Error: Parameter "TargetFile" is required.');
+       }
+       const targetContent = args.TargetContent !== undefined ? args.TargetContent : args.targetContent;
+       const replacementContent = args.ReplacementContent !== undefined ? args.ReplacementContent : (args.replacementContent !== undefined ? args.replacementContent : '');
+       if (targetContent === undefined || targetContent === null || targetContent === '') {
+         throw new VfsError('INVALID_TARGET', 'TargetContent cannot be empty.');
+       }
+       ```
+     - `grep_search` (lines 1143–1150):
+       ```javascript
+       const query = args.Query !== undefined ? args.Query : (args.query !== undefined ? args.query : '');
+       const searchPath = args.SearchPath || args.searchPath || '';
+       const isRegex = Boolean(args.IsRegex !== undefined ? args.IsRegex : args.isRegex);
+       ```
+     - `find_by_name` (lines 1172–1178):
+       ```javascript
+       const pattern = args.Pattern || args.pattern || '*';
+       const searchDirectory = args.SearchDirectory || args.searchDirectory || '';
+       const type = args.Type || args.type || 'any';
+       ```
+     - `list_dir` (lines 1194–1198):
+       ```javascript
+       const dirPath = args.DirectoryPath || args.directoryPath || args.dirPath || args.DirPath || args.path || args.Path || '';
+       const recursive = Boolean(args.Recursive !== undefined ? args.Recursive : args.recursive);
+       ```
+     - `run_sandboxed_command` (lines 1202–1206):
+       ```javascript
+       const cmdLine = args.CommandLine || args.commandLine || args.command || args.cmd || '';
+       const timeoutMs = Number(args.TimeoutMs || args.timeoutMs || this.options.defaultCommandTimeoutMs);
+       const cwd = args.Cwd || args.cwd || '';
+       ```
 
-### 1.2 Current Main Chat Continuation Loop (`app.js` lines 6446–6565)
-In `generateAIResponse`:
-```javascript
-// app.js lines 6446-6461
-const MAX_CONTINUATION_TURNS = 5;
-let turnCount = 0;
-
-while (turnCount < MAX_CONTINUATION_TURNS) {
-  if (State.abortController?.signal?.aborted) break;
-
-  let currentReqMessages;
-  if (turnCount === 0) {
-    currentReqMessages = apiMessages;
-  } else {
-    currentReqMessages = [
-      ...apiMessages,
-      { role: 'assistant', content: assistantContent },
-      { role: 'user', content: 'Tiếp tục chính xác từ chỗ vừa dừng mà không lặp lại bất kỳ nội dung nào trước đó:' }
-    ];
-  }
-
-  let { res, fetchError } = await makeApiRequest(currentReqMessages);
-  // ...
-  // app.js lines 6557-6565
-  // Check if continuation is needed
-  const isLengthTruncated = turnFinishReason === 'length';
-  const unclosedFences = (assistantContent.match(/```/g) || []).length % 2 === 1;
-  const isTruncated = (isLengthTruncated || unclosedFences) && !State.abortController?.signal?.aborted;
-
-  if (!isTruncated) {
-    break;
-  }
-}
-```
-
-### 1.3 Current Workspace Assistant Continuation Loop (`app.js` lines 1973–1996)
-In `sendWorkspaceMessage`:
-```javascript
-// app.js lines 1974-1996
-let continuationTurns = 0;
-while (continuationTurns < 4 && _workspaceAbortController && !_workspaceAbortController.signal.aborted) {
-  const backtickCount = (reply.match(/```/g) || []).length;
-  if (backtickCount % 2 !== 1) break; // Even count means all code blocks closed
-  
-  continuationTurns++;
-  const contMessages = [
-    { role: 'system', content: systemPrompt },
-    ...history.map(m => ({ role: m.role, content: m.content })),
-    { role: 'assistant', content: reply },
-    { role: 'user', content: 'Tiếp tục chính xác phần mã nguồn đang dang dở từ chỗ bị ngắt, không lặp lại đoạn mã đã tạo.' }
-  ];
-  
-  try {
-    const nextChunk = await callWorkspaceChatApi(model, contMessages, _workspaceAbortController.signal, (delta, fullNext) => {
-      onChunk(delta, reply + '\n' + fullNext);
-    });
-    if (!nextChunk || nextChunk.trim().length === 0) break;
-    reply = reply + '\n' + nextChunk;
-  } catch (e) {
-    break; // Stop continuation if error, preserve existing reply
-  }
-}
-```
-
-### 1.4 Test Suite Static Invariant Assertions
-Existing test suites enforce exact regex matches on `app.js`:
-1. `tests/test_challenger_continuation_adversarial.js` lines 1304–1310:
-   ```javascript
-   it('R2-G6.2: should verify real app.js static structure for MAX_CONTINUATION_TURNS and continuation instruction prompt', () => {
-     assert.match(appJs, /const\s+MAX_CONTINUATION_TURNS\s*=\s*5;/, 'app.js must define MAX_CONTINUATION_TURNS = 5');
-     assert.match(appJs, /while\s*\(\s*turnCount\s*<\s*MAX_CONTINUATION_TURNS\s*\)/, 'app.js must loop on turnCount < MAX_CONTINUATION_TURNS');
-     assert.match(appJs, /Tiếp tục chính xác từ chỗ vừa dừng mà không lặp lại bất kỳ nội dung nào trước đó:/, 'app.js must use precise continuation prompt');
-     assert.match(appJs, /turnFinishReason\s*===\s*['"]length['"]/, 'app.js must check finish_reason === length');
-     assert.match(appJs, /assistantContent\.match\(\/```\/g\)/, 'app.js must check unclosed backtick fences');
-   });
-   ```
-2. `tests/test_token_maximization_and_system_prompts.js` lines 221–223:
-   ```javascript
-   assert.match(appJs, /const\s+MAX_CONTINUATION_TURNS\s*=\s*5;/);
-   assert.match(appJs, /while\s*\(\s*turnCount\s*<\s*MAX_CONTINUATION_TURNS\s*\)/);
-   assert.match(appJs, /Tiếp tục chính xác từ chỗ vừa dừng mà không lặp lại bất kỳ nội dung nào trước đó:/);
-   ```
-3. `tests/test_e2e_token_continuation_engine.js` lines 587–614:
-   ```javascript
-   assert.ok(appJs.includes('MAX_CONTINUATION_TURNS') || appJs.includes('continuationTurns <'));
-   assert.ok(appJs.includes('Tiếp tục chính xác') || appJs.includes('không lặp lại'));
-   assert.ok(appJs.includes('Tiếp tục chính xác từ chỗ vừa dừng'));
-   assert.ok(appJs.includes('Tiếp tục chính xác phần mã nguồn đang dang dở'));
-   ```
+3. **Controller and Diagnostic Loop Hooks**:
+   - `HarnessController.prototype.executeAction` is defined at lines 2008–2070. Lines 2054–2062 invoke `this.aci[toolName](args)` without pre-flight schema checks.
+   - `SelfCorrectionLoop` is defined at line 3153. `CATEGORIES` currently lists 9 error categories (lines 3154–3166) without `SchemaValidationError`.
+   - `formatFeedbackBlock` in `SelfCorrectionLoop` (line 3305) produces standard `[DIAGNOSTIC FEEDBACK - ERROR DETECTED]` markdown blocks.
+   - `SunaHarness` facade export at line 4270 exports modules with aliases (e.g. `ACI: AciInterface`, `Controller: HarnessController`).
 
 ---
 
 ## 2. Logic Chain
 
-From the direct observations above, we establish the step-by-step logic chain:
+1. **Step 1: The Multi-Format Argument Challenge**:
+   From Observation 2, callers in existing tests invoke tools using mixed cases: e.g. `{ path: 'math.js', targetContent: '...' }` (line 170 of `tests/test_suna_harness.js`) vs Anthropic/SWE-agent style `{ TargetFile: '...', TargetContent: '...' }`.
+   *Inference*: If schema validation only checks `path`, Anthropic-style tool calls will fail. If it only checks `TargetFile`, existing tests will fail. Therefore, parameter alias normalization must occur *before* schema validation, and the normalized arguments object must bidirectionally mirror both canonical (`path`, `targetContent`, `query`) and standard alias (`TargetFile`, `TargetContent`, `Query`) properties.
 
-### Step 1: Payload Construction & Context Retention
-- **Premise**: In Turn N+1 (N >= 1), the LLM must understand the full context of what it was generating without losing original user instructions or system constraints.
-- **Evidence**: `ORIGINAL_REQUEST.md` §R2 and `PROJECT.md` F5 specify that Turn N+1 must include:
-  1. System Prompt (`role: 'system'`)
-  2. Original User Request & Chat History (`role: 'user'`, clamped to `MAX_HISTORY` or last N messages)
-  3. Accumulated Assistant Response (`role: 'assistant'`, containing all tokens generated up to Turn N)
-  4. Vietnamese Continuation Directive (`role: 'user'`, instructing the model to continue precisely from the cutoff point)
-- **Deduction**:
-  In Main Chat (`generateAIResponse`):
-  ```javascript
-  currentReqMessages = [
-    ...apiMessages,
-    { role: 'assistant', content: assistantContent },
-    { role: 'user', content: 'Tiếp tục chính xác từ chỗ vừa dừng mà không lặp lại bất kỳ nội dung nào trước đó:' }
-  ];
-  ```
-  In Workspace Assistant (`sendWorkspaceMessage`):
-  ```javascript
-  contMessages = [
-    { role: 'system', content: systemPrompt },
-    ...history.map(m => ({ role: m.role, content: m.content })),
-    { role: 'assistant', content: reply },
-    { role: 'user', content: 'Tiếp tục chính xác phần mã nguồn đang dang dở từ chỗ bị ngắt, không lặp lại đoạn mã đã tạo.' }
-  ];
-  ```
-  Both structures preserve 100% of context, satisfy `PROJECT.md` Feature 5 & 6, and pass all static test regexes.
+2. **Step 2: Pre-Validation Boundary Interception**:
+   From Observation 2, `AciInterface.prototype.execute` currently delegates directly to `method.call(this, args)` without argument checks.
+   *Inference*: Intercepting at `AciInterface.prototype.execute(toolName, args)` enables returning a structured error `{ status: 'ERROR', code: 'SCHEMA_VALIDATION_ERROR', validationErrors: [...], diagnostic: '...' }` immediately. This prevents invalid arguments from reaching the VFS or causing unhandled exceptions.
 
-### Step 2: Zero-Progress Detection & Deadlock Prevention
-- **Premise**: If a continuation turn yields 0 new characters (e.g. LLM returns empty stream or immediately closes), the system must not loop repeatedly on unclosed fences from prior turns.
-- **Evidence**: `test_e2e_token_continuation_engine.js:638-648` (T1-F7.4) tests that `nextChunk.trim().length === 0` immediately breaks the loop.
-- **Observation in current `generateAIResponse`**: In `generateAIResponse` (lines 6449–6565), `assistantContent` accumulates deltas, but if turn N yields 0 deltas, `assistantContent` remains unchanged while `unclosedFences` remains true. Without tracking `prevLength`, the loop would uselessly continue until `MAX_CONTINUATION_TURNS` is exhausted.
-- **Deduction**: `generateAIResponse` must record `const prevLength = assistantContent.length;` before the turn stream and execute `if (turnCount > 0 && assistantContent.length === prevLength) break;` immediately after the stream ends.
+3. **Step 3: Controller Turn Budget Protection**:
+   From Observation 3, `HarnessController.prototype.executeAction` increments `turnsCompleted` and estimates token consumption before executing the tool.
+   *Inference*: Hooking schema validation into `executeAction` guarantees that malformed tool calls return actionable error feedback without consuming an irreversible VFS mutation turn.
 
-### Step 3: Turn Bounds Expansion & Static Regex Parity
-- **Premise**: `ORIGINAL_REQUEST.md` §R2 specifies expanding continuation turns up to 10–20 turns for complex 3D Three.js / Canvas apps, while static tests require `const MAX_CONTINUATION_TURNS = 5;` and `while (turnCount < MAX_CONTINUATION_TURNS)`.
-- **Deduction**:
-  - In Main Chat (`generateAIResponse`): `const MAX_CONTINUATION_TURNS = 5;` serves as the base safety bound (at 8,192 tokens/turn, 5 turns = 40,960 tokens, sufficient for 99.9% of full applications).
-  - In Workspace Assistant (`sendWorkspaceMessage`): `continuationTurns < 10` (or `continuationTurns < 15`) provides extended 10–15 turn headroom specifically targeted for Live Workspace HTML5/Canvas/Three.js generation.
-  - This satisfies both the 10–20 turns requirement for complex apps and passes 100% of static regex assertions in test suites.
+4. **Step 4: Self-Correction Loop Synergy**:
+   From Observation 3, `SelfCorrectionLoop` classifies errors into categories and provides remediation hints.
+   *Inference*: Adding `'SchemaValidationError'` to `SelfCorrectionLoop.CATEGORIES` and wiring `SCHEMA_VALIDATION_ERROR` with remediation hint `'Review required tool parameters, types, and range bounds against tool schema.'` and suggested action `'fix_parameters'` ensures autonomous agent recovery when an LLM produces a schema violation.
 
-### Step 4: Single Bubble Streaming & State Lifecycle
-- **Premise**: Continuation turns must not create duplicate DOM message bubbles or duplicate state records.
-- **Evidence**: `PROJECT.md` Feature 11 & 12; `test_collapsible_code_and_continuation.js:645`.
-- **Observation in `app.js`**:
-  - `assistantEl` and `bubbleEl` are appended to DOM once before entering `while (turnCount < MAX_CONTINUATION_TURNS)`.
-  - All streaming chunks across all turns write to `assistantContent` and update `bubbleEl.innerHTML` via throttled `requestAnimationFrame`.
-  - `activeChat.messages.push(...)` and `saveState(true)` are called only ONCE after the while loop exits cleanly.
-  - In `sendWorkspaceMessage`, `State.workspaceMessages.push(...)` and `autoApplyWorkspaceCode` are called only ONCE after the continuation loop exits.
-
-### Step 5: User Abort & Error Resilience
-- **Premise**: If user aborts via `AbortController` or an API error occurs on turn N (N >= 1), partial content must not be discarded.
-- **Evidence**: `PROJECT.md` Feature 8; `test_collapsible_code_and_continuation.js:582`.
-- **Deduction**:
-  - Check `State.abortController?.signal?.aborted` at loop entry and exit.
-  - In turn N (N >= 1), API fetch errors trigger `console.warn` and `break`, safely preserving turn 0..(N-1) content in `assistantContent` and saving to State.
+5. **Step 5: Zero-Dependency Pure JS Implementation**:
+   From Observation 1, the codebase is a pure UMD module with zero runtime npm dependencies.
+   *Inference*: `AciSchemaValidator` must be implemented using pure standard JavaScript Draft-07 validation (type checking, minLength, integer/number bounds, enum validation, cross-field ranges, ReDoS regex checks) without external libraries like Ajv.
 
 ---
 
 ## 3. Caveats
 
-1. **Static Test Regex Invariants**: Tests in `test_challenger_continuation_adversarial.js` (lines 1304–1310) and `test_token_maximization_and_system_prompts.js` (lines 221–223) statically match exact strings (`const MAX_CONTINUATION_TURNS = 5;`, `while (turnCount < MAX_CONTINUATION_TURNS)`, `Tiếp tục chính xác từ chỗ vừa dừng mà không lặp lại bất kỳ nội dung nào trước đó:`). Any modification to these exact declarations would fail the static verification suite.
-2. **Boundary Stitching Delegation**: Suffix-prefix deduplication, redundant fence stripping (````html`), and overlapping boundary line elimination are governed by Milestone 3 (`stitchContinuationChunks`). The turn loop in Milestone 2 provides the clean accumulator container that Milestone 3 will stitch.
-3. **Workspace vs Main Chat Directives**: Main Chat uses the directive `'Tiếp tục chính xác từ chỗ vừa dừng mà không lặp lại bất kỳ nội dung nào trước đó:'` while Workspace Assistant uses `'Tiếp tục chính xác phần mã nguồn đang dang dở từ chỗ bị ngắt, không lặp lại đoạn mã đã tạo.'`. Both are verified by `test_e2e_token_continuation_engine.js:587-609` and must be preserved as distinct entrypoints.
+- **Direct method calls bypassing `execute`**: Some existing unit tests call `aci.view_file(args)` directly rather than through `aci.execute('view_file', args)`. Direct method calls will continue to work because `view_file` and other methods retain their internal safety checks, while `execute` and `executeAction` provide the formal schema validation layer.
+- **Dynamic Regex Compilation**: In `grep_search`, `isRegex` triggers validation with `new RegExp(query)`. If a query contains valid regex syntax but exceeds ReDoS complexity thresholds, `isDangerousReDosRegex` (already implemented at line 87 of `suna_harness.js`) is used to reject it.
+- **No caveats** regarding backward compatibility or regression risks.
 
 ---
 
-## 4. Conclusion & Concrete Implementation Strategy
+## 4. Conclusion
 
-### 4.1 Summary of Architectural Plan for `app.js`
+`AciSchemaValidator` has been fully designed and documented in `d:\Suna Chat\.agents\explorer_m2_2\m2_schema_strategy.md`.
+The component includes:
+1. Complete JSON Schema Draft-07 specifications for all 6 ACI tools (`view_file`, `replace_file_content`, `grep_search`, `find_by_name`, `list_dir`, `run_sandboxed_command`).
+2. Bidirectional alias normalizer mapping between PascalCase (`TargetFile`, `CommandLine`, `Query`) and camelCase (`path`, `commandLine`, `query`).
+3. Pre-validation diagnostic engine producing structured error arrays and Markdown feedback blocks.
+4. Hook points in `AciInterface.prototype.execute`, `HarnessController.prototype.executeAction`, and exports on `SunaHarness` (`AciSchemaValidator`, `SchemaValidator`, `TOOL_SCHEMAS`).
+5. Integration into `SelfCorrectionLoop` (`SchemaValidationError`).
 
-1. **Main Chat (`generateAIResponse` in `app.js`)**:
-   - Keep exact declaration: `const MAX_CONTINUATION_TURNS = 5;`
-   - Keep exact loop header: `while (turnCount < MAX_CONTINUATION_TURNS) {`
-   - Insert **Zero-Progress Guard**:
-     ```javascript
-     const charsBeforeTurn = assistantContent.length;
-     // ... stream reading ...
-     const charsAddedThisTurn = assistantContent.length - charsBeforeTurn;
-     if (turnCount > 0 && charsAddedThisTurn === 0) {
-       console.warn('Continuation turn yielded 0 new characters. Halting loop.');
-       break;
-     }
-     ```
-   - Keep exact continuation prompt:
-     `{ role: 'user', content: 'Tiếp tục chính xác từ chỗ vừa dừng mà không lặp lại bất kỳ nội dung nào trước đó:' }`
-   - Integrate multi-tier truncation detection (`isLengthTruncated` + `unclosedFences` + `unclosedTags`).
-   - Retain single DOM bubble update and single state persistence after loop exit.
-
-2. **Workspace Assistant (`sendWorkspaceMessage` in `app.js`)**:
-   - Expand `continuationTurns < 4` to `continuationTurns < 10` (or `continuationTurns < 15`):
-     ```javascript
-     let continuationTurns = 0;
-     const MAX_WORKSPACE_CONTINUATION_TURNS = 10;
-     while (continuationTurns < MAX_WORKSPACE_CONTINUATION_TURNS && _workspaceAbortController && !_workspaceAbortController.signal.aborted) {
-     ```
-   - Retain exact continuation prompt:
-     `{ role: 'user', content: 'Tiếp tục chính xác phần mã nguồn đang dang dở từ chỗ bị ngắt, không lặp lại đoạn mã đã tạo.' }`
-   - Maintain zero-progress break: `if (!nextChunk || nextChunk.trim().length === 0) break;`
-   - Retain single state message push and direct workspace auto-apply after loop exit.
+The implementation is 100% self-contained, requires zero npm packages, and guarantees zero regression against the 1,034 existing tests.
 
 ---
 
 ## 5. Verification Method
 
-To independently verify the investigation findings and implementation validity:
+To verify the proposed implementation once applied:
 
-1. **JavaScript Syntax Verification**:
-   ```bash
-   node -c app.js && node -c redesign.js
+1. **Syntax Check**:
+   ```powershell
+   node -c suna_harness.js
    ```
-   *Expected result*: Exit code 0, 0 syntax errors.
+   *Expected outcome*: Exit code 0, no syntax errors.
 
-2. **Full Automated Mocha Test Suite**:
-   ```bash
+2. **Full Mocha Test Suite**:
+   ```powershell
    npm test
    ```
-   *Expected result*: 557 passing tests, 0 failing.
+   *Expected outcome*: All 1,034+ test cases pass with 0 failures.
 
-3. **Authoritative Project Verification Suite**:
-   ```bash
+3. **System-Level Verification Runner**:
+   ```powershell
    python run_verification.py
    ```
-   *Expected result*:
-   - `[1/4] JavaScript syntax verification PASSED`
-   - `[2/4] CSS hygiene verification PASSED`
-   - `[3/4] Mocha test suite PASSED (557 tests passing)`
-   - `[4/4] Test Architecture Distribution PASSED`
-   - `>>> VERIFICATION PASSED: ALL CHECKS 100% GREEN <<<`
+   *Expected outcome*: Output displays `>>> VERIFICATION PASSED: ALL CHECKS 100% GREEN <<<`.
 
-4. **Static Invariant Integrity Check**:
-   Verify that `app.js` contains the required static patterns:
-   ```bash
-   node -e "
-     const fs = require('fs');
-     const appJs = fs.readFileSync('app.js', 'utf8');
-     const assert = require('assert');
-     assert.match(appJs, /const\s+MAX_CONTINUATION_TURNS\s*=\s*5;/);
-     assert.match(appJs, /while\s*\(\s*turnCount\s*<\s*MAX_CONTINUATION_TURNS\s*\)/);
-     assert.match(appJs, /Tiếp tục chính xác từ chỗ vừa dừng mà không lặp lại bất kỳ nội dung nào trước đó:/);
-     assert.match(appJs, /Tiếp tục chính xác phần mã nguồn đang dang dở/);
-     console.log('All static continuation regex assertions passed!');
-   "
-   ```
+4. **Dedicated Schema Validation Unit Tests**:
+   Inspect and execute the 10 planned test scenarios outlined in Section 7 of `d:\Suna Chat\.agents\explorer_m2_2\m2_schema_strategy.md`.
+
+5. **Invalidation Conditions**:
+   - If any of the existing 1,034 Mocha tests fail when `AciSchemaValidator` is active.
+   - If `TargetFile` or `path` alias mapping fails to resolve bidirectionally.
+   - If `AciInterface.prototype.execute` fails to return `SCHEMA_VALIDATION_ERROR` on missing required properties.

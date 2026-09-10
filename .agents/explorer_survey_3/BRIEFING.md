@@ -1,41 +1,54 @@
-# BRIEFING — 2026-08-27T08:35:00Z
+# BRIEFING — 2026-09-07T20:42:30+07:00
 
 ## Mission
-Investigate tests/ directory, automated test runners, test parity across R1-R4, syntax validation, and identify temp/unused files + over-engineered code for Ponytail cleanup.
+Investigate test suite architecture, baseline verification, UI DOM environment, mock VFS/DOM utilities, and integration roadmap for Suna Agent Harness enhancements.
 
 ## 🔒 My Identity
 - Archetype: explorer
-- Roles: test-parity-auditor, ponytail-code-reviewer
+- Roles: investigator, analyzer, surveyor
 - Working directory: d:\Suna Chat\.agents\explorer_survey_3
-- Original parent: f17f5b40-000b-4268-8936-1dbe40c0f7c5
-- Milestone: survey-and-investigation
+- Original parent: 54f8a5c6-f5e1-47fc-bcb2-f13faec46da4
+- Milestone: Test Suite & Verification Baseline Survey (Survey 3)
 
 ## 🔒 Key Constraints
 - Read-only investigation — do NOT implement
-- Inspect existing tests and code structure
-- Identify cleanup targets and test gap coverage for R1-R5
+- Do NOT modify production code or existing test files
+- Investigate tests/test_suna_harness.js, package.json, run_verification.py, mocha suites
+- Check baseline test suite (982 tests), execution times, and syntax checks
+- Examine UI/DOM integration in app.js, redesign.js, index.html
+- Output test_ui_survey_report.md and handoff.md in working directory
+- Communicate via send_message to parent (54f8a5c6-f5e1-47fc-bcb2-f13faec46da4)
 
 ## Current Parent
-- Conversation ID: f17f5b40-000b-4268-8936-1dbe40c0f7c5
-- Updated: 2026-08-27T08:35:00Z
+- Conversation ID: 54f8a5c6-f5e1-47fc-bcb2-f13faec46da4
+- Updated: 2026-09-07T20:42:30+07:00
 
 ## Investigation State
 - **Explored paths**:
-  - `tests/` directory (all 10 test files across `visible_tests`, `hidden_tests`, `adversarial_tests`, and root suites)
-  - `package.json` (`test` script using Mocha, `check` script using `node -c`)
-  - `app.js` (scroll listeners, search handlers, visibility handlers, hybrid storage, shortcuts, katex fallback, iframe rendering)
-  - `styles.css` (scrollbars, glassmorphic styles, responsive breakpoints, transitions)
-  - `index.html` (iframes sandbox, accessibility attributes on icon buttons, message input IDs)
-  - `redesign.js` (syntax integrity and test generation)
+  - `d:\Suna Chat\.agents\ORIGINAL_REQUEST.md` (lines 1-64: R1-R4 requirements)
+  - `d:\Suna Chat\.agents\explorer_survey_3\DISPATCH.md`
+  - `d:\Suna Chat\package.json`, `d:\Suna Chat\run_verification.py`
+  - `d:\Suna Chat\tests\test_suna_harness.js` (2,127 lines, 154 passing tests in 238ms)
+  - `d:\Suna Chat\tests\test_dsh_zero_regression_matrix.js` (10 invariant gates)
+  - `d:\Suna Chat\suna_harness.js` (3,259 lines, UMD exports, ACI tools, VFS, Trajectory, Controller)
+  - `d:\Suna Chat\app.js` (lines 3016-4305 agent bridge, lines 6640-6643 message format, lines 8578-8633 trajectory drawer)
+  - `d:\Suna Chat\index.html` (lines 924-926 script loading, 3-pane live workspace layout)
+  - `d:\Suna Chat\styles.css` (lines 7149-7422 trajectory styling, 100% balanced braces)
 - **Key findings**:
-  - `npm test` executes `npx mocha "tests/**/*.js"`, currently running 49 tests with 100% passing rate.
-  - `npm run check` executes `node -c app.js && node -c redesign.js` cleanly with 0 syntax errors.
-  - Test gaps identified for R1 (scroll passive/rAF, search 150ms debounce, visibilitychange particle pause), R2 (hybrid storage base64 IDB separation, QuotaExceeded auto-cleanup), R3 (Escape, Ctrl+/, Ctrl+Shift+O shortcuts, 4px slim scrollbars, button aria-labels), R4 (iframe sandbox="allow-scripts allow-modals allow-forms", KaTeX raw fallback), and R5 (Ponytail cleanup & test parity).
-  - No orphaned temp files found; redundant duplicate scrollbar rules identified in `styles.css` for Ponytail cleanup.
-- **Unexplored areas**: None. Comprehensive survey complete.
+  - Exactly 982 tests passing across 38 files in Mocha (total runtime ~4.0s; full verification script ~7.56s).
+  - 0 syntax errors across `app.js`, `redesign.js`, `suna_harness.js`, and `tests/test_suna_harness.js`.
+  - `run_verification.py` does NOT hardcode 982 test count; it verifies 0 failing tests and exits cleanly. Adding new passing tests is 100% safe.
+  - SunaChat UI uses Vanilla JS; trajectory rendering is currently single-tier and collapsible.
+  - Mock DOM (`createMockDOM`) and Mock IndexedDB (`createMockIndexedDBStore`) utilities specified for Node.js-based test environment without external dependencies.
+  - Recommended expanding `tests/test_suna_harness.js` directly with Tier 1 (1.15-1.19), Tier 2 (B13-B16), Tier 3 (C7-C10), and Tier 4 (T4-SCEN-07-T4-SCEN-10).
+- **Unexplored areas**: None. Complete investigation conducted.
 
 ## Key Decisions Made
-- Formulated complete test architecture and 14 concrete test case blueprints covering R1-R5 to maintain 100% test pass rate while adhering to the 60/40 visible/hidden ratio.
+- Recommended integrating new test suites directly into `tests/test_suna_harness.js` to keep all harness tests unified, ensuring 100% compatibility with `run_verification.py` file distribution checks.
+- Designed lightweight Mock DOM and Mock IndexedDB helpers to run without heavy dependencies like JSDOM.
 
 ## Artifact Index
-- d:\Suna Chat\.agents\explorer_survey_3\handoff.md — Final investigation handoff report
+- DISPATCH.md — Incoming task dispatch record
+- progress.md — Heartbeat and status
+- test_ui_survey_report.md — Comprehensive technical report on test & UI survey
+- handoff.md — 5-component self-contained handoff report

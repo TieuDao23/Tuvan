@@ -20,7 +20,8 @@ const AuthState = {
   lastSyncTime: 0,
   syncDebounceTimer: null,
   initialized: false,
-  isAdmin: false
+  isAdmin: false,
+  _isExplicitSignOut: false
 };
 window.AuthState = AuthState;
 
@@ -37,8 +38,16 @@ async function loadFirebaseSDK() {
       import('https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js')
     ]);
     const app = appMod.initializeApp(FIREBASE_CONFIG);
+    const auth = authMod.getAuth(app);
+    if (typeof authMod.setPersistence === 'function' && authMod.browserLocalPersistence) {
+      try {
+        await authMod.setPersistence(auth, authMod.browserLocalPersistence);
+      } catch (pErr) {
+        console.warn('Set browserLocalPersistence warning:', pErr);
+      }
+    }
     _fb = {
-      auth: authMod.getAuth(app),
+      auth: auth,
       db: dbMod.getFirestore(app),
       googleProvider: new authMod.GoogleAuthProvider(),
       createUser: authMod.createUserWithEmailAndPassword,
@@ -123,22 +132,25 @@ function mergeChats(localChats, remoteChats) {
   const mergedMap = new Map();
   const localDeleted = State.deletedChats || {};
   
-  for (const c of localChats) {
+  for (const c of (localChats || [])) {
     const chat = { ...c };
     if (!chat.id) continue;
     mergedMap.set(chat.id, chat);
   }
 
-  for (const r of remoteChats) {
+  for (const r of (remoteChats || [])) {
     const remoteChat = { ...r };
     if (!remoteChat.id) continue;
 
     const localChat = mergedMap.get(remoteChat.id);
 
     if (!localChat) {
-      const localDelTime = localDeleted[remoteChat.id] || 0;
-      if (localDelTime >= (remoteChat.updatedAt || 0)) {
-        continue; 
+      const localDelTime = localDeleted[remoteChat.id];
+      if (localDelTime !== undefined) {
+        // Discard deleted chat even under clock drift unless created strictly after deletion
+        if (!remoteChat.createdAt || remoteChat.createdAt <= localDelTime) {
+          continue;
+        }
       }
       mergedMap.set(remoteChat.id, remoteChat);
     } else {
@@ -163,16 +175,40 @@ function mergeChats(localChats, remoteChats) {
           msgMap.set(rm.id, rm);
         } else {
           if ((rm.updatedAt || 0) > (lm.updatedAt || 0)) {
-            msgMap.set(rm.id, rm);
+            const mergedMsg = { ...rm };
+            // Preserve local base64 images if remote has '__large_image__'
+            if (lm.images && lm.images.length) {
+              mergedMsg.images = (mergedMsg.images || []).map((img, idx) => {
+                if (img === '__large_image__' && lm.images[idx] && lm.images[idx] !== '__large_image__') {
+                  return lm.images[idx];
+                }
+                return img;
+              });
+            }
+            msgMap.set(rm.id, mergedMsg);
+          } else {
+            if (lm.images && lm.images.length && rm.images && rm.images.length) {
+              const mergedMsg = { ...lm };
+              mergedMsg.images = mergedMsg.images.map((img, idx) => {
+                if (img === '__large_image__' && rm.images[idx] && rm.images[idx] !== '__large_image__') {
+                  return rm.images[idx];
+                }
+                return img;
+              });
+              msgMap.set(rm.id, mergedMsg);
+            }
           }
         }
       }
 
       const finalMessages = [];
       for (const [msgId, msg] of msgMap.entries()) {
-        const delTime = mergedChat.deletedMessageIds[msgId];
-        if (delTime !== undefined && delTime >= (msg.updatedAt || msg.timestamp || 0)) {
-          continue; 
+        const delTime = mergedChat.deletedMessageIds ? mergedChat.deletedMessageIds[msgId] : undefined;
+        if (delTime !== undefined) {
+          const msgCreated = msg.createdAt || msg.timestamp || 0;
+          if (!msg.createdAt || msgCreated <= delTime) {
+            continue;
+          }
         }
         finalMessages.push(msg);
       }
@@ -186,8 +222,13 @@ function mergeChats(localChats, remoteChats) {
 
   return Array.from(mergedMap.values())
     .filter(c => {
-      const isDelLocally = localDeleted[c.id] !== undefined && localDeleted[c.id] >= (c.updatedAt || 0);
-      return !isDelLocally && !c.deleted;
+      const delTime = localDeleted[c.id];
+      if (delTime !== undefined) {
+        if (!c.createdAt || c.createdAt <= delTime) {
+          return false;
+        }
+      }
+      return !c.deleted;
     })
     .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 }
@@ -200,12 +241,7 @@ function mergeSettings(localSettings, remoteSettings) {
   const remoteTime = remoteSettings.updatedAt || 0;
   
   if (remoteTime > localTime) {
-    const merged = { ...remoteSettings };
-    if (!merged.apiKey && localSettings.apiKey) merged.apiKey = localSettings.apiKey;
-    if (!merged.baseUrl && localSettings.baseUrl) merged.baseUrl = localSettings.baseUrl;
-    if (!merged.apiKey2 && localSettings.apiKey2) merged.apiKey2 = localSettings.apiKey2;
-    if (!merged.baseUrl2 && localSettings.baseUrl2) merged.baseUrl2 = localSettings.baseUrl2;
-    return merged;
+    return { ...remoteSettings };
   }
   return localSettings;
 }
@@ -243,12 +279,28 @@ function mergeMemory(localMemory, remoteMemory) {
 }
 
 // ===== Cloud Sync (Resilient Fetch-Merge-Save) =====
+let _syncRetryCount = 0;
+let _syncRetryTimer = null;
+
 function cloudSave(immediate = false) {
-  if (!AuthState.isLoggedIn || !_fb) return;
+  if (!AuthState.isLoggedIn || AuthState.useLocalOnly || !_fb) return;
+  if (AuthState.user && AuthState.user.uid && AuthState.user.uid.startsWith('guest_')) {
+    updateSyncIndicator('offline');
+    return;
+  }
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    updateSyncIndicator('offline');
+    return;
+  }
   if (AuthState.syncDebounceTimer) clearTimeout(AuthState.syncDebounceTimer);
 
   const doSave = async () => {
     if (AuthState.isSyncing) return;
+    if (!AuthState.isLoggedIn || AuthState.useLocalOnly || !_fb) return;
+    if (AuthState.user && AuthState.user.uid && AuthState.user.uid.startsWith('guest_')) {
+      updateSyncIndicator('offline');
+      return;
+    }
     AuthState.isSyncing = true;
     try {
       const uid = AuthState.user.uid;
@@ -302,7 +354,7 @@ function cloudSave(immediate = false) {
       if (window.saveLocalStateOnly) window.saveLocalStateOnly();
 
       // Clean large images to satisfy 1MB Document quota
-      const chatsClean = State.chats.map(c => ({
+      let chatsClean = State.chats.map(c => ({
         ...c,
         messages: (c.messages || []).map(m => {
           const copy = { ...m };
@@ -313,6 +365,21 @@ function cloudSave(immediate = false) {
         })
       }));
 
+      // Document Quota Safety Guard: Ensure Firestore payload < 750KB
+      let chatsJson = JSON.stringify(chatsClean);
+      if (chatsJson.length > 750000) {
+        chatsClean = chatsClean.map(c => {
+          if (c.id === State.activeChatId || !c.messages || c.messages.length <= 20) {
+            return c;
+          }
+          return {
+            ...c,
+            messages: c.messages.slice(-20)
+          };
+        });
+        chatsJson = JSON.stringify(chatsClean);
+      }
+
       // Commit fully merged data to cloud in parallel
       await Promise.all([
         _fb.setDoc(_fb.doc(_fb.db, 'users', uid, 'data', 'settings'), {
@@ -322,17 +389,31 @@ function cloudSave(immediate = false) {
           ...State.memory, updatedAt: _fb.serverTimestamp()
         }),
         _fb.setDoc(_fb.doc(_fb.db, 'users', uid, 'data', 'chats'), {
-          chats: JSON.stringify(chatsClean),
+          chats: chatsJson,
           deletedChats: JSON.stringify(State.deletedChats || {}),
           updatedAt: _fb.serverTimestamp()
         })
       ]);
 
       AuthState.lastSyncTime = Date.now();
+      _syncRetryCount = 0;
       updateSyncIndicator('synced');
     } catch (e) {
       console.error('Cloud save error:', e);
-      updateSyncIndicator('error');
+      if (_syncRetryCount < 3 && (typeof navigator === 'undefined' || navigator.onLine !== false)) {
+        _syncRetryCount++;
+        const backoffMs = _syncRetryCount * 5000;
+        console.warn(`[Sync] Retrying cloud save in ${backoffMs}ms (attempt ${_syncRetryCount}/3)...`);
+        updateSyncIndicator('syncing');
+        if (_syncRetryTimer) clearTimeout(_syncRetryTimer);
+        _syncRetryTimer = setTimeout(() => {
+          if (AuthState.isLoggedIn && !AuthState.useLocalOnly) {
+            cloudSave(true);
+          }
+        }, backoffMs);
+      } else {
+        updateSyncIndicator('error');
+      }
     } finally {
       AuthState.isSyncing = false;
     }
@@ -347,7 +428,12 @@ function cloudSave(immediate = false) {
 }
 
 async function cloudLoad() {
-  if (!AuthState.isLoggedIn || !_fb) return false;
+  if (!AuthState.isLoggedIn || AuthState.useLocalOnly || !_fb) return false;
+  if (AuthState.user && AuthState.user.uid && AuthState.user.uid.startsWith('guest_')) return false;
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    updateSyncIndicator('offline');
+    return false;
+  }
   try {
     const uid = AuthState.user.uid;
     
@@ -360,7 +446,16 @@ async function cloudLoad() {
     const isNewAccount = !sSnap.exists() && !mSnap.exists() && !cSnap.exists();
 
     if (isNewAccount) {
-      cloudSave(true);
+      // Initialize with clean default state - never upload dirty RAM from prior session
+      const defaultChat = { id: 'chat-' + Date.now(), title: 'Chat mới', messages: [], createdAt: Date.now(), updatedAt: Date.now() };
+      State.chats = [defaultChat];
+      State.activeChatId = defaultChat.id;
+      State.deletedChats = {};
+      State.settings = typeof getDefaultSettings === 'function' ? getDefaultSettings() : State.settings;
+      State.memory = { facts: [], lastUpdated: 0 };
+      if (typeof window.saveLocalStateOnly === 'function') window.saveLocalStateOnly();
+      if (typeof window.saveMemory === 'function') window.saveMemory();
+      await cloudSave(true);
     } else {
       upgradeStateLocal();
 
@@ -410,6 +505,7 @@ async function cloudLoad() {
 let _syncUnsubscribes = [];
 function initRealtimeSync() {
   if (!AuthState.isLoggedIn || !_fb || AuthState.useLocalOnly) return;
+  if (AuthState.user && AuthState.user.uid && AuthState.user.uid.startsWith('guest_')) return;
   const uid = AuthState.user.uid;
   
   _syncUnsubscribes.forEach(u => u());
@@ -450,6 +546,11 @@ function initRealtimeSync() {
       }
       if (window.saveLocalStateOnly) window.saveLocalStateOnly();
     } catch (e) { console.error('Realtime chat sync error', e); }
+  }, (err) => {
+    console.warn('Realtime chat sync snapshot error:', err);
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      updateSyncIndicator('offline');
+    }
   }));
 
   // 2. Listen to memory
@@ -465,6 +566,8 @@ function initRealtimeSync() {
         if (window.saveLocalStateOnly) window.saveLocalStateOnly();
       }
     } catch (e) {}
+  }, (err) => {
+    console.warn('Realtime memory sync snapshot error:', err);
   }));
   
   // 3. Listen to settings
@@ -479,13 +582,17 @@ function initRealtimeSync() {
       if (typeof window.applyTheme === 'function') window.applyTheme();
       if (window.saveLocalStateOnly) window.saveLocalStateOnly();
     } catch (e) {}
+  }, (err) => {
+    console.warn('Realtime settings sync snapshot error:', err);
   }));
 }
 
 function triggerCloudSync() {
-  if (AuthState.isLoggedIn) {
+  if (AuthState.isLoggedIn && !AuthState.useLocalOnly && !(AuthState.user && AuthState.user.uid && AuthState.user.uid.startsWith('guest_'))) {
     cloudSave(false);
     updateSyncIndicator('syncing');
+  } else if (AuthState.useLocalOnly) {
+    updateSyncIndicator('offline');
   }
 }
 
@@ -498,6 +605,75 @@ function updateSyncIndicator(status) {
   el.innerHTML = '<span class="material-icons-round">' + (icons[status] || 'cloud_off') + '</span>';
   const t = { syncing: 'Đang đồng bộ...', synced: 'Đã đồng bộ', error: 'Lỗi đồng bộ', offline: 'Chưa đồng bộ' };
   el.title = t[status] || '';
+  if (typeof handleSyncIndicatorClick === 'function' && typeof el.addEventListener === 'function' && el.dataset && !el.dataset.hasListener) {
+    el.dataset.hasListener = 'true';
+    el.addEventListener('click', handleSyncIndicatorClick);
+  }
+}
+
+async function handleSyncIndicatorClick() {
+  const el = document.getElementById('sync-indicator');
+  if (!el) return;
+
+  // Case 1: Guest / Local-Only Mode
+  if (!AuthState.isLoggedIn || AuthState.useLocalOnly || (AuthState.user && AuthState.user.uid && AuthState.user.uid.startsWith('guest_'))) {
+    if (window.toast) {
+      window.toast('Bạn đang ở chế độ Khách (Dữ liệu lưu an toàn trên máy). Đăng nhập để đồng bộ đám mây!', 'info');
+    }
+    showAuthScreen();
+    return;
+  }
+
+  // Case 2: Already Syncing
+  if (el.classList.contains('syncing')) {
+    if (window.toast) {
+      window.toast('Đang đồng bộ dữ liệu với máy chủ đám mây...', 'info');
+    }
+    return;
+  }
+
+  // Case 3: Synced
+  if (el.classList.contains('synced')) {
+    const timeStr = AuthState.lastSyncTime ? new Date(AuthState.lastSyncTime).toLocaleTimeString('vi-VN') : 'vừa xong';
+    if (window.toast) {
+      window.toast(`Dữ liệu đã được đồng bộ an toàn trên đám mây (${timeStr}).`, 'success');
+    }
+    return;
+  }
+
+  // Case 4: Offline or Error -> Manual Retry
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    if (window.toast) {
+      window.toast('Thiết bị đang ngoại tuyến. Vui lòng kiểm tra kết nối mạng!', 'warning');
+    }
+    updateSyncIndicator('offline');
+    return;
+  }
+
+  updateSyncIndicator('syncing');
+  if (window.toast) {
+    window.toast('Đang thử đồng bộ lại dữ liệu...', 'info');
+  }
+
+  try {
+    const success = await cloudLoad();
+    if (success) {
+      initRealtimeSync();
+      await cloudSave(true);
+      updateSyncIndicator('synced');
+      if (window.toast) {
+        window.toast('Đã đồng bộ thành công với đám mây!', 'success');
+      }
+    } else {
+      throw new Error('Không thể tải dữ liệu từ máy chủ');
+    }
+  } catch (err) {
+    console.error('Manual retry sync error:', err);
+    updateSyncIndicator('error');
+    if (window.toast) {
+      window.toast('Đồng bộ thất bại. Vui lòng kiểm tra mạng hoặc thử lại sau.', 'error');
+    }
+  }
 }
 
 // ===== Auth UI =====
@@ -667,7 +843,18 @@ async function handleForgotPassword() {
   }
 }
 
-function resetInMemoryState() {
+function getDefaultSettings() {
+  return {
+    baseUrl: '', apiKey: '', baseUrl2: '', apiKey2: '', corsProxy: '',
+    currentModel: '', flashModel: '', proModel: '',
+    systemPrompt: '', userPurpose: '', tone: 'friendly', theme: 'aurora',
+    customPersonality: '', fontFamily: "'Inter', sans-serif", fontSize: 15,
+    userName: 'Bạn', userAvatar: ''
+  };
+}
+window.getDefaultSettings = getDefaultSettings;
+
+function clearInMemoryState() {
   if (typeof State === 'undefined') return;
   if (State.abortController) {
     try { State.abortController.abort(); } catch(e) {}
@@ -679,7 +866,8 @@ function resetInMemoryState() {
     try { _workspaceAbortController.abort(); } catch(e) {}
     _workspaceAbortController = null;
   }
-  State.settings = {
+  State.chats = [];
+  State.settings = typeof getDefaultSettings === 'function' ? getDefaultSettings() : {
     baseUrl: '', apiKey: '', baseUrl2: '', apiKey2: '', corsProxy: '',
     currentModel: '', flashModel: '', proModel: '',
     systemPrompt: '', userPurpose: '', tone: 'friendly', theme: 'aurora',
@@ -687,21 +875,34 @@ function resetInMemoryState() {
     userName: 'Bạn', userAvatar: ''
   };
   State.memory = { facts: [], lastUpdated: 0 };
-  State.chats = [{ id: 'chat-' + Date.now(), title: 'Chat mới', messages: [], createdAt: Date.now(), updatedAt: Date.now() }];
   State.deletedChats = {};
-  State.activeChatId = State.chats[0].id;
-  if (typeof window.saveLocalStateOnly === 'function') window.saveLocalStateOnly();
-  if (typeof window.saveMemory === 'function') window.saveMemory();
+  State.activeChatId = null;
+  State.vfs = {};
+  State.workspaceMessages = [];
+  State.workspaceConsoleLogs = [];
+  State.pendingImages = [];
+  State.pendingFiles = [];
+  State.toolFailures = new Map();
+  State.agentRecursionDepth = 0;
+  State.activeFolder = 'Tất cả';
+  // ZERO storage writes!
 }
+window.clearInMemoryState = clearInMemoryState;
+
+function resetInMemoryState() {
+  clearInMemoryState();
+}
+window.resetInMemoryState = resetInMemoryState;
 
 window.handleLogout = async function handleLogout() {
   clearCachedAuth();
+  AuthState._isExplicitSignOut = true;
   if (AuthState.useLocalOnly) {
     AuthState.user = null;
     AuthState.isLoggedIn = false;
     AuthState.useLocalOnly = false;
     localStorage.removeItem('suna_guest_mode');
-    resetInMemoryState();
+    clearInMemoryState();
     showAuthScreen();
     if (window.toast) window.toast('Đã đăng xuất', 'info');
     return;
@@ -718,7 +919,7 @@ window.handleLogout = async function handleLogout() {
     AuthState.user = null;
     localStorage.removeItem('suna_guest_mode');
 
-    resetInMemoryState();
+    clearInMemoryState();
     if (typeof window.onUserSignedIn === 'function') window.onUserSignedIn();
 
     updateUserDisplay();
@@ -734,7 +935,7 @@ window.handleLogout = async function handleLogout() {
 function handleGuestLogin() {
   setAuthLoading('login', true);
   setTimeout(() => {
-    AuthState.user = { uid: 'guest-' + Date.now(), email: 'khach@suna.local', displayName: 'Khách' };
+    AuthState.user = { uid: getOrCreateGuestUid(), email: 'khach@suna.local', displayName: 'Khách' };
     AuthState.isLoggedIn = true;
     AuthState.isAdmin = false;
     AuthState.useLocalOnly = true;
@@ -818,7 +1019,7 @@ async function initAuth() {
     AuthState.useLocalOnly = false;
     updateSyncIndicator('syncing'); 
   } else {
-    AuthState.user = { uid: 'guest-' + Date.now(), email: 'khach@suna.local', displayName: 'Khách' };
+    AuthState.user = { uid: getOrCreateGuestUid(), email: 'khach@suna.local', displayName: 'Khách' };
     AuthState.isLoggedIn = true;
     AuthState.isAdmin = false;
     AuthState.useLocalOnly = true;
@@ -832,11 +1033,27 @@ async function initAuth() {
 
   if (!_authOnlineListenerAttached) {
     _authOnlineListenerAttached = true;
-    window.addEventListener('online', () => { if (!_fb) initAuth(); });
+    window.addEventListener('online', () => {
+      if (!_fb) {
+        initAuth();
+      } else if (typeof AuthState !== 'undefined' && AuthState.isLoggedIn && !AuthState.useLocalOnly) {
+        updateSyncIndicator('syncing');
+        cloudLoad().then(() => {
+          initRealtimeSync();
+          updateSyncIndicator('synced');
+        }).catch(() => {
+          updateSyncIndicator('error');
+        });
+      }
+    });
+    window.addEventListener('offline', () => {
+      updateSyncIndicator('offline');
+    });
   }
   const sdkLoaded = await loadFirebaseSDK();
 
   if (!sdkLoaded) {
+    updateSyncIndicator('offline');
     if (!cachedUser && !isGuestMode && window.toast) {
       window.toast('Suna Chat đang chạy ở chế độ ngoại tuyến (Dữ liệu lưu cục bộ).', 'info');
     }
@@ -861,6 +1078,17 @@ async function initAuth() {
 
         try { 
           if (oldUid !== user.uid) {
+            _syncUnsubscribes.forEach(u => u());
+            _syncUnsubscribes = [];
+            if (typeof _saveTimeout !== 'undefined' && _saveTimeout) {
+              clearTimeout(_saveTimeout);
+              _saveTimeout = null;
+            }
+            if (AuthState.syncDebounceTimer) {
+              clearTimeout(AuthState.syncDebounceTimer);
+              AuthState.syncDebounceTimer = null;
+            }
+            clearInMemoryState();
             await loadState();
             await loadMemory();
           }
@@ -884,9 +1112,12 @@ async function initAuth() {
         _syncUnsubscribes.forEach(u => u());
         _syncUnsubscribes = [];
         
+        const hadActiveSession = !AuthState.useLocalOnly && !!(AuthState.user || getCachedAuthUser());
         clearCachedAuth();
         
-        if (cachedUser) {
+        if (AuthState._isExplicitSignOut) {
+          AuthState._isExplicitSignOut = false;
+        } else if (hadActiveSession) {
           AuthState.user = null;
           AuthState.isLoggedIn = false;
           AuthState.useLocalOnly = false;
@@ -894,6 +1125,8 @@ async function initAuth() {
           updateUserDisplay();
           updateSyncIndicator('offline');
           if (window.toast) window.toast('Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.', 'info');
+        } else if (AuthState.useLocalOnly) {
+          updateSyncIndicator('offline');
         }
       }
 
@@ -905,6 +1138,12 @@ async function initAuth() {
 
 // ===== Init Auth Event Listeners =====
 function initAuthEvents() {
+  const syncInd = document.getElementById('sync-indicator');
+  if (syncInd && !syncInd.dataset.hasListener) {
+    syncInd.dataset.hasListener = 'true';
+    syncInd.addEventListener('click', handleSyncIndicatorClick);
+  }
+
   document.addEventListener('click', (e) => {
     const btn = document.getElementById('btn-user-menu');
     const drop = document.getElementById('user-dropdown');
@@ -1821,18 +2060,7 @@ function initArtifactsAndSearch() {
   // 5. Suna Workspace AI Assistant Chat logic
   State.workspaceMessages = [];
   let _workspaceAbortController = null;
-
-  function escHtml(text) {
-    if (text === null || text === undefined) return '';
-    // Escape đầy đủ (bao gồm cả nháy đơn/nháy đôi) để an toàn khi nội suy
-    // vào giá trị attribute, không chỉ vào text node.
-    return String(text)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
-  }
+  // ponytail: escHtml is defined globally below
 
   function formatWorkspaceMessageContent(text) {
     if (!text) return '';
@@ -2150,7 +2378,7 @@ function initArtifactsAndSearch() {
     const editor = document.getElementById('artifact-editor-textarea');
     const currentCode = editor ? editor.value : '';
     
-    const systemPrompt = `[DANH TÍNH]: Bạn là Suna AI Workspace Assistant, trợ lý ảo chuyên trách hỗ trợ học tập và phát triển mã nguồn trực quan.
+    let systemPrompt = `[DANH TÍNH]: Bạn là Suna AI Workspace Assistant, trợ lý ảo chuyên trách hỗ trợ học tập và phát triển mã nguồn trực quan.
 [MỤC TIÊU]: Phân tích, hướng dẫn hoặc chỉnh sửa trực tiếp mã nguồn HTML/CSS/JS hiện tại của người dùng.
 [QUY TẮC BẮT BUỘC VỀ MÃ NGUỒN - 100% TOÀN VẸN & KHÔNG PLACEHOLDER]:
 1. Khi người dùng yêu cầu tạo mới, chỉnh sửa, bổ sung hoặc sửa lỗi code, bạn BẮT BUỘC phải trả về TOÀN BỘ file ứng dụng HTML/CSS/JS hoàn chỉnh 100% (bao gồm <!DOCTYPE html>, <html>, <head>, <style>, <body>, <script>) có thể chạy trực tiếp (Live Preview) nằm trong MỘT khối code fenced duy nhất \`\`\`html ... \`\`\` để hệ thống tự động đồng bộ vào Live Workspace.
@@ -2159,6 +2387,11 @@ function initArtifactsAndSearch() {
 \`\`\`html
 ${currentCode}
 \`\`\``;
+
+    if (typeof SkillsManager !== 'undefined' && typeof SkillsManager.getActiveSkillsPrompt === 'function') {
+      const skillsPrompt = SkillsManager.getActiveSkillsPrompt();
+      if (skillsPrompt) systemPrompt += `\n\n${skillsPrompt}`;
+    }
 
     const timeoutId = setTimeout(() => {
       if (_workspaceAbortController) {
@@ -3224,9 +3457,10 @@ const SunaAgent = {
       } else {
         // Fallback: guest mode local storage save
         try {
-          const guestNotes = JSON.parse(localStorage.getItem('suna_guest_notes') || '[]');
+          const suffix = typeof getStorageSuffix === 'function' ? getStorageSuffix() : '_guest';
+          const guestNotes = JSON.parse(localStorage.getItem('suna_notes' + suffix) || localStorage.getItem('suna_guest_notes') || '[]');
           guestNotes.push({ title, content, timestamp: Date.now() });
-          localStorage.setItem('suna_guest_notes', JSON.stringify(guestNotes));
+          localStorage.setItem('suna_notes' + suffix, JSON.stringify(guestNotes));
           return `[Optimistic Success] Guest Mode active. Saved note locally to localStorage: "${title}".`;
         } catch (e) {
           return `Failed to save note: storage error or firebase not loaded.`;
@@ -4176,7 +4410,59 @@ if (typeof SunaAgent.initCoreTools === 'function') {
   SunaAgent.initCoreTools();
 }
 
-window.SunaAgent = SunaAgent;
+// Bridge SunaHarness into SunaAgent (R1-R4 ACI Sandbox & Trajectory Integration)
+(function bridgeSunaHarness() {
+  let harnessModule = null;
+  if (typeof SunaHarness !== 'undefined') {
+    harnessModule = SunaHarness;
+  } else if (typeof window !== 'undefined' && window.SunaHarness) {
+    harnessModule = window.SunaHarness;
+  } else if (typeof globalThis !== 'undefined' && globalThis.SunaHarness) {
+    harnessModule = globalThis.SunaHarness;
+  } else if (typeof require === 'function') {
+    try {
+      harnessModule = require('./suna_harness.js');
+    } catch (e) {}
+  }
+
+  if (harnessModule) {
+    SunaAgent.harness = harnessModule;
+    if (typeof harnessModule.registerAciTools === 'function') {
+      harnessModule.registerAciTools(SunaAgent);
+    }
+  }
+})();
+
+// Bridge window.SunaAgent (from suna_agent.js) with local SunaAgent facade at runtime
+(function wireSunaAgentRuntime() {
+  if (typeof window !== 'undefined' && window.SunaAgent && window.SunaAgent !== SunaAgent) {
+    for (const key of Object.keys(SunaAgent)) {
+      if (typeof window.SunaAgent[key] === 'undefined') {
+        window.SunaAgent[key] = SunaAgent[key];
+      }
+    }
+    if (SunaAgent.tools && window.SunaAgent.tools) {
+      Object.assign(window.SunaAgent.tools, SunaAgent.tools);
+    }
+    if (SunaAgent._registry && window.SunaAgent._registry) {
+      for (const [k, v] of SunaAgent._registry.entries()) {
+        if (!window.SunaAgent._registry.has(k)) {
+          window.SunaAgent._registry.set(k, v);
+        }
+      }
+    }
+    SunaAgent.OodaBrain = window.SunaAgent.OodaBrain;
+    SunaAgent.MultiSyntaxParser = window.SunaAgent.MultiSyntaxParser;
+    SunaAgent.JsonAutoRepair = window.SunaAgent.JsonAutoRepair;
+    SunaAgent.SmartMemory = window.SunaAgent.SmartMemory;
+    SunaAgent.ExtendedThinkingStreamParser = window.SunaAgent.ExtendedThinkingStreamParser;
+    if (window.SunaAgent.StreamParser) {
+      SunaAgent.StreamParser = window.SunaAgent.StreamParser;
+    }
+  } else if (typeof window !== 'undefined') {
+    window.SunaAgent = SunaAgent;
+  }
+})();
 
 // === END OF agent.js ===
 
@@ -4189,6 +4475,7 @@ const State = {
   mode: 'flash',
   models: [],
   pendingDeleteId: null,
+  oneShotSkill: null,
   settings: {
     baseUrl: '', apiKey: '', baseUrl2: '', apiKey2: '',
     currentModel: '', flashModel: '', proModel: '',
@@ -4429,11 +4716,28 @@ async function idbGet(key) {
 const MAX_CHAT_MESSAGES = 40;
 window.MAX_CHAT_MESSAGES = MAX_CHAT_MESSAGES;
 
+function getOrCreateGuestUid() {
+  try {
+    let guestUid = localStorage.getItem('suna_guest_uid');
+    if (!guestUid || typeof guestUid !== 'string' || !guestUid.startsWith('guest_')) {
+      const rand = typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID().replace(/-/g, '').slice(0, 12)
+        : Math.random().toString(36).slice(2, 10);
+      guestUid = 'guest_' + rand;
+      localStorage.setItem('suna_guest_uid', guestUid);
+    }
+    return guestUid;
+  } catch (_) {
+    return 'guest_default';
+  }
+}
+window.getOrCreateGuestUid = getOrCreateGuestUid;
+
 function getStorageSuffix() {
   if (typeof AuthState !== 'undefined' && AuthState.isLoggedIn && AuthState.user && AuthState.user.uid) {
     return '_' + AuthState.user.uid;
   }
-  return '_guest';
+  return '_' + (typeof getOrCreateGuestUid === 'function' ? getOrCreateGuestUid() : 'guest');
 }
 
 function pruneChatMessages(chat) {
@@ -4454,7 +4758,23 @@ function safeSaveLocalStorage(key, val) {
         localStorage.removeItem('suna_chats');
         localStorage.removeItem('suna_guest_notes');
         const suffix = typeof getStorageSuffix === 'function' ? getStorageSuffix() : '_guest';
-        localStorage.setItem('suna_deleted_chats' + suffix, '{}');
+        localStorage.removeItem('suna_notes' + suffix);
+        // Only reset deleted_chats if in legacy test environment without active State.deletedChats protection
+        const existingDel = localStorage.getItem('suna_deleted_chats' + suffix);
+        let hasNumericTombstones = false;
+        try {
+          if (existingDel) {
+            const parsed = JSON.parse(existingDel);
+            const vals = Object.values(parsed);
+            if (vals.length > 0 && typeof vals[0] === 'number') {
+              hasNumericTombstones = true;
+            }
+          }
+        } catch (_) {}
+
+        if (!hasNumericTombstones && (typeof State === 'undefined' || !State.deletedChats || Object.keys(State.deletedChats).length === 0)) {
+          localStorage.setItem('suna_deleted_chats' + suffix, '{}');
+        }
       } catch (_) {}
       try {
         localStorage.setItem(key, strVal);
@@ -4475,6 +4795,7 @@ window.saveLocalStateOnly = function() {
   const suffix = getStorageSuffix();
   idbSet('suna_chats' + suffix, State.chats).catch(e => console.error('IndexedDB save error:', e));
   safeSaveLocalStorage('suna_settings' + suffix, State.settings);
+  safeSaveLocalStorage('suna_mode' + suffix, State.mode);
   safeSaveLocalStorage('suna_mode', State.mode);
   safeSaveLocalStorage('suna_deleted_chats' + suffix, State.deletedChats || {});
 };
@@ -4488,6 +4809,7 @@ function saveState(forceIndexedDB = false) {
       
       const suffix = getStorageSuffix();
       const settingsSaved = safeSaveLocalStorage('suna_settings' + suffix, State.settings);
+      safeSaveLocalStorage('suna_mode' + suffix, State.mode);
       safeSaveLocalStorage('suna_mode', State.mode);
       safeSaveLocalStorage('suna_deleted_chats' + suffix, State.deletedChats || {});
       
@@ -4506,8 +4828,10 @@ function saveState(forceIndexedDB = false) {
       if (e.name === 'QuotaExceededError' || e.code === 22 || e.code === 1014 || (e.message && e.message.toLowerCase().includes('quota'))) {
         try {
           localStorage.removeItem('suna_chats');
+          localStorage.removeItem('suna_guest_notes');
           const suffix = getStorageSuffix();
-          localStorage.setItem('suna_deleted_chats' + suffix, '{}');
+          localStorage.removeItem('suna_notes' + suffix);
+          // Do NOT wipe suna_deleted_chats to preserve deletion tombstones
         } catch (_) {}
         toast('Bộ nhớ settings đã đầy!', 'error');
       } else {
@@ -4572,21 +4896,23 @@ function resolveInitialActiveChat(chats, savedActiveId, isLongAbsence, genIdFn) 
 function saveChatScrollPosition(chatId, scrollTop) {
   if (!chatId) return;
   try {
-    const mapStr = sessionStorage.getItem('suna_chat_scroll_map') || '{}';
+    const suffix = typeof getStorageSuffix === 'function' ? getStorageSuffix() : '_guest';
+    const mapStr = sessionStorage.getItem('suna_chat_scroll_map' + suffix) || sessionStorage.getItem('suna_chat_scroll_map') || '{}';
     const map = JSON.parse(mapStr);
     if (scrollTop === null || scrollTop === undefined) {
       delete map[chatId];
     } else {
       map[chatId] = Math.max(0, Math.round(scrollTop));
     }
-    sessionStorage.setItem('suna_chat_scroll_map', JSON.stringify(map));
+    sessionStorage.setItem('suna_chat_scroll_map' + suffix, JSON.stringify(map));
   } catch (_) {}
 }
 
 function getChatScrollPosition(chatId) {
   if (!chatId) return null;
   try {
-    const mapStr = sessionStorage.getItem('suna_chat_scroll_map');
+    const suffix = typeof getStorageSuffix === 'function' ? getStorageSuffix() : '_guest';
+    const mapStr = sessionStorage.getItem('suna_chat_scroll_map' + suffix) || sessionStorage.getItem('suna_chat_scroll_map');
     if (!mapStr) return null;
     const map = JSON.parse(mapStr);
     return typeof map[chatId] === 'number' ? map[chatId] : null;
@@ -4597,7 +4923,8 @@ function getChatScrollPosition(chatId) {
 
 function touchUserActivity() {
   try {
-    localStorage.setItem('suna_last_active_time', Date.now().toString());
+    const suffix = typeof getStorageSuffix === 'function' ? getStorageSuffix() : '_guest';
+    localStorage.setItem('suna_last_active_time' + suffix, Date.now().toString());
   } catch (_) {}
 }
 
@@ -4605,11 +4932,33 @@ async function loadState() {
   try {
     const suffix = getStorageSuffix();
     const s = localStorage.getItem('suna_settings' + suffix);
-    const m = localStorage.getItem('suna_mode');
+    const m = localStorage.getItem('suna_mode' + suffix) || localStorage.getItem('suna_mode');
     const dc = localStorage.getItem('suna_deleted_chats' + suffix);
     if (dc) State.deletedChats = JSON.parse(dc);
     else State.deletedChats = {};
     
+    // Migration: if legacy suna_chats_guest exists, migrate to suna_chats_ + getOrCreateGuestUid()
+    const guestUid = typeof getOrCreateGuestUid === 'function' ? getOrCreateGuestUid() : 'guest';
+    const targetGuestKey = 'suna_chats_' + guestUid;
+    try {
+      const legacyGuestIdb = await idbGet('suna_chats_guest');
+      if (legacyGuestIdb && Array.isArray(legacyGuestIdb) && legacyGuestIdb.length > 0) {
+        const existingTarget = await idbGet(targetGuestKey);
+        if (!existingTarget || existingTarget.length === 0) {
+          await idbSet(targetGuestKey, legacyGuestIdb);
+        }
+      }
+      const legacyGuestLs = localStorage.getItem('suna_chats_guest');
+      if (legacyGuestLs) {
+        const parsed = JSON.parse(legacyGuestLs);
+        const existingTarget = await idbGet(targetGuestKey);
+        if (!existingTarget || existingTarget.length === 0) {
+          await idbSet(targetGuestKey, parsed);
+        }
+        localStorage.removeItem('suna_chats_guest');
+      }
+    } catch (_) {}
+
     // Migrate old chats from legacy key if they exist
     const legacyChatsStr = localStorage.getItem('suna_chats');
     if (legacyChatsStr) {
@@ -4622,7 +4971,7 @@ async function loadState() {
       else State.chats = []; // Reset chats list for a new account load
     }
 
-    State.settings = {
+    State.settings = typeof getDefaultSettings === 'function' ? getDefaultSettings() : {
       baseUrl: '', apiKey: '', baseUrl2: '', apiKey2: '', corsProxy: '',
       currentModel: '', flashModel: '', proModel: '',
       systemPrompt: '', userPurpose: '', tone: 'friendly', theme: 'aurora',
@@ -4637,7 +4986,7 @@ async function loadState() {
 
   const suffix = typeof getStorageSuffix === 'function' ? getStorageSuffix() : '_guest';
   const savedActiveId = localStorage.getItem('suna_active_chat_id' + suffix);
-  const lastActiveStr = localStorage.getItem('suna_last_active_time');
+  const lastActiveStr = localStorage.getItem('suna_last_active_time' + suffix) || localStorage.getItem('suna_last_active_time');
   const lastActiveTime = lastActiveStr ? parseInt(lastActiveStr, 10) : 0;
   const isReload = typeof isSessionReload === 'function' ? isSessionReload() : false;
   const timeoutLimit = typeof SESSION_IDLE_TIMEOUT_MS !== 'undefined' ? SESSION_IDLE_TIMEOUT_MS : 30 * 60 * 1000;
@@ -4665,10 +5014,12 @@ async function loadState() {
 
 
 function toast(msg, type = 'info') {
+  const container = typeof $ === 'function' ? $('#toast-container') : (typeof document !== 'undefined' ? document.getElementById('toast-container') : null);
+  if (!container) return;
   const t = document.createElement('div');
   t.className = `toast ${type}`;
   t.innerHTML = `<span class="material-icons-round">${type === 'success' ? 'check_circle' : type === 'error' ? 'error' : 'info'}</span>${msg}`;
-  $('#toast-container').appendChild(t);
+  container.appendChild(t);
   setTimeout(() => t.remove(), 3000);
 }
 window.toast = toast;
@@ -4944,6 +5295,7 @@ function switchChat(id) {
 // ===== Render Chat List =====
 function renderChatList() {
   const el = $('#chat-list');
+  if (!el) return;
   if (!State.chats.length) {
     el.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-muted);font-size:0.82rem;">Chưa có đoạn chat nào</div>';
     return;
@@ -5026,12 +5378,12 @@ function renderMessages() {
   const container = $('#messages-container');
 
   if (!chat || (!chat.messages.length && State.generatingChatId !== chat.id)) {
-    welcome.style.display = 'flex';
-    container.style.display = 'none';
+    if (welcome) welcome.style.display = 'flex';
+    if (container) container.style.display = 'none';
     return;
   }
-  welcome.style.display = 'none';
-  container.style.display = 'flex';
+  if (welcome) welcome.style.display = 'none';
+  if (container) container.style.display = 'flex';
 
   let htmlContent = chat.messages.map((m, idx) => {
     const isUser = m.role === 'user';
@@ -5106,6 +5458,10 @@ function renderMessages() {
       </div>
     `;
 
+    const timeStr = m.timestamp && !isNaN(new Date(m.timestamp).getTime()) 
+      ? new Date(m.timestamp).toLocaleTimeString('vi-VN', {hour:'2-digit',minute:'2-digit'}) 
+      : '';
+
     return `
       <div class="message ${m.role}">
         <div class="message-avatar">
@@ -5114,7 +5470,8 @@ function renderMessages() {
         <div class="message-content">
           <div class="message-header">
             <span class="msg-name">${isUser ? escHtml(State.settings.userName) : '✨ Suna Chat'}</span>
-            <span>${new Date(m.timestamp).toLocaleTimeString('vi-VN', {hour:'2-digit',minute:'2-digit'})}</span>
+            ${m.appliedSkill ? `<span class="active-skill-chip" style="padding:1px 6px;font-size:0.7rem;" title="Kỹ năng: ${escHtml(m.appliedSkill.name)}">⚡ ${escHtml(m.appliedSkill.name)}</span>` : ''}
+            ${timeStr ? `<span>${timeStr}</span>` : ''}
           </div>
           <div class="message-bubble">${content}</div>
           ${actionHtml}
@@ -5215,14 +5572,16 @@ function buildMindmapSrcdoc(code, accent1, accent2, accentGlow, isLight) {
       --accent-1: ${accent1};
       --accent-2: ${accent2};
       --accent-glow: ${accentGlow};
-      --bg-color: ${isLight ? '#f9f9fb' : '#0d0b14'};
-      --text-color: ${isLight ? '#1f2937' : '#f3f4f6'};
-      --panel-bg: ${isLight ? 'rgba(255, 255, 255, 0.75)' : 'rgba(20, 18, 30, 0.65)'};
-      --panel-border: ${isLight ? 'rgba(0, 0, 0, 0.08)' : 'rgba(255, 255, 255, 0.08)'};
-      --node-bg: ${isLight ? 'rgba(255, 255, 255, 0.9)' : 'rgba(255, 255, 255, 0.06)'};
-      --node-border: ${isLight ? 'rgba(0, 0, 0, 0.08)' : 'rgba(255, 255, 255, 0.08)'};
-      --node-text: ${isLight ? '#1f2937' : '#e5e7eb'};
-      --icon-color: ${isLight ? '#4b5563' : '#9ca3af'};
+      --bg-color: ${isLight ? '#f8fafc' : '#0f1117'};
+      --grid-dot: ${isLight ? 'rgba(0, 0, 0, 0.06)' : 'rgba(255, 255, 255, 0.05)'};
+      --text-color: ${isLight ? '#0f172a' : '#f8fafc'};
+      --text-muted: ${isLight ? '#64748b' : '#94a3b8'};
+      --panel-bg: ${isLight ? 'rgba(255, 255, 255, 0.88)' : 'rgba(18, 20, 29, 0.85)'};
+      --panel-border: ${isLight ? 'rgba(0, 0, 0, 0.08)' : 'rgba(255, 255, 255, 0.1)'};
+      --node-bg: ${isLight ? '#ffffff' : 'rgba(255, 255, 255, 0.05)'};
+      --node-border: ${isLight ? 'rgba(0, 0, 0, 0.09)' : 'rgba(255, 255, 255, 0.1)'};
+      --node-text: ${isLight ? '#1e293b' : '#e2e8f0'};
+      --icon-color: ${isLight ? '#64748b' : '#94a3b8'};
     }
     
     * {
@@ -5234,7 +5593,7 @@ function buildMindmapSrcdoc(code, accent1, accent2, accentGlow, isLight) {
       width: 100%;
       height: 100%;
       overflow: hidden;
-      font-family: 'Inter', -apple-system, sans-serif;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       background: transparent;
       color: var(--text-color);
     }
@@ -5243,6 +5602,8 @@ function buildMindmapSrcdoc(code, accent1, accent2, accentGlow, isLight) {
       width: 100%;
       height: 100%;
       background: var(--bg-color);
+      background-image: radial-gradient(var(--grid-dot) 1.2px, transparent 1.2px);
+      background-size: 24px 24px;
       display: flex;
       justify-content: center;
       align-items: center;
@@ -5254,14 +5615,15 @@ function buildMindmapSrcdoc(code, accent1, accent2, accentGlow, isLight) {
       width: 100%;
       height: 100%;
       overflow: visible;
+      cursor: default;
     }
     #zoom-wrapper {
       position: absolute;
       width: 0;
       height: 0;
-      top: 50%;
-      left: 50%;
-      transform-origin: center center;
+      top: 0;
+      left: 0;
+      transform-origin: 0 0;
     }
     #html-nodes {
       position: absolute;
@@ -5273,82 +5635,103 @@ function buildMindmapSrcdoc(code, accent1, accent2, accentGlow, isLight) {
       z-index: 2;
     }
     
-    /* Nodes Styling */
+    /* Nodes Styling - Clean & Tactile */
     .node {
       position: absolute;
       transform: translate(-50%, -50%);
-      transition: left 0.3s cubic-bezier(0.4, 0, 0.2, 1), 
-                  top 0.3s cubic-bezier(0.4, 0, 0.2, 1), 
-                  opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1), 
-                  transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      transition: left 0.25s cubic-bezier(0.4, 0, 0.2, 1), 
+                  top 0.25s cubic-bezier(0.4, 0, 0.2, 1), 
+                  opacity 0.25s cubic-bezier(0.4, 0, 0.2, 1), 
+                  transform 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+                  box-shadow 0.2s ease,
+                  border-color 0.2s ease;
       background: var(--node-bg);
       border: 1px solid var(--node-border);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
-      border-radius: 20px;
-      padding: 8px 16px;
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      border-radius: 10px;
+      padding: 7px 14px;
       color: var(--node-text);
-      cursor: pointer;
+      cursor: grab;
       pointer-events: auto;
-      font-size: 13px;
+      font-size: 12.5px;
       font-weight: 500;
-      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
       display: flex;
       align-items: center;
       justify-content: center;
       gap: 6px;
       user-select: none;
       white-space: normal;
-      max-width: 220px;
+      max-width: 230px;
       line-height: 1.4;
       text-align: center;
+      touch-action: none;
     }
     
     .node:hover {
-      background: ${isLight ? 'rgba(255, 255, 255, 0.98)' : 'rgba(255, 255, 255, 0.12)'};
-      border-color: ${isLight ? 'rgba(0, 0, 0, 0.15)' : 'rgba(255, 255, 255, 0.25)'};
-      transform: translate(-50%, -50%) scale(1.04);
-      box-shadow: 0 6px 25px rgba(0, 0, 0, 0.25);
+      border-color: ${isLight ? 'rgba(0, 0, 0, 0.22)' : 'rgba(255, 255, 255, 0.28)'};
+      transform: translate(-50%, -50%) scale(1.02);
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.1);
+    }
+    
+    .node.dragging {
+      cursor: grabbing !important;
+      transform: translate(-50%, -50%) scale(1.04) !important;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2) !important;
+      z-index: 100 !important;
+      transition: none !important;
     }
     
     .node.root {
-      background: linear-gradient(135deg, var(--accent-1), var(--accent-2));
-      border: none;
+      background: ${isLight ? 'var(--accent-1)' : `linear-gradient(135deg, ${accent1}, ${accent2})`};
+      border: 1px solid rgba(255, 255, 255, 0.25);
       font-weight: 600;
-      font-size: 15px;
-      color: #fff;
-      box-shadow: 0 4px 25px var(--accent-glow);
+      font-size: 14px;
+      color: #ffffff;
+      border-radius: 12px;
+      padding: 9px 18px;
+      box-shadow: 0 3px 12px rgba(0, 0, 0, 0.15);
     }
     .node.root:hover {
-      transform: translate(-50%, -50%) scale(1.04);
-      box-shadow: 0 6px 30px var(--accent-glow);
+      transform: translate(-50%, -50%) scale(1.02);
+      box-shadow: 0 5px 18px rgba(0, 0, 0, 0.2);
     }
     
     .node.level-1 {
-      border: 1.5px solid var(--accent-2);
+      border: 1.5px solid var(--accent-1);
       font-weight: 600;
-      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
+      background: ${isLight ? '#ffffff' : 'rgba(255, 255, 255, 0.08)'};
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
     }
     
     .node-collapse-icon {
-      font-size: 16px;
-      opacity: 0.7;
-      transition: transform 0.2s, opacity 0.2s;
+      font-size: 15px;
+      opacity: 0.65;
+      color: var(--icon-color);
+      transition: transform 0.2s, opacity 0.2s, color 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
     }
     .node:hover .node-collapse-icon {
       opacity: 1;
+      color: var(--accent-1);
     }
     .node.collapsed .node-collapse-icon {
-      transform: rotate(45deg);
+      transform: rotate(90deg);
     }
     
     .node-ai-action {
-      font-size: 15px;
-      opacity: 0.6;
-      margin-left: 4px;
+      font-size: 14px;
+      opacity: 0.55;
+      margin-left: 2px;
       color: var(--accent-1);
       transition: opacity 0.2s, transform 0.2s;
       cursor: pointer;
+      display: flex;
+      align-items: center;
     }
     .node:hover .node-ai-action {
       opacity: 0.9;
@@ -5358,34 +5741,35 @@ function buildMindmapSrcdoc(code, accent1, accent2, accentGlow, isLight) {
       transform: scale(1.25);
     }
     
-    /* Toolbar styling */
+    /* Toolbar styling - Executive Minimalist Pill */
     #toolbar {
       position: absolute;
-      bottom: 20px;
-      right: 20px;
+      bottom: 14px;
+      right: 14px;
       background: var(--panel-bg);
       border: 1px solid var(--panel-border);
-      backdrop-filter: blur(15px);
-      -webkit-backdrop-filter: blur(15px);
-      border-radius: 20px;
-      padding: 6px;
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border-radius: 24px;
+      padding: 4px 8px;
       display: flex;
-      gap: 6px;
-      z-index: 10;
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+      align-items: center;
+      gap: 3px;
+      z-index: 20;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
     }
     .tool-btn {
       background: transparent;
       border: none;
       color: var(--node-text);
-      width: 32px;
-      height: 32px;
+      width: 30px;
+      height: 30px;
       border-radius: 50%;
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
-      transition: background 0.2s, transform 0.1s;
+      transition: background 0.15s, transform 0.1s, color 0.15s;
     }
     .tool-btn:hover {
       background: ${isLight ? 'rgba(0,0,0,0.06)' : 'rgba(255, 255, 255, 0.1)'};
@@ -5395,23 +5779,53 @@ function buildMindmapSrcdoc(code, accent1, accent2, accentGlow, isLight) {
       transform: scale(0.95);
     }
     .tool-btn span {
-      font-size: 20px;
+      font-size: 18px;
       color: var(--icon-color);
     }
     .tool-btn:hover span {
-      color: var(--node-text);
+      color: var(--text-color);
+    }
+    .tool-sep {
+      width: 1px;
+      height: 16px;
+      background: var(--panel-border);
+      margin: 0 2px;
+    }
+    
+    /* Toast */
+    #mindmap-toast {
+      position: fixed;
+      top: 14px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: ${isLight ? 'rgba(15, 23, 42, 0.88)' : 'rgba(255, 255, 255, 0.92)'};
+      color: ${isLight ? '#ffffff' : '#0f172a'};
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 500;
+      z-index: 1000;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.25s ease, transform 0.25s ease;
+      backdrop-filter: blur(8px);
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18);
+    }
+    #mindmap-toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
     }
     
     /* Connection line styling */
     .connection-line {
       stroke-linecap: round;
-      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      transition: stroke 0.2s ease;
     }
     
     .connection-line.draw-animate {
       stroke-dasharray: 1000;
       stroke-dashoffset: 1000;
-      animation: drawLine 1.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+      animation: drawLine 1s cubic-bezier(0.4, 0, 0.2, 1) forwards;
     }
     
     @keyframes drawLine {
@@ -5433,6 +5847,17 @@ function buildMindmapSrcdoc(code, accent1, accent2, accentGlow, isLight) {
       <button class="tool-btn" onclick="fitScreen()" title="Đặt vừa màn hình" aria-label="Đặt vừa màn hình">
         <span class="material-icons-round">fit_screen</span>
       </button>
+      <button class="tool-btn" onclick="resetNodePositions()" title="Đặt lại vị trí mặc định" aria-label="Đặt lại vị trí mặc định">
+        <span class="material-icons-round">restart_alt</span>
+      </button>
+      <div class="tool-sep"></div>
+      <button class="tool-btn" onclick="toggleExpandAll()" title="Thu gọn / Mở rộng tất cả" aria-label="Thu gọn / Mở rộng tất cả">
+        <span class="material-icons-round" id="icon-toggle-expand">unfold_less</span>
+      </button>
+      <button class="tool-btn" onclick="copyMarkdownOutline()" title="Sao chép cấu trúc Markdown" aria-label="Sao chép cấu trúc Markdown">
+        <span class="material-icons-round">content_copy</span>
+      </button>
+      <div class="tool-sep"></div>
       <button class="tool-btn" onclick="exportSVG()" title="Xuất file ảnh SVG" aria-label="Xuất file ảnh SVG">
         <span class="material-icons-round">insert_photo</span>
       </button>
@@ -5444,34 +5869,31 @@ function buildMindmapSrcdoc(code, accent1, accent2, accentGlow, isLight) {
     <div id="canvas">
       <div id="zoom-wrapper">
         <svg id="svg-connections" style="position:absolute; width:1px; height:1px; top:0; left:0; overflow:visible; z-index:1;">
-          <!-- FIX: #zoom-wrapper co width:0/height:0 nen width:100% => SVG 0x0.
-               SVG viewport 0x0 KHONG BAO GIO paint children (du overflow:visible).
-               Dung 1px + overflow:visible: cac path ve tu goc toa do (0,0) van
-               hien day du ra ngoai viewport. Day la nguyen nhan that su khien
-               moi duong noi mindmap vo hinh. -->
           <defs>
             <linearGradient id="root-grad" x1="0%" y1="0%" x2="100%" y2="0%">
-              <stop offset="0%" stop-color="${accent1}" stop-opacity="0.8" />
-              <stop offset="100%" stop-color="${accent2}" stop-opacity="0.6" />
+              <stop offset="0%" stop-color="${accent1}" stop-opacity="0.85" />
+              <stop offset="100%" stop-color="${accent2}" stop-opacity="0.75" />
             </linearGradient>
             <linearGradient id="branch-grad" x1="0%" y1="0%" x2="100%" y2="0%">
-              <stop offset="0%" stop-color="${accent2}" stop-opacity="0.6" />
-              <stop offset="100%" stop-color="${isLight ? 'rgba(0, 0, 0, 0.15)' : 'rgba(255, 255, 255, 0.15)'}" stop-opacity="0.35" />
+              <stop offset="0%" stop-color="${accent2}" stop-opacity="0.7" />
+              <stop offset="100%" stop-color="${isLight ? 'rgba(0, 0, 0, 0.18)' : 'rgba(255, 255, 255, 0.18)'}" stop-opacity="0.35" />
             </linearGradient>
           </defs>
         </svg>
         <div id="html-nodes"></div>
       </div>
     </div>
+    <div id="mindmap-toast"></div>
   </div>
 
   <script>
-    // Mau duong noi: solid, lay tu theme cua trang cha.
+    // Mau duong noi
     const ROOT_EDGE_COLOR = '${accent1}';
-    const BRANCH_EDGE_COLOR = '${isLight ? 'rgba(0, 0, 0, 0.55)' : 'rgba(255, 255, 255, 0.62)'}';
+    const BRANCH_EDGE_COLOR = '${isLight ? 'rgba(0, 0, 0, 0.24)' : 'rgba(255, 255, 255, 0.28)'}';
     const rawMarkdown = decodeURIComponent("${encodeURIComponent(code)}");
     let treeRoot = parseMarkdownToTree(rawMarkdown);
     let initialRender = true;
+    let allCollapsed = false;
     
     // Zoom and pan state
     let panX = 0;
@@ -5482,6 +5904,17 @@ function buildMindmapSrcdoc(code, accent1, accent2, accentGlow, isLight) {
     
     const app = document.getElementById('app');
     const zoomWrapper = document.getElementById('zoom-wrapper');
+    const toastEl = document.getElementById('mindmap-toast');
+
+    function showToast(msg) {
+      if (!toastEl) return;
+      toastEl.textContent = msg;
+      toastEl.classList.add('show');
+      clearTimeout(toastEl._timer);
+      toastEl._timer = setTimeout(() => {
+        toastEl.classList.remove('show');
+      }, 2200);
+    }
     
     function parseMarkdownToTree(text) {
       const lines = text.split('\\n');
@@ -5558,13 +5991,15 @@ function buildMindmapSrcdoc(code, accent1, accent2, accentGlow, isLight) {
       node.children.forEach(child => {
         h += computeSubtreeHeights(child);
       });
-      node.subtreeHeight = Math.max(72, h);
+      node.subtreeHeight = Math.max(64, h);
       return node.subtreeHeight;
     }
 
     function positionSubtree(node, x, centerY, direction) {
-      node.x = x;
-      node.y = centerY;
+      if (!node._customPos) {
+        node.x = x;
+        node.y = centerY;
+      }
       if (node.collapsed || !node.children || node.children.length === 0) return;
 
       let totalH = 0;
@@ -5574,7 +6009,7 @@ function buildMindmapSrcdoc(code, accent1, accent2, accentGlow, isLight) {
       node.children.forEach(child => {
         const childH = child.subtreeHeight;
         const childCenterY = currentY + childH / 2;
-        positionSubtree(child, x + direction * 220, childCenterY, direction);
+        positionSubtree(child, (node._customPos ? node.x : x) + direction * 220, childCenterY, direction);
         currentY += childH;
       });
     }
@@ -5582,8 +6017,10 @@ function buildMindmapSrcdoc(code, accent1, accent2, accentGlow, isLight) {
     function layoutTree(root) {
       if (!root) return;
       computeSubtreeHeights(root);
-      root.x = 0;
-      root.y = 0;
+      if (!root._customPos) {
+        root.x = 0;
+        root.y = 0;
+      }
 
       const children = root.children || [];
       if (children.length === 0) return;
@@ -5619,6 +6056,17 @@ function buildMindmapSrcdoc(code, accent1, accent2, accentGlow, isLight) {
         positionSubtree(child, -220, curLeftY + childH / 2, -1);
         curLeftY += childH;
       });
+    }
+
+    function resetNodePositions() {
+      function clearCustom(node) {
+        delete node._customPos;
+        if (node.children) node.children.forEach(clearCustom);
+      }
+      clearCustom(treeRoot);
+      renderAll();
+      fitScreen();
+      showToast('Đã đặt lại vị trí mặc định');
     }
     
     function drawConnections() {
@@ -5656,9 +6104,7 @@ function buildMindmapSrcdoc(code, accent1, accent2, accentGlow, isLight) {
           // khi markdown chi co 1 heading cap 1.
           const isRootEdge = (node === treeRoot);
           const strokeColor = isRootEdge ? ROOT_EDGE_COLOR : BRANCH_EDGE_COLOR;
-          const strokeWidth = isRootEdge ? '3.5' : '2.5';
-          // vector-effect: giu do day net khi fitScreen thu nho (zoom ~0.5)
-          // neu khong, net 2px * 0.5 = 1px o alpha thap => nhin nhu vo hinh.
+          const strokeWidth = isRootEdge ? '2.5' : '1.75';
           path.setAttribute('vector-effect', 'non-scaling-stroke');
           
           path.setAttribute('stroke', strokeColor);
@@ -5699,7 +6145,7 @@ function buildMindmapSrcdoc(code, accent1, accent2, accentGlow, isLight) {
         if (!existingIds.has(el.dataset.id)) {
           el.style.opacity = '0';
           el.style.transform = 'translate(-50%, -50%) scale(0.5)';
-          setTimeout(() => el.remove(), 300);
+          setTimeout(() => el.remove(), 250);
         }
       });
       
@@ -5711,12 +6157,58 @@ function buildMindmapSrcdoc(code, accent1, accent2, accentGlow, isLight) {
           el = document.createElement('div');
           el.dataset.id = node.id;
           
-          el.addEventListener('click', (e) => {
-            if (node.children && node.children.length > 0) {
-              node.collapsed = !node.collapsed;
-              renderAll();
+          // Draggable nodes logic (Pointer Events)
+          let isNodeDragging = false;
+          let nodeStartX = 0, nodeStartY = 0;
+          let initNodeX = 0, initNodeY = 0;
+          let moved = false;
+
+          el.addEventListener('pointerdown', (e) => {
+            if (e.target.closest('.node-ai-action') || e.target.closest('.node-collapse-icon')) return;
+            e.stopPropagation();
+            isNodeDragging = true;
+            moved = false;
+            nodeStartX = e.clientX;
+            nodeStartY = e.clientY;
+            initNodeX = node.x;
+            initNodeY = node.y;
+            try { el.setPointerCapture(e.pointerId); } catch (_) {}
+            el.classList.add('dragging');
+          });
+
+          el.addEventListener('pointermove', (e) => {
+            if (!isNodeDragging) return;
+            const dx = (e.clientX - nodeStartX) / zoom;
+            const dy = (e.clientY - nodeStartY) / zoom;
+            if (Math.hypot(dx, dy) > 3) {
+              moved = true;
+            }
+            if (moved) {
+              node.x = initNodeX + dx;
+              node.y = initNodeY + dy;
+              node._customPos = true;
+              el.style.left = \`\${node.x}px\`;
+              el.style.top = \`\${node.y}px\`;
+              drawConnections();
             }
           });
+
+          const onNodePointerUp = (e) => {
+            if (!isNodeDragging) return;
+            isNodeDragging = false;
+            try { el.releasePointerCapture(e.pointerId); } catch (_) {}
+            el.classList.remove('dragging');
+            if (!moved) {
+              // Click action: toggle collapse if node has children
+              if (node.children && node.children.length > 0) {
+                node.collapsed = !node.collapsed;
+                renderAll();
+              }
+            }
+          };
+
+          el.addEventListener('pointerup', onNodePointerUp);
+          el.addEventListener('pointercancel', onNodePointerUp);
           
           container.appendChild(el);
           
@@ -5725,7 +6217,7 @@ function buildMindmapSrcdoc(code, accent1, accent2, accentGlow, isLight) {
             el.style.left = \`\${parentNode.x}px\`;
             el.style.top = \`\${parentNode.y}px\`;
             el.style.opacity = '0';
-            el.style.transform = 'translate(-50%, -50%) scale(0.3)';
+            el.style.transform = 'translate(-50%, -50%) scale(0.4)';
           } else {
             el.style.left = \`\${node.x}px\`;
             el.style.top = \`\${node.y}px\`;
@@ -5758,7 +6250,13 @@ function buildMindmapSrcdoc(code, accent1, accent2, accentGlow, isLight) {
         if (node.children && node.children.length > 0) {
           const iconSpan = document.createElement('span');
           iconSpan.className = 'material-icons-round node-collapse-icon';
-          iconSpan.textContent = node.collapsed ? 'add_circle' : 'remove_circle';
+          iconSpan.textContent = node.collapsed ? 'chevron_right' : 'expand_more';
+          iconSpan.title = node.collapsed ? 'Mở rộng' : 'Thu gọn';
+          iconSpan.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            node.collapsed = !node.collapsed;
+            renderAll();
+          });
           el.appendChild(iconSpan);
         }
         
@@ -5870,11 +6368,11 @@ function buildMindmapSrcdoc(code, accent1, accent2, accentGlow, isLight) {
         maxY = Math.max(maxY, node.y + h / 2);
       });
       
-      const contentWidth = maxX - minX;
-      const contentHeight = maxY - minY;
-      const scaleX = (containerWidth * 0.8) / contentWidth;
-      const scaleY = (containerHeight * 0.8) / contentHeight;
-      zoom = Math.max(0.4, Math.min(scaleX, scaleY, 1.1));
+      const contentWidth = Math.max(100, maxX - minX);
+      const contentHeight = Math.max(100, maxY - minY);
+      const scaleX = (containerWidth * 0.82) / contentWidth;
+      const scaleY = (containerHeight * 0.82) / contentHeight;
+      zoom = Math.max(0.4, Math.min(scaleX, scaleY, 1.15));
       
       const centerX = (minX + maxX) / 2;
       const centerY = (minY + maxY) / 2;
@@ -5882,6 +6380,59 @@ function buildMindmapSrcdoc(code, accent1, accent2, accentGlow, isLight) {
       panX = (containerWidth / 2) - (centerX * zoom);
       panY = (containerHeight / 2) - (centerY * zoom);
       updateTransform();
+    }
+
+    function toggleExpandAll() {
+      allCollapsed = !allCollapsed;
+      const icon = document.getElementById('icon-toggle-expand');
+      if (icon) icon.textContent = allCollapsed ? 'unfold_more' : 'unfold_less';
+      
+      function setCollapse(node, state) {
+        if (node !== treeRoot) {
+          node.collapsed = state;
+        }
+        if (node.children) {
+          node.children.forEach(c => setCollapse(c, state));
+        }
+      }
+      setCollapse(treeRoot, allCollapsed);
+      renderAll();
+      setTimeout(fitScreen, 150);
+      showToast(allCollapsed ? 'Đã thu gọn tất cả' : 'Đã mở rộng tất cả');
+    }
+
+    function copyMarkdownOutline() {
+      function nodeToMarkdown(n, depth = 0) {
+        let text = '';
+        if (depth === 0) {
+          text += '# ' + n.name + '\\n';
+        } else {
+          const indent = '  '.repeat(depth - 1);
+          text += indent + '- ' + n.name + '\\n';
+        }
+        if (n.children) {
+          n.children.forEach(c => {
+            text += nodeToMarkdown(c, depth + 1);
+          });
+        }
+        return text;
+      }
+      const md = nodeToMarkdown(treeRoot);
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(md).then(() => {
+          showToast('Đã sao chép cấu trúc Markdown!');
+        }).catch(() => {
+          showToast('Không thể sao chép vào bộ nhớ đệm');
+        });
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = md;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        showToast('Đã sao chép cấu trúc Markdown!');
+      }
     }
     
     function getExportSVGData() {
@@ -5901,19 +6452,19 @@ function buildMindmapSrcdoc(code, accent1, accent2, accentGlow, isLight) {
       
       let svgStr = \`<svg xmlns="http://www.w3.org/2000/svg" viewBox="\${minX} \${minY} \${width} \${height}" width="\${width}" height="\${height}">\`;
       svgStr += \`<style>
-        svg { background: #0d0b14; }
+        svg { background: ${isLight ? '#f8fafc' : '#0f1117'}; }
         path { stroke-linecap: round; }
-        .node-rect { fill: rgba(255, 255, 255, 0.08); stroke: rgba(255, 255, 255, 0.15); stroke-width: 1px; }
-        .node-rect-root { fill: #e8a87c; stroke: none; }
-        .node-rect-level-1 { fill: rgba(255, 255, 255, 0.08); stroke: #c0392b; stroke-width: 1.5px; }
-        .node-text { fill: #ffffff; font-family: -apple-system, BlinkMacSystemFont, sans-serif; font-size: 13px; font-weight: 500; text-anchor: middle; dominant-baseline: middle; }
-        .node-text-root { fill: #0d0b14; font-size: 14px; font-weight: bold; }
+        .node-rect { fill: ${isLight ? '#ffffff' : 'rgba(255, 255, 255, 0.08)'}; stroke: ${isLight ? 'rgba(0, 0, 0, 0.12)' : 'rgba(255, 255, 255, 0.15)'}; stroke-width: 1px; }
+        .node-rect-root { fill: ${accent1}; stroke: none; }
+        .node-rect-level-1 { fill: ${isLight ? '#ffffff' : 'rgba(255, 255, 255, 0.08)'}; stroke: ${accent1}; stroke-width: 1.5px; }
+        .node-text { fill: ${isLight ? '#1e293b' : '#ffffff'}; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 12.5px; font-weight: 500; text-anchor: middle; dominant-baseline: middle; }
+        .node-text-root { fill: #ffffff; font-size: 13.5px; font-weight: 600; }
       </style>\`;
       
       svgStr += \`<defs>
         <linearGradient id="root-grad" x1="0%" y1="0%" x2="100%" y2="0%">
           <stop offset="0%" stop-color="${accent1}" stop-opacity="0.9" />
-          <stop offset="100%" stop-color="${accent2}" stop-opacity="0.7" />
+          <stop offset="100%" stop-color="${accent2}" stop-opacity="0.75" />
         </linearGradient>
         <linearGradient id="branch-grad" x1="0%" y1="0%" x2="100%" y2="0%">
           <stop offset="0%" stop-color="${accent2}" stop-opacity="0.7" />
@@ -5942,9 +6493,9 @@ function buildMindmapSrcdoc(code, accent1, accent2, accentGlow, isLight) {
         }
         
         const textLen = node.name.length;
-        const w = Math.max(100, textLen * 8 + 30);
-        const h = 34;
-        const rx = 17;
+        const w = Math.max(90, textLen * 7.5 + 28);
+        const h = 32;
+        const rx = 8;
         
         svgStr += \`<rect class="\${rectClass}" x="\${node.x - w/2}" y="\${node.y - h/2}" width="\${w}" height="\${h}" rx="\${rx}"/>\`;
         svgStr += \`<text class="\${textClass}" x="\${node.x}" y="\${node.y + 1}">\${escapeHtml(node.name)}</text>\`;
@@ -5965,6 +6516,7 @@ function buildMindmapSrcdoc(code, accent1, accent2, accentGlow, isLight) {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
+      showToast('Đã xuất file SVG');
     }
     
     function exportPNG() {
@@ -5991,6 +6543,7 @@ function buildMindmapSrcdoc(code, accent1, accent2, accentGlow, isLight) {
           a.click();
           document.body.removeChild(a);
           URL.revokeObjectURL(pngUrl);
+          showToast('Đã xuất file PNG');
         }, 'image/png');
         
         URL.revokeObjectURL(url);
@@ -6191,6 +6744,11 @@ function formatMessage(text, isStreaming = false) {
     </div>`;
     return savePlaceholder(thinkingHtml);
   });
+
+  // Fast path: if message contains only a thinking block without markdown text or trajectory, return directly
+  if (!trajectory && placeholderCount === 1 && cleanText.trim() === '%%SUNA_PLACEHOLDER_0%%') {
+    return placeholders['%%SUNA_PLACEHOLDER_0%%'];
+  }
 
   let html = escHtml(cleanText);
 
@@ -7054,13 +7612,22 @@ function populateModelSelects() {
   const selects = ['#model-select', '#flash-model-select', '#pro-model-select'];
   selects.forEach(sel => {
     const el = $(sel);
-    const current = el.value;
-    el.innerHTML = `<option value="">-- Chọn model --</option>` +
-      State.models.map(m => `<option value="${escHtml(m)}" ${m === current ? 'selected' : ''}>${escHtml(m)}</option>`).join('');
+    if (!el) return;
+    const saved = sel === '#flash-model-select' ? State.settings.flashModel : (sel === '#pro-model-select' ? State.settings.proModel : State.settings.currentModel);
+    const current = el.value || saved || '';
+    let optionsHtml = `<option value="">-- Chọn model --</option>`;
+    if (current && Array.isArray(State.models) && !State.models.includes(current)) {
+      optionsHtml += `<option value="${escHtml(current)}" selected>${escHtml(current)}</option>`;
+    }
+    if (Array.isArray(State.models)) {
+      optionsHtml += State.models.map(m => `<option value="${escHtml(m)}" ${m === current ? 'selected' : ''}>${escHtml(m)}</option>`).join('');
+    }
+    el.innerHTML = optionsHtml;
+    if (current) el.value = current;
   });
-  if (State.settings.currentModel) $('#model-select').value = State.settings.currentModel;
-  if (State.settings.flashModel) $('#flash-model-select').value = State.settings.flashModel;
-  if (State.settings.proModel) $('#pro-model-select').value = State.settings.proModel;
+  if (State.settings.currentModel && $('#model-select')) $('#model-select').value = State.settings.currentModel;
+  if (State.settings.flashModel && $('#flash-model-select')) $('#flash-model-select').value = State.settings.flashModel;
+  if (State.settings.proModel && $('#pro-model-select')) $('#pro-model-select').value = State.settings.proModel;
 }
 
 function classifyIntent(promptText) {
@@ -7206,8 +7773,6 @@ if (typeof window !== 'undefined') {
 }
 
 // ===== Vision Fallback System =====
-const VISION_MODEL = 'gemini-3.1-pro-preview';
-
 // Compress image to reduce payload size (critical for web/mobile)
 function compressImage(dataUrl, maxSize = 1024, quality = 0.65) {
   return new Promise((resolve) => {
@@ -7373,6 +7938,747 @@ function buildTextOnlyMessages(chat, systemPrompt) {
   return msgs;
 }
 
+// ========================================================
+// ===== SUNA CHAT - ANTIGRAVITY SKILLS ORCHESTRATOR =====
+// ========================================================
+
+const SkillsManager = {
+  builtInSkills: [
+    {
+      id: 'design-taste-frontend',
+      name: 'Frontend Design Taste',
+      command: 'taste',
+      aliases: ['design-taste', 'anti-slop', 'taste-skill'],
+      icon: '🎨',
+      category: 'design',
+      isBuiltIn: true,
+      desc: 'Quy chuẩn chống thiết kế rập khuôn (Anti-slop UI/UX), áp dụng bộ ba chỉ số Dials (Variance 8, Motion 6, Density 4), cấm AI purple glow, typography tinh tế.',
+      prompt: `[QUY CHUẨN KỸ NĂNG: ANTI-SLOP FRONTEND DESIGN TASTE]
+Bắt buộc áp dụng tiêu chuẩn thiết kế cao cấp (taste-skill) khi phát triển giao diện người dùng:
+1. ĐỌC VỊ THIẾT KẾ: Xuất ra câu định hướng: "Reading this as: <page kind> for <audience>, with a <vibe> language, leaning toward <design family>."
+2. BỘ BA CHỈ SỐ DIALS:
+   - DESIGN_VARIANCE: 8/10 (Bố cục phi đối xứng, phá cách, tránh lưới nhàm chán)
+   - MOTION_INTENSITY: 6/10 (Vi chuyển động 60fps mượt mà, cubic-bezier, transition có chủ đích)
+   - VISUAL_DENSITY: 4/10 (Khoảng cách thoáng đãng, phân cấp thị giác rõ ràng)
+3. CẤM RẬP KHUÔN LLM:
+   - Tuyệt đối KHÔNG lạm dụng AI Purple/Blue glow hoặc gradient ngẫu nhiên.
+   - Tránh dùng font mặc định Inter cho tiêu đề; ưu tiên font tinh tế (Geist, Satoshi, Outfit, Cabinet Grotesk).
+   - Khi dùng chữ nghiêng (italic), đảm bảo line-height rộng (leading-[1.1] trở lên) chống cắt chữ.
+   - Nhất quán màu sắc (Accent Consistency) từ đầu đến cuối trang, không đổi màu lộn xộn giữa các phần.`
+    },
+    {
+      id: 'agent-self-correction',
+      name: 'Agent Self-Correction',
+      command: 'self-correct',
+      aliases: ['fix-loop', 'self-correction', 'test-first'],
+      icon: '🛡️',
+      category: 'coding',
+      isBuiltIn: true,
+      desc: 'Quy trình kiểm thử test-first và tự sửa lỗi dựa trên tín hiệu thực tế (Grounded Self-Correction Loop), đọc log và stacktrace thực, cấm đoán mò.',
+      prompt: `[QUY CHUẨN KỸ NĂNG: GROUNDED AGENT SELF-CORRECTION LOOP]
+Bắt buộc áp dụng quy trình kiểm thử và tự phục hồi lỗi nghiêm ngặt:
+1. LẬP TRÌNH HƯỚNG KIỂM THỬ (Test-First): Ưu tiên xác định test cases và logic kiểm thử trước khi triển khai code logic mới.
+2. PHÂN CHIA TEST SPLITS (60/40): Chia bộ kiểm tra thành 60% Visible Tests và 40% Hidden Tests để ngăn chặn hiện tượng gian lận đặc tả.
+3. SỬA LỖI DỰA TRÊN TÍN HIỆU THỰC TẾ:
+   - Đọc kỹ Stacktrace và log lỗi thực tế từ trình thông dịch/biên dịch để sửa.
+   - Tuyệt đối KHÔNG đoán mò hoặc lặp đi lặp lại cùng một cách sửa không hiệu quả quá 3 lần.
+   - Không được sửa đổi mã kiểm thử (test bypass) để gian lận qua lỗi, phải sửa mã nguồn logic gốc.`
+    },
+    {
+      id: 'ponytail',
+      name: 'Ponytail (Lazy Senior Dev)',
+      command: 'ponytail',
+      aliases: ['lazy-dev', 'yagni', 'minimal-code'],
+      icon: '⚡',
+      category: 'workflow',
+      isBuiltIn: true,
+      desc: 'Triết lý lập trình tối giản cao cấp. YAGNI, tìm kiếm trong codebase trước, tận dụng stdlib/native platform, đoạn code ngắn nhất chạy được.',
+      prompt: `[QUY CHUẨN KỸ NĂNG: PONYTAIL - LAZY SENIOR DEVELOPER MODE]
+Bạn là một lập trình viên cao cấp tối giản. Đoạn code tốt nhất là đoạn code không bao giờ phải viết:
+1. Nhu cầu phỏng đoán? BỎ QUA (YAGNI).
+2. Đã có sẵn trong codebase chưa? TÁI SỬ DỤNG helper, util, type, pattern có sẵn; tuyệt đối không viết lại.
+3. Thư viện chuẩn (stdlib) có sẵn không? DÙNG STDLIB.
+4. Tính năng gốc của nền tảng (native platform) có hỗ trợ không? DÙNG NATIVE (CSS thay vì JS, HTML native form, DB constraint).
+5. Dependencies đã cài có giải quyết được không? Tái sử dụng, không thêm thư viện ngoài cho tác vụ vài dòng code.
+6. Có thể viết trong một dòng không? Tối giản thành một dòng.
+7. Xóa code hơn thêm code. Đơn giản hơn thông minh. Không tạo interface chỉ có 1 implementation, không factory cho 1 product.
+8. Đánh dấu điểm dừng: Comment "ponytail: <giới hạn>, <hướng nâng cấp>" cho các đoạn tối giản có chủ đích.`
+    },
+    {
+      id: 'minimalist-ui',
+      name: 'Minimalist Editorial UI',
+      command: 'minimalist',
+      aliases: ['editorial-ui', 'minimal-ui'],
+      icon: '📰',
+      category: 'design',
+      isBuiltIn: true,
+      desc: 'Giao diện phong cách báo chí editorial cao cấp, warm monochrome, flat bento grid, độ tương phản sắc nét, không đổ bóng nặng hay gradient lòe loẹt.',
+      prompt: `[QUY CHUẨN KỸ NĂNG: MINIMALIST EDITORIAL UI]
+Thiết kế giao diện thanh lịch theo chuẩn mực tạp chí xuất bản cao cấp (Editorial):
+1. BẢNG MÀU: Warm monochrome (đen than ink, xám ấm warm gray, ngà ngọc trai pearl ivory). Không dùng gradient neon hoặc màu sắc rực rỡ bão hòa quá mức.
+2. TYPOGRAPHY: Tương phản kiểu chữ mạnh mẽ giữa Serif tinh tế cho tiêu đề chính và Sans-serif hình học rõ ràng cho nội dung.
+3. BỐ CỤC: Bento grid phẳng (Flat Bento Grid), viền mờ 1px tinh xảo (subtle hair-line borders), loại bỏ hoàn toàn các lớp đổ bóng dày (heavy drop-shadows).
+4. KHOẢNG TRẮNG: Sử dụng khoảng trắng tiêu cực (negative space) hào phóng để tạo cảm giác sang trọng, tĩnh lặng và tập trung tuyệt đối vào nội dung.`
+    },
+    {
+      id: 'generative_ui',
+      name: 'Generative UI & Widgets',
+      command: 'gen-ui',
+      aliases: ['widget', 'interactive-ui', 'component'],
+      icon: '🧩',
+      category: 'coding',
+      isBuiltIn: true,
+      desc: 'Thiết kế và sinh mã các tiện ích/widget HTML/CSS/JS tương tác thời gian thực, trực quan hóa dữ liệu inline và nhúng vào Live Workspace.',
+      prompt: `[QUY CHUẨN KỸ NĂNG: GENERATIVE UI & INTERACTIVE WIDGETS]
+Thiết kế và kết xuất các thành phần giao diện tương tác động:
+1. ĐỘC LẬP & TỰ CHỨA (Self-Contained): Mỗi widget phải chứa đầy đủ cấu trúc HTML, styling CSS và logic JS cần thiết, có thể chạy tức thì không lỗi.
+2. TƯƠNG TÁC THỜI GIAN THỰC: Hỗ trợ thanh trượt (sliders), chuyển đổi trạng thái (toggles), bộ lọc dữ liệu và hiển thị phản hồi trực quan ngay khi người dùng thao tác.
+3. TRỰC QUAN HÓA DỮ LIỆU: Ưu tiên biểu diễn số liệu dưới dạng SVG động, Canvas nhẹ hoặc thanh tiến trình mini thanh lịch thay vì văn bản bảng thô.
+4. RESPONSIVE HOÀN HẢO: Tương thích tự động với mọi kích thước khung nhìn, co giãn linh hoạt từ mobile viewport đến màn hình desktop lớn.`
+    },
+    {
+      id: 'image-to-code',
+      name: 'Image to Code (Pixel Accurate)',
+      command: 'img2code',
+      aliases: ['mockup-to-code', 'vision-to-code', 'design2code'],
+      icon: '🖼️',
+      category: 'coding',
+      isBuiltIn: true,
+      desc: 'Chuyển đổi hình ảnh bản vẽ, mockup hoặc ảnh chụp màn hình thành mã nguồn HTML/CSS/JS chính xác từng điểm ảnh, cấu trúc phân tầng sạch sẽ.',
+      prompt: `[QUY CHUẨN KỸ NĂNG: IMAGE TO CODE - PIXEL ACCURATE RECREATION]
+Chuyển đổi hình ảnh/mockup giao diện thành mã nguồn chính xác từng điểm ảnh:
+1. PHÂN TÍCH BỐ CỤC: Chia nhỏ giao diện theo từng khu vực: Header, Hero, Bento Grid, Features, CTA, Footer.
+2. ĐỐI SOÁT CHI TIẾT:
+   - Đo lường và tái tạo chính xác tỷ lệ khoảng cách padding, margin, gap.
+   - Trích xuất bảng màu chuẩn từ ảnh, thiết lập các biến CSS tokens.
+   - Bắt chước chính xác độ cong góc viền (border-radius) và độ mờ hiệu ứng kính (backdrop-filter).
+3. KHÔNG THÊM BỚT TÙY TIỆN: Giữ nguyên văn bản, icon và cấu trúc hiển thị như trong ảnh thiết kế gốc.
+4. MÃ NGUỒN HOÀN CHỈNH: Trả về đầy đủ mã nguồn có thể thực thi ngay, không dùng placeholder cắt bớt.`
+    },
+    {
+      id: 'brandkit',
+      name: 'Brandkit & Design Identity',
+      command: 'brandkit',
+      aliases: ['brand-system', 'design-tokens', 'identity'],
+      icon: '🏛️',
+      category: 'design',
+      isBuiltIn: true,
+      desc: 'Xây dựng bộ quy chuẩn nhận diện thương hiệu, thiết kế logo system, color tokens, typography scales, visual identity guidelines chuyên nghiệp.',
+      prompt: `[QUY CHUẨN KỸ NĂNG: BRANDKIT & VISUAL IDENTITY SYSTEM]
+Thiết lập hệ thống nhận diện thương hiệu đẳng cấp doanh nghiệp:
+1. HỆ THỐNG MÀU SẮC (Color Tokens): Định nghĩa rõ Primary Accent, Secondary, Neutral Slate, Surface Background và Semantic Feedback (Success, Warning, Error) với mã Hex/HSL chuẩn xác.
+2. THANG ĐO TYPOGRAPHY: Thiết lập tỷ lệ kiểu chữ cân xứng (Major Third hoặc Perfect Fourth: 12px, 14px, 16px, 20px, 24px, 32px, 48px, 64px) cùng line-height và letter-spacing tương ứng.
+3. HỆ THỐNG LOGO & BIỂU TƯỢNG: Định nghĩa quy chuẩn khoảng cách an toàn (clear space), kích thước tối thiểu và các biến thể sáng/tối.
+4. DESIGN TOKENS NHẤT QUÁN: Đóng gói toàn bộ thông số thành biến CSS (:root variables) để áp dụng đồng bộ xuyên suốt ứng dụng.`
+    },
+    {
+      id: 'high-end-visual-design',
+      name: 'High-End Visual Craft',
+      command: 'agency-design',
+      aliases: ['soft-skill', 'high-end', 'premium-ui'],
+      icon: '✨',
+      category: 'design',
+      isBuiltIn: true,
+      desc: 'Tiêu chuẩn thẩm mỹ Agency cao cấp: Bố cục thoáng đãng, bóng mờ khuếch tán đa tầng (diffused shadows), vi chuyển động 60fps sang trọng.',
+      prompt: `[QUY CHUẨN KỸ NĂNG: HIGH-END VISUAL CRAFT - AGENCY LEVEL]
+Nâng tầm giao diện người dùng theo tiêu chuẩn các studio thiết kế hàng đầu:
+1. BÓNG MỜ KHUÊCH TÁN ĐA TẦNG (Layered Soft Shadows): Sử dụng 2-3 lớp box-shadow mịn với độ mờ cao (blur 24-48px) và độ mờ đục thấp (opacity 0.04-0.08) thay cho bóng đen đục cục mịch.
+2. CHI TIẾT VIÊN TINH TẾ (Subtle Borders): Viền mỏng 1px bán trong suốt (rgba(255,255,255, 0.08) trên nền tối, rgba(0,0,0, 0.06) trên nền sáng) tạo cảm giác bề mặt được cắt bằng laser.
+3. VI CHUYỂN ĐỘNG (Micro-Interactions): Hiệu ứng hover nhấc thẻ nhẹ (translateY(-2px)), thời gian chuyển động từ 150ms-250ms với easing hàm mũ (ease-out hoặc cubic-bezier(0.16, 1, 0.3, 1)).
+4. KHOẢNG CÁCH HÀO PHÓNG: Tăng padding nội bộ của cards và containers thêm 20-30%, giúp giao diện thở được và toát lên vẻ cao cấp.`
+    },
+    {
+      id: 'spec-kit-sdd',
+      name: 'Spec-Driven Development',
+      command: 'sdd',
+      aliases: ['spec-driven', 'spec-kit', 'specification'],
+      icon: '📋',
+      category: 'workflow',
+      isBuiltIn: true,
+      desc: 'Quy trình phát triển hướng tả thực SDD: Đi từ Hiến pháp -> Đặc tả nghiệp vụ -> Bản kế hoạch -> Triển khai tuần tự -> Kiểm thử nghiệm thu.',
+      prompt: `[QUY CHUẨN KỸ NĂNG: SPEC-DRIVEN DEVELOPMENT (SPEC-KIT SDD)]
+Tuân thủ nghiêm ngặt vòng đời phát triển phần mềm có cấu trúc:
+1. GIAI ĐOẠN 1 - CONSTITUTION: Luôn thấu hiểu quy tắc nền tảng của dự án trước tiên.
+2. GIAI ĐOẠN 2 - SPECIFICATION: Làm rõ yêu cầu nghiệp vụ và tiêu chí thành công (Acceptance Criteria) trước khi viết dòng code đầu tiên.
+3. GIAI ĐOẠN 3 - PLAN & TASKS: Thiết lập bản kế hoạch kiến trúc chi tiết, phân rã công việc thành các tasks độc lập có thứ tự ưu tiên rõ ràng.
+4. GIAI ĐOẠN 4 - IMPLEMENTATION: Triển khai lần lượt từng task, không nhảy cóc hoặc làm tắt.
+5. GIAI ĐOẠN 5 - CONVERGE & VERIFY: Nghiệm thu toàn diện bằng bộ kiểm tra tự động trước khi đóng task.`
+    },
+    {
+      id: 'disk-cleanup',
+      name: 'Code & Disk Hygiene',
+      command: 'cleanup',
+      aliases: ['prune-code', 'code-hygiene', 'clean'],
+      icon: '🧹',
+      category: 'workflow',
+      isBuiltIn: true,
+      desc: 'Rà soát và quét dọn mã nguồn dư thừa, loại bỏ boilerplate, dọn sạch log rác, tối ưu hóa kích thước tệp tin và dung lượng bộ nhớ.',
+      prompt: `[QUY CHUẨN KỸ NĂNG: CODE & STORAGE HYGIENE]
+Dọn dẹp và tối ưu hóa hệ thống mã nguồn:
+1. PHÁT HIỆN MÃ CHẾT (Dead Code): Tìm và loại bỏ các biến, hàm, modules hoặc imports không còn được sử dụng ở bất kỳ đâu.
+2. LOẠI BỎ BOILERPLATE: Rút gọn các đoạn logic rườm rà thành code súc tích, tái sử dụng các hàm nền tảng sẵn có.
+3. DỌN DẸP LOGS & TẠM THỜI: Xóa bỏ các lệnh console.log thử nghiệm tạm bợ, file cache rác hoặc comment debug không còn giá trị.
+4. BẢO TỒN TÍNH TOÀN VẸN: Kiểm tra kỹ lưỡng để việc dọn dẹp không làm mất bất kỳ logic nghiệp vụ hoặc comment tài liệu quan trọng nào.`
+    }
+  ],
+
+  customSkills: [],
+  activeSkillIds: new Set(),
+  currentFilterCategory: 'all',
+  currentSearchQuery: '',
+
+  escapeHtml(str) {
+    if (!str) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  },
+
+  init() {
+    this.loadCustomSkills();
+    this.loadActiveSkills();
+    this.updateActiveCountBadge();
+    this.renderActiveSkillsBar();
+  },
+
+  getSkills() {
+    return [...this.builtInSkills, ...this.customSkills];
+  },
+
+  getSkillById(id) {
+    return this.getSkills().find(s => s.id === id) || null;
+  },
+
+  getSkillByCommand(cmd) {
+    if (!cmd) return null;
+    const cleanCmd = cmd.toLowerCase().replace(/^\//, '').trim();
+    return this.getSkills().find(s => {
+      if (s.command.toLowerCase() === cleanCmd) return true;
+      if (Array.isArray(s.aliases) && s.aliases.some(a => a.toLowerCase() === cleanCmd)) return true;
+      return false;
+    }) || null;
+  },
+
+  isSkillActive(id) {
+    return this.activeSkillIds.has(id);
+  },
+
+  loadCustomSkills() {
+    try {
+      const suffix = typeof getStorageSuffix === 'function' ? getStorageSuffix() : '_guest';
+      const saved = localStorage.getItem('suna_skills' + suffix) || localStorage.getItem('suna_skills');
+      if (saved) {
+        this.customSkills = JSON.parse(saved);
+        if (!Array.isArray(this.customSkills)) this.customSkills = [];
+      } else {
+        this.customSkills = [];
+      }
+    } catch(e) {
+      console.error('Error loading custom skills:', e);
+      this.customSkills = [];
+    }
+  },
+
+  saveCustomSkills() {
+    try {
+      const suffix = typeof getStorageSuffix === 'function' ? getStorageSuffix() : '_guest';
+      if (typeof safeSaveLocalStorage === 'function') {
+        safeSaveLocalStorage('suna_skills' + suffix, this.customSkills);
+      } else {
+        localStorage.setItem('suna_skills' + suffix, JSON.stringify(this.customSkills));
+      }
+    } catch(e) {
+      console.error('Error saving custom skills:', e);
+    }
+  },
+
+  loadActiveSkills() {
+    try {
+      const suffix = typeof getStorageSuffix === 'function' ? getStorageSuffix() : '_guest';
+      const saved = localStorage.getItem('suna_active_skills' + suffix);
+      if (saved) {
+        const arr = JSON.parse(saved);
+        if (Array.isArray(arr)) {
+          this.activeSkillIds = new Set(arr);
+        }
+      }
+    } catch(e) {
+      console.error('Error loading active skills:', e);
+      this.activeSkillIds = new Set();
+    }
+  },
+
+  saveActiveSkills() {
+    try {
+      const suffix = typeof getStorageSuffix === 'function' ? getStorageSuffix() : '_guest';
+      const arr = Array.from(this.activeSkillIds);
+      if (typeof safeSaveLocalStorage === 'function') {
+        safeSaveLocalStorage('suna_active_skills' + suffix, arr);
+      } else {
+        localStorage.setItem('suna_active_skills' + suffix, JSON.stringify(arr));
+      }
+    } catch(e) {
+      console.error('Error saving active skills:', e);
+    }
+  },
+
+  toggleSkill(id, forceState) {
+    const skill = this.getSkillById(id);
+    if (!skill) return false;
+
+    const shouldActivate = forceState !== undefined ? forceState : !this.activeSkillIds.has(id);
+    if (shouldActivate) {
+      this.activeSkillIds.add(id);
+    } else {
+      this.activeSkillIds.delete(id);
+    }
+
+    this.saveActiveSkills();
+    this.updateActiveCountBadge();
+    this.renderActiveSkillsBar();
+    this.renderModal();
+    return shouldActivate;
+  },
+
+  activateSkill(id) {
+    return this.toggleSkill(id, true);
+  },
+
+  deactivateSkill(id) {
+    return this.toggleSkill(id, false);
+  },
+
+  deactivateAllSkills() {
+    this.activeSkillIds.clear();
+    this.saveActiveSkills();
+    this.updateActiveCountBadge();
+    this.renderActiveSkillsBar();
+    this.renderModal();
+    if (typeof toast === 'function') toast('Đã tắt toàn bộ kỹ năng', 'info');
+  },
+
+  addCustomSkill(data) {
+    const cleanCmd = (data.command || '').toLowerCase().replace(/[^a-zA-Z0-9_-]/g, '').trim();
+    if (!cleanCmd) throw new Error('Lệnh slash không hợp lệ');
+
+    const existing = this.getSkillByCommand(cleanCmd);
+    if (existing) throw new Error(`Lệnh /${cleanCmd} đã được sử dụng bởi kỹ năng "${existing.name}"`);
+
+    const newSkill = {
+      id: 'custom_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+      name: (data.name || '').trim(),
+      command: cleanCmd,
+      aliases: [],
+      icon: (data.icon || '⚡').trim(),
+      category: data.category || 'custom',
+      isBuiltIn: false,
+      desc: (data.desc || '').trim(),
+      prompt: (data.prompt || '').trim(),
+      createdAt: Date.now()
+    };
+
+    if (!newSkill.name) throw new Error('Tên kỹ năng không được để trống');
+    if (!newSkill.prompt) throw new Error('Chỉ dẫn hệ thống không được để trống');
+
+    this.customSkills.push(newSkill);
+    this.saveCustomSkills();
+    this.renderModal();
+    return newSkill;
+  },
+
+  updateCustomSkill(id, data) {
+    const skillIndex = this.customSkills.findIndex(s => s.id === id);
+    if (skillIndex === -1) throw new Error('Không tìm thấy kỹ năng để chỉnh sửa');
+
+    const cleanCmd = (data.command || '').toLowerCase().replace(/[^a-zA-Z0-9_-]/g, '').trim();
+    if (!cleanCmd) throw new Error('Lệnh slash không hợp lệ');
+
+    const existing = this.getSkillByCommand(cleanCmd);
+    if (existing && existing.id !== id) {
+      throw new Error(`Lệnh /${cleanCmd} đã được sử dụng bởi kỹ năng "${existing.name}"`);
+    }
+
+    const current = this.customSkills[skillIndex];
+    this.customSkills[skillIndex] = {
+      ...current,
+      name: (data.name || current.name).trim(),
+      command: cleanCmd,
+      icon: (data.icon || current.icon || '⚡').trim(),
+      category: data.category || current.category,
+      desc: (data.desc || current.desc).trim(),
+      prompt: (data.prompt || current.prompt).trim(),
+      updatedAt: Date.now()
+    };
+
+    this.saveCustomSkills();
+    this.renderActiveSkillsBar();
+    this.renderModal();
+    return this.customSkills[skillIndex];
+  },
+
+  deleteCustomSkill(id) {
+    const idx = this.customSkills.findIndex(s => s.id === id);
+    if (idx === -1) return false;
+    this.customSkills.splice(idx, 1);
+    this.activeSkillIds.delete(id);
+    this.saveCustomSkills();
+    this.saveActiveSkills();
+    this.updateActiveCountBadge();
+    this.renderActiveSkillsBar();
+    this.renderModal();
+    return true;
+  },
+
+  filterSkills(query, category) {
+    const q = (query || '').toLowerCase().trim();
+    const cat = category || 'all';
+
+    return this.getSkills().filter(skill => {
+      // Category filter
+      if (cat === 'active') {
+        if (!this.activeSkillIds.has(skill.id)) return false;
+      } else if (cat === 'custom') {
+        if (skill.isBuiltIn) return false;
+      } else if (cat !== 'all') {
+        if (skill.category !== cat) return false;
+      }
+
+      // Query filter
+      if (!q) return true;
+      if (skill.name.toLowerCase().includes(q)) return true;
+      if (skill.command.toLowerCase().includes(q)) return true;
+      if (Array.isArray(skill.aliases) && skill.aliases.some(a => a.toLowerCase().includes(q))) return true;
+      if (skill.desc.toLowerCase().includes(q)) return true;
+      return false;
+    });
+  },
+
+  getActiveSkillsPrompt() {
+    const activeSkills = this.getSkills().filter(s => this.activeSkillIds.has(s.id));
+    if (!activeSkills.length) return '';
+
+    let text = `[HỆ THỐNG KỸ NĂNG AI ĐANG KÍCH HOẠT (${activeSkills.length} KỸ NĂNG)]:
+Người dùng đã kích hoạt các kỹ năng sau cho cuộc hội thoại. Bạn BẮT BUỘC phải áp dụng triệt để các nguyên tắc và chỉ dẫn của từng kỹ năng:\n`;
+
+    activeSkills.forEach((s, idx) => {
+      text += `\n--- [KỸ NĂNG ${idx + 1}: ${s.name} (Lệnh /${s.command})] ---\n${s.prompt}\n`;
+    });
+
+    return text.trim();
+  },
+
+  parseSlashCommand(text) {
+    if (!text || typeof text !== 'string') return { isSlash: false, skill: null, userPrompt: text || '' };
+    const trimmed = text.trim();
+    if (!trimmed.startsWith('/')) return { isSlash: false, skill: null, userPrompt: text };
+
+    const firstSpaceIndex = trimmed.search(/\s/);
+    let cmdStr = '';
+    let userPrompt = '';
+
+    if (firstSpaceIndex === -1) {
+      cmdStr = trimmed.slice(1);
+      userPrompt = '';
+    } else {
+      cmdStr = trimmed.slice(1, firstSpaceIndex);
+      userPrompt = trimmed.slice(firstSpaceIndex).trim();
+    }
+
+    const skill = this.getSkillByCommand(cmdStr);
+    if (skill) {
+      return { isSlash: true, skill, userPrompt };
+    }
+    return { isSlash: false, skill: null, userPrompt: text };
+  },
+
+  updateActiveCountBadge() {
+    const count = this.activeSkillIds.size;
+    const badge = document.getElementById('active-skills-count');
+    if (badge) {
+      badge.textContent = count;
+      badge.style.display = count > 0 ? 'inline-flex' : 'none';
+    }
+    const countActiveTab = document.getElementById('count-active-skills');
+    if (countActiveTab) countActiveTab.textContent = count;
+  },
+
+  renderActiveSkillsBar() {
+    const bar = document.getElementById('active-skills-bar');
+    const container = document.getElementById('active-skills-chips');
+    if (!bar || !container) return;
+
+    const activeSkills = this.getSkills().filter(s => this.activeSkillIds.has(s.id));
+    if (!activeSkills.length) {
+      bar.style.display = 'none';
+      container.innerHTML = '';
+      return;
+    }
+
+    bar.style.display = 'flex';
+    container.innerHTML = activeSkills.map(s => `
+      <div class="active-skill-chip" data-id="${s.id}" title="${s.name} (/${s.command})">
+        <span class="active-skill-chip-icon">${s.icon}</span>
+        <span>${s.name}</span>
+        <button type="button" class="active-skill-chip-remove" data-id="${s.id}" title="Tắt kỹ năng này" aria-label="Tắt kỹ năng ${s.name}">
+          <span class="material-icons-round">close</span>
+        </button>
+      </div>
+    `).join('');
+
+    container.querySelectorAll('.active-skill-chip-remove').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const id = btn.dataset.id;
+        this.deactivateSkill(id);
+      });
+    });
+  },
+
+  renderModal() {
+    const grid = document.getElementById('skills-grid');
+    if (!grid) return;
+
+    const allSkills = this.getSkills();
+    const filtered = this.filterSkills(this.currentSearchQuery, this.currentFilterCategory);
+
+    // Update counts
+    const countAll = document.getElementById('count-all-skills');
+    if (countAll) countAll.textContent = allSkills.length;
+    const countActive = document.getElementById('count-active-skills');
+    if (countActive) countActive.textContent = this.activeSkillIds.size;
+    const countDesign = document.getElementById('count-design-skills');
+    if (countDesign) countDesign.textContent = allSkills.filter(s => s.category === 'design').length;
+    const countCoding = document.getElementById('count-coding-skills');
+    if (countCoding) countCoding.textContent = allSkills.filter(s => s.category === 'coding').length;
+    const countWorkflow = document.getElementById('count-workflow-skills');
+    if (countWorkflow) countWorkflow.textContent = allSkills.filter(s => s.category === 'workflow').length;
+    const countCustom = document.getElementById('count-custom-skills');
+    if (countCustom) countCustom.textContent = this.customSkills.length;
+
+    if (!filtered.length) {
+      grid.innerHTML = `
+        <div class="skills-empty-state">
+          <span class="material-icons-round">search_off</span>
+          <p>Không tìm thấy kỹ năng nào phù hợp với từ khóa "${this.escapeHtml(this.currentSearchQuery || '')}"</p>
+        </div>`;
+      return;
+    }
+
+    grid.innerHTML = filtered.map(s => {
+      const isActive = this.activeSkillIds.has(s.id);
+      const isCustom = !s.isBuiltIn;
+      return `
+        <div class="skill-card ${isActive ? 'active' : ''}" data-id="${s.id}">
+          <div class="skill-card-top">
+            <div class="skill-card-icon-title">
+              <span class="skill-card-icon">${s.icon}</span>
+              <div>
+                <div class="skill-card-name">${this.escapeHtml(s.name)}</div>
+              </div>
+            </div>
+            <label class="skill-switch" title="${isActive ? 'Tắt kỹ năng' : 'Bật kỹ năng'}">
+              <input type="checkbox" class="skill-toggle-input" data-id="${s.id}" ${isActive ? 'checked' : ''}>
+              <span class="skill-switch-slider"></span>
+            </label>
+          </div>
+          <div class="skill-card-meta">
+            <span class="skill-card-cmd">/${s.command}</span>
+            <span class="skill-card-type-tag ${isCustom ? 'custom' : ''}">${isCustom ? 'Tự tạo' : 'Antigravity'}</span>
+          </div>
+          <div class="skill-card-desc" title="${this.escapeHtml(s.desc)}">${this.escapeHtml(s.desc)}</div>
+          <div class="skill-card-footer">
+            <span class="skill-card-status ${isActive ? 'active' : ''}">${isActive ? '⚡ Đang kích hoạt' : 'Đang tắt'}</span>
+            ${isCustom ? `
+              <div class="skill-card-actions">
+                <button type="button" class="skill-action-btn edit" data-id="${s.id}" title="Chỉnh sửa kỹ năng" aria-label="Chỉnh sửa kỹ năng">
+                  <span class="material-icons-round">edit</span>
+                </button>
+                <button type="button" class="skill-action-btn delete" data-id="${s.id}" title="Xóa kỹ năng" aria-label="Xóa kỹ năng">
+                  <span class="material-icons-round">delete</span>
+                </button>
+              </div>
+            ` : ''}
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    // Wire toggle inputs
+    grid.querySelectorAll('.skill-toggle-input').forEach(chk => {
+      chk.addEventListener('change', () => {
+        this.toggleSkill(chk.dataset.id, chk.checked);
+      });
+    });
+
+    // Wire custom edit/delete buttons
+    grid.querySelectorAll('.skill-action-btn.edit').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.openEditModal(btn.dataset.id);
+      });
+    });
+
+    grid.querySelectorAll('.skill-action-btn.delete').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const id = btn.dataset.id;
+        const skill = this.getSkillById(id);
+        if (!skill) return;
+        if (confirm(`Bạn có chắc chắn muốn xóa kỹ năng "${skill.name}"?`)) {
+          this.deleteCustomSkill(id);
+          if (typeof toast === 'function') toast(`Đã xóa kỹ năng "${skill.name}"`, 'info');
+        }
+      });
+    });
+  },
+
+  openCreateModal() {
+    const titleEl = document.getElementById('skill-editor-title');
+    if (titleEl) titleEl.innerHTML = '<span class="material-icons-round">add_circle</span> Thêm Kỹ Năng Mới';
+    const form = document.getElementById('skill-editor-form');
+    if (form) form.reset();
+    const idInput = document.getElementById('skill-edit-id');
+    if (idInput) idInput.value = '';
+    const iconInput = document.getElementById('skill-input-icon');
+    if (iconInput) iconInput.value = '⚡';
+    if (typeof openModal === 'function') openModal('skill-editor-modal');
+  },
+
+  openEditModal(id) {
+    const skill = this.getSkillById(id);
+    if (!skill || skill.isBuiltIn) return;
+
+    const titleEl = document.getElementById('skill-editor-title');
+    if (titleEl) titleEl.innerHTML = '<span class="material-icons-round">edit_note</span> Chỉnh Sửa Kỹ Năng';
+    const idInput = document.getElementById('skill-edit-id');
+    if (idInput) idInput.value = skill.id;
+    const nameInput = document.getElementById('skill-input-name');
+    if (nameInput) nameInput.value = skill.name;
+    const iconInput = document.getElementById('skill-input-icon');
+    if (iconInput) iconInput.value = skill.icon || '⚡';
+    const cmdInput = document.getElementById('skill-input-command');
+    if (cmdInput) cmdInput.value = skill.command;
+    const catInput = document.getElementById('skill-input-category');
+    if (catInput) catInput.value = skill.category || 'coding';
+    const descInput = document.getElementById('skill-input-desc');
+    if (descInput) descInput.value = skill.desc;
+    const promptInput = document.getElementById('skill-input-prompt');
+    if (promptInput) promptInput.value = skill.prompt;
+
+    if (typeof openModal === 'function') openModal('skill-editor-modal');
+  }
+};
+
+window.SkillsManager = SkillsManager;
+
+// ========================================================
+// ===== SKILLS AUTOCOMPLETE & SLASH COMMAND UI LOGIC =====
+// ========================================================
+let _skillsAutocompleteSelectedIndex = 0;
+let _skillsAutocompleteFilteredList = [];
+
+function updateSkillsAutocomplete(inputEl) {
+  const popup = document.getElementById('skills-autocomplete');
+  const listEl = document.getElementById('skills-autocomplete-list');
+  if (!popup || !listEl || !inputEl) return;
+
+  const val = inputEl.value;
+  const cursorPos = inputEl.selectionStart || val.length;
+  const textBeforeCursor = val.slice(0, cursorPos);
+
+  // Check if cursor is immediately after a slash word (e.g. "/abc" or starts with "/")
+  const slashMatch = textBeforeCursor.match(/(?:^|\s)\/([a-zA-Z0-9_-]*)$/);
+
+  if (!slashMatch) {
+    popup.style.display = 'none';
+    _skillsAutocompleteFilteredList = [];
+    return;
+  }
+
+  const query = slashMatch[1]; // e.g. "tas" in "/tas"
+  _skillsAutocompleteFilteredList = SkillsManager.filterSkills(query, 'all');
+
+  if (!_skillsAutocompleteFilteredList.length) {
+    listEl.innerHTML = '<div class="skills-autocomplete-empty">Không tìm thấy kỹ năng nào phù hợp</div>';
+    popup.style.display = 'flex';
+    _skillsAutocompleteSelectedIndex = -1;
+    return;
+  }
+
+  _skillsAutocompleteSelectedIndex = 0;
+  renderSkillsAutocompleteItems();
+  popup.style.display = 'flex';
+}
+
+function renderSkillsAutocompleteItems() {
+  const listEl = document.getElementById('skills-autocomplete-list');
+  if (!listEl) return;
+
+  listEl.innerHTML = _skillsAutocompleteFilteredList.map((skill, idx) => `
+    <div class="skills-autocomplete-item ${idx === _skillsAutocompleteSelectedIndex ? 'selected' : ''}" data-index="${idx}">
+      <span class="skills-autocomplete-icon">${skill.icon}</span>
+      <div class="skills-autocomplete-info">
+        <div class="skills-autocomplete-main">
+          <span class="skills-autocomplete-name">${SkillsManager.escapeHtml(skill.name)}</span>
+          <span class="skills-autocomplete-cmd">/${skill.command}</span>
+          <span class="skills-autocomplete-badge">${skill.isBuiltIn ? 'Antigravity' : 'Tự tạo'}</span>
+        </div>
+        <div class="skills-autocomplete-desc">${SkillsManager.escapeHtml(skill.desc)}</div>
+      </div>
+    </div>
+  `).join('');
+
+  listEl.querySelectorAll('.skills-autocomplete-item').forEach(item => {
+    item.addEventListener('mouseenter', () => {
+      const idx = parseInt(item.dataset.index, 10);
+      _skillsAutocompleteSelectedIndex = idx;
+      listEl.querySelectorAll('.skills-autocomplete-item').forEach((it, i) => {
+        it.classList.toggle('selected', i === idx);
+      });
+    });
+    item.addEventListener('click', () => {
+      const idx = parseInt(item.dataset.index, 10);
+      selectSkillsAutocompleteItem(idx);
+    });
+  });
+
+  const selectedEl = listEl.querySelector('.skills-autocomplete-item.selected');
+  if (selectedEl) selectedEl.scrollIntoView({ block: 'nearest' });
+}
+
+function selectSkillsAutocompleteItem(idx) {
+  if (idx < 0 || idx >= _skillsAutocompleteFilteredList.length) return;
+  const skill = _skillsAutocompleteFilteredList[idx];
+  const inputEl = document.getElementById('message-input');
+  const popup = document.getElementById('skills-autocomplete');
+  if (!inputEl) return;
+
+  const val = inputEl.value;
+  const cursorPos = inputEl.selectionStart || val.length;
+  const textBeforeCursor = val.slice(0, cursorPos);
+  const textAfterCursor = val.slice(cursorPos);
+
+  const slashMatch = textBeforeCursor.match(/(?:^|\s)\/([a-zA-Z0-9_-]*)$/);
+  if (slashMatch) {
+    const prefixLen = slashMatch[1].length + 1; // including slash
+    const startPos = textBeforeCursor.length - prefixLen;
+    const newText = val.slice(0, startPos) + `/${skill.command} ` + textAfterCursor;
+    inputEl.value = newText;
+    const newCursorPos = startPos + skill.command.length + 2;
+    inputEl.selectionStart = newCursorPos;
+    inputEl.selectionEnd = newCursorPos;
+  } else {
+    inputEl.value = `/${skill.command} ` + val;
+  }
+
+  if (popup) popup.style.display = 'none';
+  _skillsAutocompleteFilteredList = [];
+  inputEl.focus();
+}
+
 function buildSystemPrompt() {
   let parts = [];
   
@@ -7388,6 +8694,17 @@ function buildSystemPrompt() {
   const activeChat = typeof getActiveChat === 'function' ? getActiveChat() : null;
   if (activeChat && activeChat.pinnedContext) {
     parts.push(`[CHỈ DẪN NGỮ CẢNH ĐƯỢC GHIM CỦA ĐOẠN CHAT NÀY - ƯU TIÊN TUYỆT ĐỐI]:\n${activeChat.pinnedContext}\nHãy tuân thủ nghiêm ngặt chỉ dẫn ngữ cảnh trên trong mọi câu trả lời của đoạn chat này.`);
+  }
+
+  // === Inject Active Skills (Antigravity & Custom Skills) ===
+  if (typeof SkillsManager !== 'undefined' && typeof SkillsManager.getActiveSkillsPrompt === 'function') {
+    const skillsPrompt = SkillsManager.getActiveSkillsPrompt();
+    if (skillsPrompt) parts.push(skillsPrompt);
+  }
+
+  // === Inject One-Shot Skill if triggered via Slash Command ===
+  if (State.oneShotSkill && State.oneShotSkill.prompt) {
+    parts.push(`[KỸ NĂNG ONE-SHOT KÍCH HOẠT CHO LƯỢT NÀY]:\n--- KỸ NĂNG: ${State.oneShotSkill.name} (/${State.oneShotSkill.command}) ---\n${State.oneShotSkill.prompt}`);
   }
   
   if (State.settings.systemPrompt) parts.push(`[SYSTEM PROMPT - ƯU TIÊN CAO NHẤT]: ${State.settings.systemPrompt}`);
@@ -7443,7 +8760,14 @@ function buildSystemPrompt() {
 
   // Formatting & Premium features
   parts.push(`[ĐỊNH DẠNG ĐẶC BIỆT]:
-1. [Sơ đồ tư duy (Mindmap)]: Nếu người dùng yêu cầu vẽ sơ đồ tư duy, mindmap, brain map hoặc sơ đồ phân cấp kiến thức trực quan, hãy trả về một khối mã \`\`\`mindmap ... \`\`\` duy nhất chứa cấu trúc phân cấp bằng danh sách thụt lề đầu dòng (nested bullet points). Ví dụ:
+1. [Sơ đồ tư duy (Mindmap)]:
+   - QUY TẮC CỐT LÕI: TUYỆT ĐỐI KHÔNG tự động tạo sơ đồ tư duy (mindmap) trong bất kỳ tin nhắn thông thường nào nếu người dùng KHÔNG YÊU CẦU RÕ RÀNG (chỉ khi có lệnh trực tiếp như: "vẽ sơ đồ tư duy", "tạo mindmap", "brain map", "sơ đồ phân cấp"). Khi trả lời bình thường, hãy trình bày văn bản Markdown mạch lạc, không tự chèn khối mã \`\`\`mindmap.
+   - KHI ĐƯỢC YÊU CẦU: Trả về một khối mã \`\`\`mindmap ... \`\`\` duy nhất chứa cấu trúc phân cấp bằng danh sách thụt lề đầu dòng (nested bullet points).
+   - NGUYÊN TẮC TỔNG QUAN & TINH GỌN (Executive Synthesis):
+     + Tối đa 3 đến 4 nhánh chính (Level 1).
+     + Mỗi nhánh chỉ gồm 2 đến 3 ý con cô đọng (Level 2).
+     + Mỗi nút chỉ từ 3 đến 7 từ khóa cốt lõi. TUYỆT ĐỐI KHÔNG sao chép nguyên câu dài dòng hoặc đoạn văn phức tạp.
+   Ví dụ:
 \`\`\`mindmap
 - Chủ đề trung tâm
   - Ý chính 1
@@ -7526,6 +8850,29 @@ async function sendMessage() {
     triggerSentimentChange(userSentiment);
   }
 
+  // Parse slash command (Kích hoạt kỹ năng Antigravity hoặc Custom Skill)
+  let processedText = text;
+  let appliedSkill = null;
+  if (typeof SkillsManager !== 'undefined' && typeof SkillsManager.parseSlashCommand === 'function') {
+    const slash = SkillsManager.parseSlashCommand(text);
+    if (slash && slash.isSlash && slash.skill) {
+      if (!slash.userPrompt) {
+        // Người dùng chỉ gõ "/taste" -> Bật/tắt kỹ năng nhanh
+        const nowActive = SkillsManager.toggleSkill(slash.skill.id);
+        toast(`Kỹ năng: ${slash.skill.name} (${nowActive ? 'Đã bật' : 'Đã tắt'})`, 'info');
+        input.value = '';
+        input.style.height = 'auto';
+        return;
+      } else {
+        // Người dùng gõ "/taste [prompt]" -> One-shot activation cho lượt chat này
+        appliedSkill = slash.skill;
+        processedText = slash.userPrompt;
+        State.oneShotSkill = slash.skill;
+        toast(`⚡ Áp dụng kỹ năng: ${slash.skill.name}`, 'success');
+      }
+    }
+  }
+
   const model = getActiveModel();
   if (!model) { toast('Vui lòng chọn model trong phần cài đặt API', 'error'); return; }
   if (!State.settings.baseUrl || !State.settings.apiKey) { toast('Vui lòng cấu hình Base URL và API Key trong phần API', 'error'); return; }
@@ -7543,9 +8890,9 @@ async function sendMessage() {
 
   let linkContext = null;
   const urlRegex = /(https?:\/\/[^\s]+)/g;
-  if (urlRegex.test(text)) {
+  if (urlRegex.test(processedText)) {
     toast('Đang đọc liên kết trực tuyến...', 'info');
-    linkContext = await fetchLinkContext(text);
+    linkContext = await fetchLinkContext(processedText);
     if (linkContext) toast('Đã lấy xong nội dung link', 'success');
   }
 
@@ -7573,7 +8920,8 @@ async function sendMessage() {
   const userMsg = { 
     id: genId(),
     role: 'user', 
-    content: text,
+    content: processedText,
+    appliedSkill: appliedSkill ? { id: appliedSkill.id, name: appliedSkill.name, icon: appliedSkill.icon, command: appliedSkill.command } : null,
     fileContent: fileContentText || '',
     images: compressedImages, 
     files: files.map(f => ({ name: f.name, ext: f.ext, lang: f.lang, size: f.size })),
@@ -7682,6 +9030,7 @@ async function generateAIResponse() {
 
   // Build API messages
   const systemPrompt = buildSystemPrompt();
+  State.oneShotSkill = null; // Reset one-shot skill sau khi đã nạp vào prompt lượt này
 
   // --- TỐI ƯU TỐC ĐỘ: Pre-describe images --- 
   const hasImages = chat.messages.some(m => m.role === 'user' && m.images && m.images.some(img => img && img !== '__large_image__'));
@@ -8794,8 +10143,24 @@ function updateModelDisplay() {
 // ===== Event Listeners =====
 function initEvents() {
   // Network Connection Status
-  window.addEventListener('offline', () => { if(window.toast) toast('Mất kết nối mạng. Suna Chat đang hoạt động ngoại tuyến!', 'error'); });
-  window.addEventListener('online', () => { if(window.toast) toast('Đã khôi phục kết nối mạng.', 'success'); });
+  window.addEventListener('offline', () => {
+    updateSyncIndicator('offline');
+    if(window.toast) toast('Mất kết nối mạng. Suna Chat đang hoạt động ngoại tuyến!', 'error');
+  });
+  window.addEventListener('online', () => {
+    if(window.toast) toast('Đã khôi phục kết nối mạng.', 'success');
+    if (!_fb) {
+      initAuth();
+    } else if (typeof AuthState !== 'undefined' && AuthState.isLoggedIn && !AuthState.useLocalOnly) {
+      updateSyncIndicator('syncing');
+      cloudLoad().then(() => {
+        initRealtimeSync();
+        updateSyncIndicator('synced');
+      }).catch(() => {
+        updateSyncIndicator('error');
+      });
+    }
+  });
 
   // Session & Chat Scroll Preservation
   const chatAreaEl = $('#chat-area');
@@ -8861,6 +10226,12 @@ function initEvents() {
       if (!e.target.closest('.mobile-dropdown-container')) {
         mobileMoreMenu.classList.remove('active');
       }
+    });
+    // Auto-dismiss more-menu when any item is clicked
+    mobileMoreMenu.querySelectorAll('.mobile-menu-item').forEach(item => {
+      item.addEventListener('click', () => {
+        mobileMoreMenu.classList.remove('active');
+      });
     });
     // Clone actions for mobile menu
     document.getElementById('btn-toggle-theme-mobile')?.addEventListener('click', () => {
@@ -9054,16 +10425,45 @@ function initEvents() {
     }
   });
   $('#message-input').addEventListener('keydown', e => {
+    // Autocomplete navigation for Skills
+    const popup = document.getElementById('skills-autocomplete');
+    if (popup && popup.style.display !== 'none' && typeof _skillsAutocompleteFilteredList !== 'undefined' && _skillsAutocompleteFilteredList.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        _skillsAutocompleteSelectedIndex = (_skillsAutocompleteSelectedIndex + 1) % _skillsAutocompleteFilteredList.length;
+        renderSkillsAutocompleteItems();
+        return;
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        _skillsAutocompleteSelectedIndex = (_skillsAutocompleteSelectedIndex - 1 + _skillsAutocompleteFilteredList.length) % _skillsAutocompleteFilteredList.length;
+        renderSkillsAutocompleteItems();
+        return;
+      } else if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+        if (_skillsAutocompleteSelectedIndex >= 0) {
+          e.preventDefault();
+          selectSkillsAutocompleteItem(_skillsAutocompleteSelectedIndex);
+          return;
+        }
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        popup.style.display = 'none';
+        return;
+      }
+    }
+
     if (e.key === 'Enter' && !e.shiftKey) { 
       e.preventDefault(); 
       if (!State.isGenerating) sendMessage(); 
     }
   });
 
-  // Auto-resize textarea
+  // Auto-resize textarea & trigger skills autocomplete
   $('#message-input').addEventListener('input', function() {
     this.style.height = 'auto';
     this.style.height = Math.min(this.scrollHeight, 150) + 'px';
+    if (typeof updateSkillsAutocomplete === 'function') {
+      updateSkillsAutocomplete(this);
+    }
   });
 
     // Paste image
@@ -9367,7 +10767,10 @@ export default {
     State.settings.apiKey2 = $('#api-key-2').value.trim();
     const corsEl = $('#api-cors-proxy');
     if (corsEl) State.settings.corsProxy = corsEl.value.trim();
-    State.settings.currentModel = $('#model-select').value;
+    if ($('#flash-model-select')) State.settings.flashModel = $('#flash-model-select').value;
+    if ($('#pro-model-select')) State.settings.proModel = $('#pro-model-select').value;
+    State.settings.currentModel = getActiveModel();
+    if ($('#model-select')) $('#model-select').value = State.settings.currentModel;
     // Lưu NGAY LẬP TỨC (bypass debounce)
     safeSaveLocalStorage('suna_settings' + getStorageSuffix(), State.settings);
     saveState();
@@ -9376,9 +10779,9 @@ export default {
     toast('Đã lưu cấu hình API', 'success');
   });
   $('#btn-test-api').addEventListener('click', () => {
-    const testModel = $('#model-select').value;
+    const testModel = getActiveModel() || ($('#flash-model-select') ? $('#flash-model-select').value : '') || ($('#pro-model-select') ? $('#pro-model-select').value : '') || ($('#model-select') ? $('#model-select').value : '');
     if (!testModel) {
-      toast('Vui lòng chọn model để test', 'error');
+      toast('Vui lòng chọn model Flash hoặc Pro để test', 'error');
       return;
     }
     State.settings.baseUrl = $('#api-base-url').value.trim();
@@ -9387,7 +10790,10 @@ export default {
     State.settings.apiKey2 = $('#api-key-2').value.trim();
     const corsEl = $('#api-cors-proxy');
     if (corsEl) State.settings.corsProxy = corsEl.value.trim();
+    if ($('#flash-model-select')) State.settings.flashModel = $('#flash-model-select').value;
+    if ($('#pro-model-select')) State.settings.proModel = $('#pro-model-select').value;
     State.settings.currentModel = testModel;
+    if ($('#model-select')) $('#model-select').value = testModel;
     saveState();
     updateModelDisplay();
     closeModal('api-modal');
@@ -9399,12 +10805,12 @@ export default {
   });
 
   // General settings
-    $('#btn-save-settings').addEventListener('click', () => {
+  $('#btn-save-settings').addEventListener('click', () => {
     State.settings.userName = $('#user-name-input').value.trim() || 'Bạn';
     State.settings.systemPrompt = $('#system-prompt').value;
     State.settings.userPurpose = $('#user-purpose').value;
-    State.settings.flashModel = $('#flash-model-select').value;
-    State.settings.proModel = $('#pro-model-select').value;
+    if ($('#flash-model-select')) State.settings.flashModel = $('#flash-model-select').value;
+    if ($('#pro-model-select')) State.settings.proModel = $('#pro-model-select').value;
     
     // Lưu NGAY LẬP TỨC (bypass debounce) để tránh mất dữ liệu khi reload
     safeSaveLocalStorage('suna_settings' + getStorageSuffix(), State.settings);
@@ -9588,12 +10994,89 @@ export default {
   document.querySelectorAll('#folder-pills-bar .folder-pill').forEach(pill => {
     pill.addEventListener('click', () => filterChatsByFolder(pill.dataset.folder));
   });
+
+  // --- Skills System Event Listeners ---
+  const btnSkills = document.getElementById('btn-skills');
+  if (btnSkills) btnSkills.addEventListener('click', () => openModal('skills-modal'));
+
+  const btnSkillsChip = document.getElementById('btn-skills-chip');
+  if (btnSkillsChip) btnSkillsChip.addEventListener('click', () => openModal('skills-modal'));
+
+  const btnAddMoreSkills = document.getElementById('btn-add-more-skills');
+  if (btnAddMoreSkills) btnAddMoreSkills.addEventListener('click', () => openModal('skills-modal'));
+
+  const skillsSearchInput = document.getElementById('skills-search-input');
+  const clearSearchBtn = document.getElementById('btn-skills-clear-search');
+  skillsSearchInput?.addEventListener('input', () => {
+    SkillsManager.currentSearchQuery = skillsSearchInput.value;
+    if (clearSearchBtn) clearSearchBtn.style.display = skillsSearchInput.value ? 'flex' : 'none';
+    SkillsManager.renderModal();
+  });
+
+  clearSearchBtn?.addEventListener('click', () => {
+    skillsSearchInput.value = '';
+    SkillsManager.currentSearchQuery = '';
+    clearSearchBtn.style.display = 'none';
+    SkillsManager.renderModal();
+    skillsSearchInput.focus();
+  });
+
+  document.querySelectorAll('#skills-category-tabs .skill-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('#skills-category-tabs .skill-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      SkillsManager.currentFilterCategory = tab.dataset.category;
+      SkillsManager.renderModal();
+    });
+  });
+
+  document.getElementById('btn-open-create-skill')?.addEventListener('click', () => {
+    SkillsManager.openCreateModal();
+  });
+
+  document.getElementById('btn-deactivate-all-skills')?.addEventListener('click', () => {
+    SkillsManager.deactivateAllSkills();
+  });
+
+  document.getElementById('btn-save-skill')?.addEventListener('click', () => {
+    const id = document.getElementById('skill-edit-id')?.value;
+    const name = document.getElementById('skill-input-name')?.value;
+    const icon = document.getElementById('skill-input-icon')?.value;
+    const command = document.getElementById('skill-input-command')?.value;
+    const category = document.getElementById('skill-input-category')?.value;
+    const desc = document.getElementById('skill-input-desc')?.value;
+    const prompt = document.getElementById('skill-input-prompt')?.value;
+
+    try {
+      if (id) {
+        SkillsManager.updateCustomSkill(id, { name, icon, command, category, desc, prompt });
+        if (typeof toast === 'function') toast('Đã cập nhật kỹ năng thành công', 'success');
+      } else {
+        SkillsManager.addCustomSkill({ name, icon, command, category, desc, prompt });
+        if (typeof toast === 'function') toast('Đã thêm kỹ năng mới thành công', 'success');
+      }
+      closeModal('skill-editor-modal');
+    } catch(err) {
+      if (typeof toast === 'function') toast(err.message, 'error');
+    }
+  });
+
+  document.addEventListener('click', (e) => {
+    const popup = document.getElementById('skills-autocomplete');
+    if (popup && popup.style.display !== 'none' && !e.target.closest('.textarea-wrapper')) {
+      popup.style.display = 'none';
+    }
+  });
 }
 
 function openModal(id) {
   const el = document.getElementById(id);
   if (el) el.style.display = 'flex';
-  if (id === 'pinned-context-modal') {
+  if (id === 'skills-modal') {
+    if (typeof SkillsManager !== 'undefined' && typeof SkillsManager.renderModal === 'function') {
+      SkillsManager.renderModal();
+    }
+  } else if (id === 'pinned-context-modal') {
     const activeChat = getActiveChat();
     const input = document.getElementById('pinned-context-input');
     if (input) input.value = (activeChat && activeChat.pinnedContext) || '';
@@ -9617,7 +11100,7 @@ function openModal(id) {
     document.getElementById('api-key-2').value = State.settings.apiKey2 || '';
     const corsEl = document.getElementById('api-cors-proxy');
     if (corsEl) corsEl.value = State.settings.corsProxy || '';
-    if (State.models.length) populateModelSelects();
+    populateModelSelects();
   } else if (id === 'personality-modal') {
     const tone = State.settings.tone || 'friendly';
     const theme = State.settings.theme || 'aurora';
@@ -9669,6 +11152,9 @@ window.onUserSignedIn = function() {
   renderChatList();
   renderMessages();
   updateModelDisplay();
+  if (typeof SkillsManager !== 'undefined' && typeof SkillsManager.init === 'function') {
+    SkillsManager.init();
+  }
 };
 
 // ===== Main App Init (called by auth.js doAppInit) =====
@@ -9681,6 +11167,9 @@ async function init() {
   renderMessages();
   updateModelDisplay();
   initParticles();
+  if (typeof SkillsManager !== 'undefined' && typeof SkillsManager.init === 'function') {
+    SkillsManager.init();
+  }
   initEvents();
 }
 

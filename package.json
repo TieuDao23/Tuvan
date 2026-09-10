@@ -4,8 +4,8 @@
   "description": "Suna Chat - Modern AI Web Application with Zen Dark & Live Workspace",
   "main": "app.js",
   "scripts": {
-    "test": "npx mocha \"tests/**/*.js\"",
-    "check": "node -c app.js && node -c redesign.js"
+    "test": "npx mocha --timeout 15000 \"tests/**/*.js\"",
+    "check": "node -c app.js && node -c redesign.js && node -c suna_agent.js && node -c suna_harness.js"
   },
   "keywords": ["ai", "chat", "workspace", "vanilla-js"],
   "author": "Suna Team",

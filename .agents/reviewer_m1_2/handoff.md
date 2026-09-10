@@ -1,121 +1,91 @@
-# Milestone 1 Independent Review & Adversarial Audit Report
+# Handoff Report — Milestone 1 (R1): Sub-harness Delegation & Event Bus Review
 
-**Reviewer**: `reviewer_m1_2` (teamwork_preview_reviewer)  
-**Roles**: reviewer, critic  
-**Target Milestone**: M1 (R1 — Maximal Turn Token Utilization & System Prompt Directives)  
-**Worker**: `worker_m1_1`  
-**Verdict**: **APPROVE**  
-**Integrity Status**: **CLEAN (0 Integrity Violations)**  
-**Date**: 2026-08-27  
+**Agent:** `reviewer_m1_2` (Reviewer & Adversarial Critic)  
+**Date:** 2026-09-07T14:09:45Z  
+**Parent Task ID:** `54f8a5c6-f5e1-47fc-bcb2-f13faec46da4`  
+**Verdict:** **APPROVE**  
 
 ---
 
 ## 1. Observation
 
-Direct examination of the codebase, diffs, and verification executions produced the following verified observations:
-
-### A. Code Implementation in `app.js`
-1. **Model Output Token Ceiling Resolver (`app.js:5652-5714`)**:
-   - Implemented `resolveModelMaxTokens(modelName, mode = 'pro')`.
-   - Tier 1 (65,536 tokens): Matches reasoning, thinking, and extended-output models (`o1`, `o3`, `o4`, `thinking`, `reasoner`, `gemini-2.5`, `gemini-3`, `claude-3-7`, `claude-3.7`).
-   - Tier 2 (16,384 tokens): Matches frontier and coding models (`gpt-4o`, `gpt-4.1`, `gpt-4-turbo`, `gemini-2.0`, `gemini-2`, `qwen-2.5`, `qwen2.5`, `coder`, `llama-3.3`, `llama-3.1-405b`, `llama-3.1-70b`, `deepseek`, `mistral-large`, `codestral`).
-   - Tier 3 (8,192 tokens): Matches modern standard LLMs (`claude-3-5`, `claude-3.5`, `gemini-1.5`, `gemini-1`, `qwen`, `llama`, `glm-4`).
-   - Tier 4 (4,096 tokens): Matches legacy models (`claude-3`, `gpt-4`, `gpt-3.5`).
-   - Fallback: Defaults safely to `8192` in pro mode and `4096` in flash mode for unknown strings, empty values, or non-string inputs.
-   - Exposed on `window.resolveModelMaxTokens` for testability and cross-module access (`app.js:5716`).
-
-2. **API Request Token Maximization & Downgrade Safety (`app.js:6324-6389`)**:
-   - `makeApiRequest` dynamically resolves `maxTokensCeiling = resolveModelMaxTokens(modelToUse, State.mode)` and assigns `reqBody.max_tokens = maxTokensCeiling`.
-   - Includes automatic HTTP 400 downgrade recovery: if a restricted proxy gateway rejects `max_tokens > 4096`, it catches HTTP 400 and retries with `max_tokens: 4096` before failing over to alternative proxies.
-
-3. **Workspace Assistant API Token Binding (`app.js:2040-2086`)**:
-   - `callWorkspaceChatApi` resolves `maxTokensCeiling = resolveModelMaxTokens(model, 'pro')`.
-   - Passes `max_tokens: maxTokensCeiling` to both `stream: true` primary requests and `stream: false` fallback requests.
-   - Binds `signal: customSignal || _workspaceAbortController?.signal` ensuring clean abort propagation.
-
-4. **Main Chat System Prompt Anti-Placeholder Directives (`app.js:5965-5971`)**:
-   - `buildSystemPrompt()` injects `[NGUYÊN TẮC TOÀN VẸN MÃ NGUỒN & KHAI THÁC TOKEN TỐI ĐA]`.
-   - Explicitly bans placeholder comment patterns: `// ...`, `// ... rest of code`, `// code cũ giữ nguyên`, `/* TODO */`, `/* unchanged */`, `<!-- ... rest of code ... -->`, `/* keep existing styles */`, `// implement here`, `// tương tự như trên`, `// phần còn lại giữ nguyên`.
-   - Mandates 100% complete, runnable implementations without elisions or abbreviations.
-
-5. **Workspace Assistant System Prompt Full-File Mandate (`app.js:1920-1928`)**:
-   - In `sendWorkspaceMessage()`, system prompt strictly enforces 100% complete single-file ```html ... ``` blocks (`<!DOCTYPE html>` through `</html>`).
-   - Permissive fragment phrasing (`hãy trả về toàn bộ hoặc đoạn mã nguồn mới`) was completely eradicated.
-   - Injects active editor code inside `[MÃ NGUỒN HIỆN TẠI TRONG EDITOR]`.
-
-### B. Test Suite Execution Results
-1. **Static JavaScript Compilation**:
-   - Command: `node -c app.js; node -c redesign.js`
-   - Result: Exit code 0 (0 errors)
-2. **Milestone 1 Test Suite**:
-   - Command: `npx mocha tests/test_token_maximization_and_system_prompts.js`
-   - Result: 15 passing (42ms), 0 failing
-3. **Full Automated Project Verification**:
-   - Command: `python run_verification.py`
-   - Result: 512 tests passing, 0 failing across 21 test suites
-   - 281 baseline tests preserved without regression.
-   - 216 E2E tests preserved without regression.
-   - 15 new Milestone 1 tests all green.
+- **Target File Examined:** `d:\Suna Chat\suna_harness.js` (4,440 lines, 163,760 bytes).
+- **Core Implementation Blocks Inspected:**
+  1. `InterHarnessEventBus` (lines 1624–1815): Message envelope validation, targeted & broadcast routing, correlation request/response (`this.pendingRequests`), error isolation via `try/catch` per subscriber callback, history logging with capacity clamp.
+  2. `VfsSandbox.prototype.branch` & `getBranchChanges` (lines 907–977): Isolated memory branch instantiation, snapshot baseline restoration (`_branchOriginSnapshot`), event-based change ledger tracking (`added`, `modified`, `deleted`), and delta calculation.
+  3. `HarnessController` delegation lifecycle (lines 2092–2640):
+     - `spawnSubHarness`: Enforces recursion limit throwing `MAX_RECURSION_DEPTH_EXCEEDED` when `currentDepth >= 5` (line 2120); cycle detection throwing `DELEGATION_CYCLE_DETECTED` for self and ancestor lineage (lines 2103, 2110); VFS workspace mode branching (`share`, `clone`, `branch`); upstream token debiting (line 1935).
+     - `mergeSubHarness`: 3-way reconciliation across Base, Parent, and Child snapshots. Categorizes all 4 conflict types: `modify_modify_conflict`, `modify_delete_conflict`, `delete_modify_conflict`, `add_add_conflict` (lines 2360–2415). Safe strategy with atomic parent VFS preservation throwing `BRANCH_CONFLICT` (line 2429); force strategy with conflict logging (line 2454); double-merge prevention throwing `ALREADY_MERGED` (line 2310); invalid mode rejection throwing `INVALID_VFS_MODE` (lines 2298, 2301).
+     - `emergencyStopSubHarness`: Cascading recursive halt across all descendants (lines 2583–2598), broadcasting `emergency_stop` envelope on EventBus (line 2604).
+  4. `TrajectoryEngine` hierarchical tree & stitching (lines 2769–3038): `stitchChildTrajectory` anchor mapping, `getHierarchicalTree` parent-child node structuring, `getFlattenedTimeline` with dotted hierarchical indices (`1`, `1.1`), dual-mode `exportMarkdown({ hierarchical: true })` vs flat default.
+  5. Facade `createHarness()` and UMD exports (lines 4258–4440): Exposes all subsystems and delegations (`spawnSubHarness`, `mergeSubHarness`, `emergencyStopSubHarness`, `bus`, `getChild`, `getChildren`).
+- **Command Executions & Verbatim Outputs:**
+  - Syntax check command:
+    `node -c suna_harness.js; node -c app.js; node -c redesign.js`
+    Result: Exited 0 with zero syntax errors.
+  - Test suite command:
+    `npm test`
+    Result: "982 passing (5s)" with 0 failing tests.
+  - Global verification runner command:
+    `python run_verification.py`
+    Result: "[+] Mocha test suite PASSED: 982 tests passing, 0 failing (took 7.35s)", ">>> VERIFICATION PASSED: ALL CHECKS 100% GREEN (982 TESTS) <<<", exited 0.
+  - Adversarial empirical validation suite:
+    Executed comprehensive test covering EventBus, Request/Response, VFS branching isolation, all 4 merge conflict classifications, safe/force strategies, recursion depth guard (`depth >= 5`), cycle detection, upstream token debiting, cascading emergency halt, and hierarchical trajectory stitching.
+    Result: ">>> ALL ADVERSARIAL VALIDATION SUITES PASSED (100%) <<<", exited 0.
+  - Error code fidelity suite:
+    Verified all 5 required error codes (`MAX_RECURSION_DEPTH_EXCEEDED`, `DELEGATION_CYCLE_DETECTED`, `BRANCH_CONFLICT`, `ALREADY_MERGED`, `INVALID_VFS_MODE`) and confirmed `err.name === 'HarnessError'` with exact structured `.details`.
+    Result: "ALL 5 ERROR CODES AND DETAILS VERIFIED WITH 100% FIDELITY", exited 0.
 
 ---
 
 ## 2. Logic Chain
 
-1. **Integrity Audit**:
-   - Inspected `app.js` and `test_token_maximization_and_system_prompts.js` for artificial bypasses, hardcoded strings mapped only to test inputs, or mock facades.
-   - Verified that `resolveModelMaxTokens` implements true model classification logic rather than a mock map.
-   - Verified that `buildSystemPrompt` dynamically constructs system prompts combining identity, user priority, thinking mode, token rules, image OCR, web search, and specialized format directives.
-   - Conclusion: **Zero integrity violations detected.**
-
-2. **Correctness of Token Maximization (R1)**:
-   - Evaluated substring evaluation order in `resolveModelMaxTokens`: Tier 1 (`claude-3-7`, `o1`, `gemini-2.5`) is evaluated before Tier 3 (`claude-3-5`, `gemini-1.5`) and Tier 4 (`claude-3`, `gpt-4`). This eliminates substring collision risks where `claude-3-7` might otherwise match `claude-3`.
-   - Verified adversarial edge cases: `undefined`, `null`, numbers, empty strings, uppercase strings (`CLAUDE-3-7-SONNET`), custom proxy paths (`my-proxy/gpt-4o-custom`), and unknown models all return correct tier values or mode-based fallbacks.
-   - Verified that `makeApiRequest` and `callWorkspaceChatApi` supply explicit `max_tokens` ceilings to API payloads instead of omitting them.
-   - Conclusion: **Token maximization is correctly and robustly implemented.**
-
-3. **Anti-Placeholder System Prompts (R1)**:
-   - System prompts in both Main Chat (`buildSystemPrompt`) and Workspace Assistant (`sendWorkspaceMessage`) now contain explicit negative constraints and positive mandates.
-   - Banned pattern list covers all standard LLM laziness tokens (`// ...`, `/* TODO */`, `/* unchanged */`, `// code cũ giữ nguyên`, etc.).
-   - Conclusion: **System prompt directives fulfill requirement R1.**
-
-4. **Zero Regressions on Existing Subsystems**:
-   - All 512 tests across all 21 test suites passed without a single failure.
-   - Lofi player, Mindmap visualizer, Kanban board, Theme toggles, and Storage Quota management operate without interference.
-   - Conclusion: **No regressions introduced.**
+- **Step 1 (Interface Conformance):** Observations of `suna_harness.js` (lines 1624–3038) confirm that all architectural requirements for Milestone 1 (R1) in `PROJECT.md` and `m1_contracts.md` have been fully implemented with genuine data structures (`Map`, `Set`, `Object.freeze`, 3-way snapshot diffing) rather than dummy stubs.
+- **Step 2 (Backward Compatibility):** Running `npm test` and `python run_verification.py` confirms that all 982 existing test cases across SunaChat pass without modification. The public facade `createHarness()` maintains all original component properties while adding delegation methods.
+- **Step 3 (Error Code Fidelity):** Independent execution of the error code validation script confirmed that `HarnessError` is thrown with the exact expected code strings and rich detail objects (`details.conflicts`, `details.currentDepth`, `details.childId`, `details.mode`).
+- **Step 4 (Memory Safety):** Code inspection and empirical execution verified that:
+  - EventBus request timers are cleared upon completion or timeout.
+  - `HarnessController.prototype.terminate()` cleans up bus subscriptions via `this._busUnsubscribe()`, halts and clears all child instances, and purges event listeners.
+  - Branch VFS listeners are attached strictly to the child instance and do not retain references to the parent VFS.
+- **Step 5 (Adversarial Robustness):** Stress tests proved that subscriber exceptions do not disrupt event delivery, circular delegation is blocked before recursion limits, 3-way conflicts in safe mode leave parent VFS completely uncorrupted, and parent token limits halt runaway sub-agents.
+- **Step 6 (Integrity Check):** Grepping and manual code inspection confirmed zero hardcoded bypasses, zero test score manipulation, and zero facade mocking.
 
 ---
 
 ## 3. Caveats
 
-No caveats. The implementation strictly adheres to Milestone 1 scope without touching downstream continuation state logic prematurely.
+- Milestone 2 features (`VfsDiffEngine` standard Git patch formatting with hunk headers and `AciSchemaValidator` JSON Schema validation for tool params) are planned for Milestone 2 and are intentionally not part of M1 scope.
+- Sub-harness execution currently operates in-process synchronously or via standard JavaScript async promises within the Node.js / browser runtime.
 
 ---
 
 ## 4. Conclusion
 
-Milestone 1 (R1 — Maximal Turn Token Utilization & System Prompt Directives) satisfies all acceptance criteria:
-- Model output token ceilings resolved accurately up to 65,536 tokens with HTTP 400 downgrade safety.
-- Main Chat and Live Workspace system prompts enforce 100% complete, placeholder-free generation.
-- Static compilation passes cleanly (`node -c`).
-- 512/512 tests pass 100% across the entire test suite.
-
-**Explicit Verdict**: **APPROVE**
+- **Verdict:** **APPROVE**.
+- The Milestone 1 (R1) multi-agent sub-harness delegation, inter-harness event bus, VFS branching, and trajectory tree stitching implementations in `suna_harness.js` meet all interface contracts, preserve full backward compatibility, guarantee error code fidelity, ensure memory safety, and achieve 100% green test passes with zero regressions.
 
 ---
 
 ## 5. Verification Method
 
-To independently reproduce and verify this review:
-
-1. **Syntax Check**:
+To independently verify this evaluation:
+1. Run syntax compilation:
    ```powershell
-   node -c app.js; node -c redesign.js
+   node -c suna_harness.js; node -c app.js; node -c redesign.js
    ```
-2. **Run Milestone 1 Tests**:
+2. Run baseline Mocha test suite:
    ```powershell
-   npx mocha tests/test_token_maximization_and_system_prompts.js
+   npm test
    ```
-3. **Run Full Verification**:
+3. Run global system verification:
    ```powershell
    python run_verification.py
    ```
+4. Run error code fidelity verification:
+   ```powershell
+   node -e "const H = require('./suna_harness.js'); const h = H.createHarness(); const c = h.spawnSubHarness({ vfsWorkspaceMode: 'share' }); try { h.mergeSubHarness(c.id); } catch(e) { console.log('Code:', e.code, 'Name:', e.name); }"
+   ```
+   Expected output: `Code: INVALID_VFS_MODE Name: HarnessError`.
+
+---
+*Report certified by `reviewer_m1_2`.*

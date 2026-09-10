@@ -1,13 +1,15 @@
-# Progress — Survey Explorer 2 (Storage & Security)
+# Progress — Explorer 2 (VFS Sandbox & Trajectory Architecture Investigator)
 
-Last visited: 2026-08-27T08:34:35Z
-Status: Survey completed 100%. Report written to `handoff.md`.
+Last visited: 2026-09-07T12:33:15Z
+Status: Complete
 
-- [x] Initialized BRIEFING.md and DISPATCH.md
-- [x] Read `ORIGINAL_REQUEST.md`
-- [x] Survey localStorage & storage mechanisms in `app.js`, `redesign.js`, `index.html`
-- [x] Survey base64 image storage and IndexedDB implementation status
-- [x] Survey QuotaExceededError handling & message eviction
-- [x] Survey Iframe Sandbox implementations (Live preview, mindmap, etc.)
-- [x] Survey KaTeX math rendering try-catch fallback
-- [x] Compile comprehensive gap analysis & write handoff.md
+## Tasks
+- [x] Read ORIGINAL_REQUEST.md and dispatch prompt
+- [x] Initialize DISPATCH.md, BRIEFING.md, progress.md
+- [x] Investigate existing codebase for VFS, SunaAgent, tools, workspace sync, and trajectory views
+- [x] Analyze R1: Virtual File System Sandbox (in-memory storage, operations, SWE-agent style ACI, controller separation)
+- [x] Analyze R2: Trajectory Event Stream & State Checkpointing (immutable log, LangGraph-style checkpointing/replay, JSONL/MD export)
+- [x] Design seamless integration with existing SunaChat architectures
+- [x] Draft comprehensive architectural recommendation document `survey_vfs_trajectory.md`
+- [x] Draft self-contained 5-component `handoff.md`
+- [x] Send completion message to parent

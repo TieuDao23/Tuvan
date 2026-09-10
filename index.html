@@ -10,7 +10,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
     <meta name="description" content="Suna Chat - Trợ lý AI thông minh hỗ trợ chat văn bản và hình ảnh">
     <meta name="theme-color" content="#0d0b14">
-    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title>Suna Chat</title>
     <link rel="icon" href="assets/logo.png" type="image/png">
@@ -22,7 +22,7 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" integrity="sha384-nB0miv6/jRmo5UMMR1wu3Gz6NLsoTkbqJghGIsx//Rlm+ZU03BU6SQNC66uf4l5+" crossorigin="anonymous" referrerpolicy="no-referrer">
     <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" integrity="sha384-7zkQWkzuo3B5mTepMUcHkMB5jZaolc2xDwL6VFqjFALcbeS9Ggm/Yr2r3Dy4lfFg" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" integrity="sha384-43gviWU0YVjaDtb/GhzOouOXtZMP/7XUzwPTstBeZFe/+rCMvRwr4yROQP43s0Xk" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="styles.css?v=12">
     <!-- Preload Firebase SDK for instant auth -->
     <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js">
     <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js">
@@ -41,7 +41,7 @@
 
 <body>
     <!-- ===== AUTH SCREEN ===== -->
-    <div id="auth-screen" class="auth-screen">
+    <div id="auth-screen" class="auth-screen" style="display:none;">
         <div class="auth-bg">
             <div class="auth-orb auth-orb-1"></div>
             <div class="auth-orb auth-orb-2"></div>
@@ -98,18 +98,18 @@
                         <div class="auth-error" id="login-error"></div>
                         
                         <div class="auth-field">
-                            <label class="auth-label">Email</label>
+                            <label for="login-email" class="auth-label">Email</label>
                             <div class="auth-input-wrapper">
                                 <span class="material-icons-round auth-input-icon">email</span>
-                                <input type="email" id="login-email" class="auth-input" placeholder="your@email.com" autocomplete="email">
+                                <input type="email" id="login-email" class="auth-input" placeholder="your@email.com" autocomplete="email" aria-label="Email đăng nhập">
                             </div>
                         </div>
 
                         <div class="auth-field">
-                            <label class="auth-label">Mật khẩu</label>
+                            <label for="login-password" class="auth-label">Mật khẩu</label>
                             <div class="auth-input-wrapper">
                                 <span class="material-icons-round auth-input-icon">lock</span>
-                                <input type="password" id="login-password" class="auth-input" placeholder="••••••••" autocomplete="current-password">
+                                <input type="password" id="login-password" class="auth-input" placeholder="••••••••" autocomplete="current-password" aria-label="Mật khẩu đăng nhập">
                                 <button type="button" class="btn-toggle-password" data-target="login-password" title="Hiện/Ẩn mật khẩu" aria-label="Hiện/Ẩn mật khẩu">
                                     <span class="material-icons-round">visibility</span>
                                 </button>
@@ -146,26 +146,26 @@
                         <div class="auth-error" id="register-error"></div>
 
                         <div class="auth-field">
-                            <label class="auth-label">Tên hiển thị</label>
+                            <label for="register-name" class="auth-label">Tên hiển thị</label>
                             <div class="auth-input-wrapper">
                                 <span class="material-icons-round auth-input-icon">person</span>
-                                <input type="text" id="register-name" class="auth-input" placeholder="Tên của bạn" autocomplete="name">
+                                <input type="text" id="register-name" class="auth-input" placeholder="Tên của bạn" autocomplete="name" aria-label="Tên hiển thị đăng ký">
                             </div>
                         </div>
 
                         <div class="auth-field">
-                            <label class="auth-label">Email</label>
+                            <label for="register-email" class="auth-label">Email</label>
                             <div class="auth-input-wrapper">
                                 <span class="material-icons-round auth-input-icon">email</span>
-                                <input type="email" id="register-email" class="auth-input" placeholder="your@email.com" autocomplete="email">
+                                <input type="email" id="register-email" class="auth-input" placeholder="your@email.com" autocomplete="email" aria-label="Email đăng ký">
                             </div>
                         </div>
 
                         <div class="auth-field">
-                            <label class="auth-label">Mật khẩu</label>
+                            <label for="register-password" class="auth-label">Mật khẩu</label>
                             <div class="auth-input-wrapper">
                                 <span class="material-icons-round auth-input-icon">lock</span>
-                                <input type="password" id="register-password" class="auth-input" placeholder="Tối thiểu 6 ký tự" autocomplete="new-password">
+                                <input type="password" id="register-password" class="auth-input" placeholder="Tối thiểu 6 ký tự" autocomplete="new-password" aria-label="Mật khẩu đăng ký">
                                 <button type="button" class="btn-toggle-password" data-target="register-password" title="Hiện/Ẩn mật khẩu" aria-label="Hiện/Ẩn mật khẩu">
                                     <span class="material-icons-round">visibility</span>
                                 </button>
@@ -173,10 +173,10 @@
                         </div>
 
                         <div class="auth-field">
-                            <label class="auth-label">Xác nhận mật khẩu</label>
+                            <label for="register-confirm" class="auth-label">Xác nhận mật khẩu</label>
                             <div class="auth-input-wrapper">
                                 <span class="material-icons-round auth-input-icon">lock_outline</span>
-                                <input type="password" id="register-confirm" class="auth-input" placeholder="Nhập lại mật khẩu" autocomplete="new-password">
+                                <input type="password" id="register-confirm" class="auth-input" placeholder="Nhập lại mật khẩu" autocomplete="new-password" aria-label="Xác nhận mật khẩu đăng ký">
                                 <button type="button" class="btn-toggle-password" data-target="register-confirm" title="Hiện/Ẩn mật khẩu" aria-label="Hiện/Ẩn mật khẩu">
                                     <span class="material-icons-round">visibility</span>
                                 </button>
@@ -224,7 +224,7 @@
         <div class="bg-orb bg-orb-3"></div>
     </div>
 
-    <div id="app" style="display:none;">
+    <div id="app">
         <!-- Sidebar -->
         <aside id="sidebar" class="sidebar">
             <div class="sidebar-header">
@@ -265,8 +265,9 @@
                 </div>
                 <!-- Tính năng 2: Tìm kiếm đoạn chat -->
                 <div class="chat-search">
+                    <label for="chat-search-input" class="sr-only">Tìm cuộc trò chuyện</label>
                     <span class="material-icons-round">search</span>
-                    <input type="text" id="chat-search-input" placeholder="Tìm cuộc trò chuyện...">
+                    <input type="text" id="chat-search-input" placeholder="Tìm cuộc trò chuyện..." aria-label="Tìm cuộc trò chuyện">
                 </div>
                 <!-- Chat Folders Filter Bar -->
                 <div id="folder-pills-bar" class="folder-pills-bar">
@@ -292,6 +293,10 @@
                 <button id="btn-personality" class="sidebar-footer-btn" title="Tính cách AI" aria-label="Tính cách AI">
                     <span style="font-size: 1.2rem;">🌿</span>
                     <span>Tính cách</span>
+                </button>
+                <button id="btn-skills" class="sidebar-footer-btn" title="Kỹ năng AI (Skills Center)" aria-label="Kỹ năng AI (Skills Center)">
+                    <span class="material-icons-round" style="color: var(--accent);">bolt</span>
+                    <span>Kỹ năng AI</span>
                 </button>
             </div>
         </aside>
@@ -325,8 +330,9 @@
                             </div>
                         </div>
                         <div class="lofi-volume-container">
+                            <label for="lofi-volume-slider" class="sr-only">Âm lượng Lofi</label>
                             <span class="material-icons-round lofi-volume-icon">volume_up</span>
-                            <input type="range" id="lofi-volume-slider" class="lofi-volume-slider" min="0" max="1" step="0.05" value="0.5" title="Volume">
+                            <input type="range" id="lofi-volume-slider" class="lofi-volume-slider" min="0" max="1" step="0.05" value="0.5" title="Volume" aria-label="Âm lượng Lofi">
                         </div>
                         <!-- Glowing wave visualizer bar -->
                         <div id="lofi-visualizer" class="lofi-visualizer">
@@ -338,51 +344,58 @@
                         </div>
                     </div>
 
-                    <!-- User Profile Dropdown -->
-                    <div class="top-user-profile" style="position: relative;">
-                        <button id="btn-user-menu" class="btn-icon" title="Tài khoản" aria-label="Tài khoản" onclick="document.getElementById('user-dropdown').classList.toggle('active'); const mm = document.getElementById('mobile-more-menu'); if (mm) mm.classList.remove('active');">
-                            <span class="material-icons-round">account_circle</span>
-                        </button>
-                        <div id="user-dropdown" class="user-dropdown">
-                            <div id="sidebar-user-info" class="sidebar-user-info"></div>
+                    <!-- User & Sync Capsule Group -->
+                    <div class="top-user-sync-group">
+                        <div class="top-user-profile">
+                            <button id="btn-user-menu" class="btn-icon" title="Tài khoản" aria-label="Tài khoản" onclick="document.getElementById('user-dropdown').classList.toggle('active'); const mm = document.getElementById('mobile-more-menu'); if (mm) mm.classList.remove('active');">
+                                <span class="material-icons-round">account_circle</span>
+                            </button>
+                            <div id="user-dropdown" class="user-dropdown">
+                                <div id="sidebar-user-info" class="sidebar-user-info"></div>
+                            </div>
+                        </div>
+                        <div id="sync-indicator" class="sync-indicator offline" title="Chưa đăng nhập">
+                            <span class="material-icons-round">cloud_off</span>
                         </div>
                     </div>
-                    
-                    <!-- Sync Indicator -->
-                    <div id="sync-indicator" class="sync-indicator offline" title="Chưa đăng nhập">
-                        <span class="material-icons-round">cloud_off</span>
+
+                    <div class="topbar-divider"></div>
+
+                    <!-- Primary Quick Actions -->
+                    <div class="top-primary-actions">
+                        <button id="btn-toggle-workspace" class="btn-icon mobile-hidden" title="Mở Live Workspace (Ctrl+Shift+O)" aria-label="Mở Live Workspace (Ctrl+Shift+O)">
+                            <span class="material-icons-round">space_dashboard</span>
+                        </button>
+                        <button id="btn-toggle-theme" class="btn-icon mobile-hidden" title="Chuyển đổi Sáng/Tối" aria-label="Chuyển đổi Sáng/Tối">
+                            <span class="material-icons-round" id="theme-icon">light_mode</span>
+                        </button>
                     </div>
-                    <button id="btn-pin-context" class="btn-icon" title="Ghim ngữ cảnh cho đoạn chat này" aria-label="Ghim ngữ cảnh cho đoạn chat này">
-                        <span class="material-icons-round">push_pin</span>
-                    </button>
-                    <button id="btn-toggle-workspace" class="btn-icon" title="Mở Live Workspace (Ctrl+Shift+O)" aria-label="Mở Live Workspace (Ctrl+Shift+O)">
-                        <span class="material-icons-round">space_dashboard</span>
-                    </button>
-                    <button id="btn-toggle-theme" class="btn-icon mobile-hidden" title="Chuyển đổi Sáng/Tối" aria-label="Chuyển đổi Sáng/Tối">
-                        <span class="material-icons-round" id="theme-icon">light_mode</span>
-                    </button>
-                    <button id="btn-export-chat" class="btn-icon mobile-hidden" title="Tải xuống đoạn chat (Markdown)" aria-label="Tải xuống đoạn chat (Markdown)">
-                        <span class="material-icons-round">download</span>
-                    </button>
-                    <button id="btn-api-settings" class="btn-icon mobile-hidden" title="API & Model (Proxy)" aria-label="API & Model (Proxy)">
-                        <span class="material-icons-round">api</span>
-                    </button>
-                    <!-- Dropdown for Mobile -->
+
+                    <!-- Unified More Menu (Secondary Actions Group) -->
                     <div class="mobile-dropdown-container">
-                        <button id="btn-mobile-more" class="btn-icon desktop-hidden" title="Thêm" aria-label="Thêm">
+                        <button id="btn-mobile-more" class="btn-icon" title="Tiện ích khác" aria-label="Thêm">
                             <span class="material-icons-round">more_vert</span>
                         </button>
                         <div id="mobile-more-menu" class="mobile-more-menu">
-                            <button id="btn-toggle-workspace-mobile" class="mobile-menu-item" title="Mở Live Workspace" aria-label="Mở Live Workspace">
+                            <button id="btn-toggle-workspace-mobile" class="mobile-menu-item desktop-hidden" title="Mở Live Workspace" aria-label="Mở Live Workspace">
                                 <span class="material-icons-round">space_dashboard</span> Live Workspace
                             </button>
-                            <button id="btn-export-chat-mobile" class="mobile-menu-item" title="Tải đoạn chat" aria-label="Tải đoạn chat">
-                                <span class="material-icons-round">download</span> Tải đoạn chat
-                            </button>
-                            <button id="btn-toggle-theme-mobile" class="mobile-menu-item" title="Đổi giao diện" aria-label="Đổi giao diện">
+                            <button id="btn-toggle-theme-mobile" class="mobile-menu-item desktop-hidden" title="Đổi giao diện" aria-label="Đổi giao diện">
                                 <span class="material-icons-round" id="theme-icon-mobile">light_mode</span> Đổi giao diện
                             </button>
-                            <button id="btn-api-settings-mobile" class="mobile-menu-item" title="Cài đặt API" aria-label="Cài đặt API">
+                            <button id="btn-pin-context" class="mobile-menu-item" title="Ghim ngữ cảnh cho đoạn chat này" aria-label="Ghim ngữ cảnh cho đoạn chat này">
+                                <span class="material-icons-round">push_pin</span> Ghim ngữ cảnh
+                            </button>
+                            <button id="btn-export-chat" class="mobile-menu-item" title="Tải xuống đoạn chat (Markdown)" aria-label="Tải xuống đoạn chat (Markdown)">
+                                <span class="material-icons-round">download</span> Tải đoạn chat
+                            </button>
+                            <button id="btn-export-chat-mobile" class="mobile-menu-item desktop-hidden hidden-tool" title="Tải đoạn chat" aria-label="Tải đoạn chat">
+                                <span class="material-icons-round">download</span> Tải đoạn chat
+                            </button>
+                            <button id="btn-api-settings" class="mobile-menu-item" title="API & Model (Proxy)" aria-label="API & Model (Proxy)">
+                                <span class="material-icons-round">api</span> Cài đặt API
+                            </button>
+                            <button id="btn-api-settings-mobile" class="mobile-menu-item desktop-hidden hidden-tool" title="Cài đặt API" aria-label="Cài đặt API">
                                 <span class="material-icons-round">api</span> Cài đặt API
                             </button>
                         </div>
@@ -440,9 +453,25 @@
                         <span class="material-icons-round">translate</span>
                         <span>Dịch trực tiếp</span>
                     </button>
-                    <button id="btn-chat-to-mindmap" class="tool-chip" title="Chuyển hội thoại thành Sơ đồ tư duy" aria-label="Chuyển hội thoại thành Sơ đồ tư duy">
+                    <button id="btn-chat-to-mindmap" class="tool-chip hidden-tool" title="Chuyển hội thoại thành Sơ đồ tư duy" aria-label="Chuyển hội thoại thành Sơ đồ tư duy" aria-hidden="true">
                         <span class="material-icons-round">account_tree</span>
                         <span>Tạo Mindmap</span>
+                    </button>
+                    <button id="btn-skills-chip" class="tool-chip" title="Quản lý & kích hoạt Kỹ năng AI (Skills)" aria-label="Quản lý & kích hoạt Kỹ năng AI">
+                        <span class="material-icons-round">bolt</span>
+                        <span>Kỹ năng AI</span>
+                        <span id="active-skills-count" class="badge-count" style="display:none;">0</span>
+                    </button>
+                </div>
+                <!-- Active Skills Bar -->
+                <div id="active-skills-bar" class="active-skills-bar" style="display:none;">
+                    <div class="active-skills-header">
+                        <span class="active-skills-label"><span class="material-icons-round">bolt</span> Đang bật:</span>
+                        <div id="active-skills-chips" class="active-skills-chips"></div>
+                    </div>
+                    <button id="btn-add-more-skills" class="btn-add-skill-chip" title="Mở trung tâm kỹ năng để bật thêm" aria-label="Mở trung tâm kỹ năng để bật thêm">
+                        <span class="material-icons-round">add</span>
+                        <span>Thêm</span>
                     </button>
                 </div>
                 <div class="input-container">
@@ -458,14 +487,26 @@
                         </button>
                     </div>
                     <div class="textarea-wrapper">
-                        <textarea id="message-input" class="message-input" placeholder="Nhập tin nhắn... (Ctrl+V để dán ảnh)" rows="1"></textarea>
+                        <!-- Skills Slash Autocomplete Dropdown -->
+                        <div id="skills-autocomplete" class="skills-autocomplete" style="display:none;">
+                            <div class="skills-autocomplete-header">
+                                <span class="material-icons-round">bolt</span>
+                                <span class="skills-autocomplete-title">Kỹ năng AI (Antigravity Skills)</span>
+                                <span class="skills-autocomplete-hint">↑↓ chọn • Tab / Enter điền • Esc đóng</span>
+                            </div>
+                            <div id="skills-autocomplete-list" class="skills-autocomplete-list"></div>
+                        </div>
+                        <label for="message-input" class="sr-only">Nội dung tin nhắn</label>
+                        <textarea id="message-input" class="message-input" placeholder="Nhập tin nhắn... (Gõ / để dùng kỹ năng, Ctrl+V dán ảnh)" rows="1" aria-label="Nội dung tin nhắn"></textarea>
                     </div>
                     <button id="btn-send" class="btn-send" title="Gửi tin nhắn" aria-label="Gửi tin nhắn">
                         <span class="material-icons-round">send</span>
                     </button>
                 </div>
-                <input type="file" id="file-input" style="display:none" accept="*/*">
-                <input type="file" id="image-input" style="display:none" accept="image/*" multiple>
+                <label for="file-input" class="sr-only">Tải lên tệp đính kèm</label>
+                <input type="file" id="file-input" style="display:none" accept="*/*" aria-label="Tải lên tệp đính kèm">
+                <label for="image-input" class="sr-only">Tải lên hình ảnh</label>
+                <input type="file" id="image-input" style="display:none" accept="image/*" multiple aria-label="Tải lên hình ảnh">
             </div>
         </main>
     </div>
@@ -484,11 +525,12 @@
                         <div class="user-avatar-edit">
                             <img id="user-avatar-preview" src="" alt="Avatar" class="user-avatar-img">
                             <button id="btn-change-avatar" class="btn-avatar-change" title="Đổi avatar" aria-label="Đổi avatar"><span class="material-icons-round">photo_camera</span></button>
-                            <input type="file" id="user-avatar-input" style="display:none" accept="image/*">
+                            <label for="user-avatar-input" class="sr-only">Tải lên ảnh đại diện</label>
+                            <input type="file" id="user-avatar-input" style="display:none" accept="image/*" aria-label="Tải lên ảnh đại diện">
                         </div>
                         <div class="user-name-edit">
-                            <label class="settings-desc">Tên hiển thị</label>
-                            <input type="text" id="user-name-input" class="settings-input" placeholder="Nhập tên của bạn...">
+                            <label for="user-name-input" class="settings-desc">Tên hiển thị</label>
+                            <input type="text" id="user-name-input" class="settings-input" placeholder="Nhập tên của bạn..." aria-label="Tên hiển thị">
                         </div>
                     </div>
                 </div>
@@ -501,22 +543,14 @@
                 <div class="settings-section">
                     <h3><span class="material-icons-round">terminal</span> System Prompt chung</h3>
                     <p class="settings-desc">Prompt này sẽ được áp dụng cho tất cả đoạn chat</p>
-                    <textarea id="system-prompt" class="settings-textarea" placeholder="Ví dụ: Bạn là một trợ lý AI thông minh, luôn trả lời bằng tiếng Việt..." rows="5"></textarea>
+                    <label for="system-prompt" class="sr-only">System Prompt chung</label>
+                    <textarea id="system-prompt" class="settings-textarea" placeholder="Ví dụ: Bạn là một trợ lý AI thông minh, luôn trả lời bằng tiếng Việt..." rows="5" aria-label="System Prompt chung"></textarea>
                 </div>
                 <div class="settings-section">
                     <h3><span class="material-icons-round">target</span> Mục đích sử dụng</h3>
                     <p class="settings-desc">Mô tả mục đích của bạn để AI hỗ trợ tối ưu nhất</p>
-                    <textarea id="user-purpose" class="settings-textarea" placeholder="Ví dụ: Tôi là lập trình viên, cần hỗ trợ viết code và debug..." rows="4"></textarea>
-                </div>
-                <div class="settings-section">
-                    <h3><span class="material-icons-round">bolt</span> Model cho chế độ Flash</h3>
-                    <p class="settings-desc">Model dùng cho trả lời nhanh, tiết kiệm token</p>
-                    <select id="flash-model-select" class="settings-select"><option value="">-- Chọn model Flash --</option></select>
-                </div>
-                <div class="settings-section">
-                    <h3><span class="material-icons-round">diamond</span> Model cho chế độ Pro</h3>
-                    <p class="settings-desc">Model mạnh nhất, hiệu năng tối đa</p>
-                    <select id="pro-model-select" class="settings-select"><option value="">-- Chọn model Pro --</option></select>
+                    <label for="user-purpose" class="sr-only">Mục đích sử dụng</label>
+                    <textarea id="user-purpose" class="settings-textarea" placeholder="Ví dụ: Tôi là lập trình viên, cần hỗ trợ viết code và debug..." rows="4" aria-label="Mục đích sử dụng"></textarea>
                 </div>
                 <button id="btn-save-settings" class="btn-primary" title="Lưu cài đặt" aria-label="Lưu cài đặt"><span class="material-icons-round">save</span> Lưu cài đặt</button>
             </div>
@@ -530,27 +564,31 @@
                 <h2><span class="material-icons-round">api</span> Cấu hình API & Model</h2>
                 <button class="btn-close-modal" data-close="api-modal" title="Đóng" aria-label="Đóng"><span class="material-icons-round">close</span></button>
             </div>
-            <div class="modal-body">
+            <form id="api-config-form" class="modal-body" onsubmit="return false;">
                 <div class="settings-section">
                     <h3><span class="material-icons-round">link</span> Proxy chính - Base URL</h3>
-                    <input type="url" id="api-base-url" class="settings-input" placeholder="https://api.example.com/v1">
+                    <label for="api-base-url" class="sr-only">Proxy chính - Base URL</label>
+                    <input type="url" id="api-base-url" class="settings-input" placeholder="https://api.example.com/v1" aria-label="Proxy chính - Base URL">
                 </div>
                 <div class="settings-section">
                     <h3><span class="material-icons-round">key</span> Proxy chính - API Key</h3>
                     <div class="api-key-wrapper">
-                        <input type="password" id="api-key" class="settings-input" placeholder="sk-xxxxxxxxxxxxx">
+                        <label for="api-key" class="sr-only">Proxy chính - API Key</label>
+                        <input type="password" id="api-key" class="settings-input" placeholder="sk-xxxxxxxxxxxxx" autocomplete="off" aria-label="Proxy chính - API Key">
                         <button id="btn-toggle-key" class="btn-icon-sm" title="Hiện/Ẩn key" aria-label="Hiện/Ẩn key"><span class="material-icons-round">visibility</span></button>
                     </div>
                 </div>
                 <div class="proxy-divider"><span>Proxy phụ (tùy chọn)</span></div>
                 <div class="settings-section">
                     <h3><span class="material-icons-round">link</span> Proxy phụ - Base URL</h3>
-                    <input type="url" id="api-base-url-2" class="settings-input" placeholder="https://api2.example.com/v1">
+                    <label for="api-base-url-2" class="sr-only">Proxy phụ - Base URL</label>
+                    <input type="url" id="api-base-url-2" class="settings-input" placeholder="https://api2.example.com/v1" aria-label="Proxy phụ - Base URL">
                 </div>
                 <div class="settings-section">
                     <h3><span class="material-icons-round">key</span> Proxy phụ - API Key</h3>
                     <div class="api-key-wrapper">
-                        <input type="password" id="api-key-2" class="settings-input" placeholder="sk-xxxxxxxxxxxxx">
+                        <label for="api-key-2" class="sr-only">Proxy phụ - API Key</label>
+                        <input type="password" id="api-key-2" class="settings-input" placeholder="sk-xxxxxxxxxxxxx" autocomplete="off" aria-label="Proxy phụ - API Key">
                         <button id="btn-toggle-key-2" class="btn-icon-sm" title="Hiện/Ẩn key" aria-label="Hiện/Ẩn key"><span class="material-icons-round">visibility</span></button>
                     </div>
                 </div>
@@ -560,7 +598,8 @@
                         <h3 style="margin: 0;"><span class="material-icons-round">security</span> CORS Worker Proxy</h3>
                         <button type="button" id="btn-copy-worker-code" class="btn-secondary" style="font-size: 11px; padding: 3px 8px; height: auto; line-height: 1.2; display: inline-flex; align-items: center; gap: 4px;" title="Sao chép script Cloudflare Worker để tự tạo proxy miễn phí"><span class="material-icons-round" style="font-size: 13px;">content_copy</span> Copy Worker</button>
                     </div>
-                    <input type="url" id="api-cors-proxy" class="settings-input" placeholder="https://my-worker.workers.dev (hoặc để trống)">
+                    <label for="api-cors-proxy" class="sr-only">CORS Worker Proxy URL</label>
+                    <input type="url" id="api-cors-proxy" class="settings-input" placeholder="https://my-worker.workers.dev (hoặc để trống)" aria-label="CORS Worker Proxy URL">
                     <p class="settings-desc" style="font-size: 11px; opacity: 0.75; margin-top: 4px; margin-bottom: 0;">Dành cho API bị chặn CORS (OPTIONS 403) trên trình duyệt. Suna Chat sẽ tự động chuyển tiếp an toàn qua Worker.</p>
                 </div>
                 <div class="settings-section">
@@ -573,14 +612,23 @@
                     <div id="fetch-status" class="fetch-status"></div>
                 </div>
                 <div class="settings-section">
-                    <h3><span class="material-icons-round">smart_toy</span> Chọn Model hiện tại</h3>
-                    <select id="model-select" class="settings-select"><option value="">-- Lấy model trước --</option></select>
+                    <h3><span class="material-icons-round">bolt</span> Model cho chế độ Flash</h3>
+                    <p class="settings-desc">Model dùng cho trả lời nhanh, tiết kiệm token</p>
+                    <label for="flash-model-select" class="sr-only">Model cho chế độ Flash</label>
+                    <select id="flash-model-select" class="settings-select" aria-label="Model cho chế độ Flash"><option value="">-- Chọn model Flash --</option></select>
                 </div>
+                <div class="settings-section">
+                    <h3><span class="material-icons-round">diamond</span> Model cho chế độ Pro</h3>
+                    <p class="settings-desc">Model mạnh nhất, hiệu năng tối đa</p>
+                    <label for="pro-model-select" class="sr-only">Model cho chế độ Pro</label>
+                    <select id="pro-model-select" class="settings-select" aria-label="Model cho chế độ Pro"><option value="">-- Chọn model Pro --</option></select>
+                </div>
+                <select id="model-select" class="hidden-tool" aria-hidden="true" tabindex="-1"></select>
                 <div style="display: flex; gap: 10px;">
                     <button id="btn-save-api" class="btn-primary" style="flex: 1;" title="Lưu cấu hình" aria-label="Lưu cấu hình"><span class="material-icons-round">save</span> Lưu cấu hình</button>
                     <button id="btn-test-api" class="btn-secondary" style="flex: 1;" title="Gửi tin nhắn 'Hello' để kiểm tra kết nối" aria-label="Gửi tin nhắn 'Hello' để kiểm tra kết nối"><span class="material-icons-round">bug_report</span> Test API</button>
                 </div>
-            </div>
+            </form>
         </div>
     </div>
 
@@ -618,7 +666,8 @@
                 </div>
                 <div class="settings-section">
                     <h3><span class="material-icons-round">edit_note</span> Mô tả tính cách tùy chỉnh</h3>
-                    <textarea id="custom-personality" class="settings-textarea" placeholder="Ví dụ: Luôn sử dụng emoji, nói chuyện thân mật như bạn bè..." rows="4"></textarea>
+                    <label for="custom-personality" class="sr-only">Mô tả tính cách tùy chỉnh</label>
+                    <textarea id="custom-personality" class="settings-textarea" placeholder="Ví dụ: Luôn sử dụng emoji, nói chuyện thân mật như bạn bè..." rows="4" aria-label="Mô tả tính cách tùy chỉnh"></textarea>
                 </div>
                 <button id="btn-save-personality" class="btn-primary" title="Lưu tính cách" aria-label="Lưu tính cách"><span class="material-icons-round">save</span> Lưu tính cách</button>
             </div>
@@ -635,7 +684,8 @@
             <div class="modal-body">
                 <div class="settings-section">
                     <h3>Font chữ</h3>
-                    <select id="font-family-select" class="settings-select">
+                    <label for="font-family-select" class="sr-only">Font chữ</label>
+                    <select id="font-family-select" class="settings-select" aria-label="Chọn font chữ">
                         <option value="'Inter', sans-serif">Inter (Mặc định)</option>
                         <option value="'Noto Sans', sans-serif">Noto Sans</option>
                         <option value="'JetBrains Mono', monospace">JetBrains Mono</option>
@@ -648,7 +698,8 @@
                 </div>
                 <div class="settings-section">
                     <h3>Cỡ chữ: <span id="font-size-value">15px</span></h3>
-                    <input type="range" id="font-size-range" class="settings-range" min="12" max="22" value="15" step="1">
+                    <label for="font-size-range" class="sr-only">Cỡ chữ</label>
+                    <input type="range" id="font-size-range" class="settings-range" min="12" max="22" value="15" step="1" aria-label="Cỡ chữ">
                 </div>
                 <div class="settings-section">
                     <h3>Xem trước</h3>
@@ -669,7 +720,8 @@
             <div class="modal-body">
                 <div class="settings-section">
                     <h3>Tên mới</h3>
-                    <input type="text" id="rename-input" class="settings-input" placeholder="Nhập tên mới cho đoạn chat..." maxlength="80">
+                    <label for="rename-input" class="sr-only">Tên mới cho đoạn chat</label>
+                    <input type="text" id="rename-input" class="settings-input" placeholder="Nhập tên mới cho đoạn chat..." maxlength="80" aria-label="Tên mới cho đoạn chat">
                 </div>
                 <div class="delete-confirm-actions">
                     <button id="btn-cancel-rename" class="btn-secondary" title="Hủy" aria-label="Hủy">Hủy</button>
@@ -706,7 +758,8 @@
             <div class="modal-body">
                 <p class="settings-desc">Suna sẽ tự động ghi nhớ các thông tin quan trọng về bạn để cuộc trò chuyện cá nhân hóa hơn. Bạn có thể quản lý chúng tại đây.</p>
                 <div class="memory-input-group" style="display:flex; gap:10px; margin-bottom:15px;">
-                    <input type="text" id="new-memory-input" class="settings-input" placeholder="Ví dụ: Tôi thích ăn phở, tôi nuôi 1 chú chó tên Lu...">
+                    <label for="new-memory-input" class="sr-only">Nội dung ghi nhớ mới</label>
+                    <input type="text" id="new-memory-input" class="settings-input" placeholder="Ví dụ: Tôi thích ăn phở, tôi nuôi 1 chú chó tên Lu..." aria-label="Nội dung ghi nhớ mới">
                     <button id="btn-add-memory" class="btn-primary" style="white-space:nowrap;" title="Thêm" aria-label="Thêm"><span class="material-icons-round">add</span> Thêm</button>
                 </div>
                 <div id="memory-list" class="memory-list">
@@ -731,7 +784,8 @@
                         </div>
                         <div class="translator-text" id="translator-source-text">Nhấn mic hoặc nhập văn bản...</div>
                         <div class="translator-input-row">
-                            <textarea id="translator-source-input" class="translator-textarea" placeholder="Nhập văn bản tiếng Việt..." rows="2"></textarea>
+                            <label for="translator-source-input" class="sr-only">Văn bản gốc tiếng Việt</label>
+                            <textarea id="translator-source-input" class="translator-textarea" placeholder="Nhập văn bản tiếng Việt..." rows="2" aria-label="Văn bản gốc tiếng Việt"></textarea>
                             <button class="btn-translator-mic" id="btn-mic-vi" title="Giữ mic để nói" aria-label="Giữ mic để nói"><span class="material-icons-round">mic</span></button>
                         </div>
                     </div>
@@ -742,7 +796,8 @@
                     </div>
                     <div class="translator-pane target-pane">
                         <div class="lang-selector">
-                            <select id="translator-target-lang" class="settings-select" style="background:transparent; border:none; color:var(--text-primary); font-weight:bold; font-size:15px;">
+                            <label for="translator-target-lang" class="sr-only">Chọn ngôn ngữ đích</label>
+                            <select id="translator-target-lang" class="settings-select" style="background:transparent; border:none; color:var(--text-primary); font-weight:bold; font-size:15px;" aria-label="Chọn ngôn ngữ đích">
                                 <option value="en">🇬🇧 Tiếng Anh</option>
                                 <option value="ja">🇯🇵 Tiếng Nhật</option>
                                 <option value="zh">🇨🇳 Tiếng Trung</option>
@@ -753,7 +808,8 @@
                         </div>
                         <div class="translator-text" id="translator-target-text">Bản dịch sẽ hiển thị ở đây...</div>
                         <div class="translator-input-row">
-                            <textarea id="translator-target-input" class="translator-textarea" placeholder="Nhập văn bản cần dịch..." rows="2"></textarea>
+                            <label for="translator-target-input" class="sr-only">Văn bản cần dịch</label>
+                            <textarea id="translator-target-input" class="translator-textarea" placeholder="Nhập văn bản cần dịch..." rows="2" aria-label="Văn bản cần dịch"></textarea>
                             <button class="btn-translator-mic" id="btn-mic-target" title="Giữ mic để nói" aria-label="Giữ mic để nói"><span class="material-icons-round">mic</span></button>
                         </div>
                     </div>
@@ -783,7 +839,8 @@
             </div>
             <div class="modal-body">
                 <p class="settings-desc">Chỉ dẫn này sẽ được giữ cố định cho riêng đoạn chat hiện tại, giúp AI luôn ghi nhớ bối cảnh dự án/công việc mà không bị trôi.</p>
-                <textarea id="pinned-context-input" class="settings-textarea" placeholder="Ví dụ: Dự án này viết bằng Next.js 14, Tailwind CSS, dùng ngôn ngữ Tiếng Việt..." rows="5"></textarea>
+                <label for="pinned-context-input" class="sr-only">Ngữ cảnh ghim cho đoạn chat</label>
+                <textarea id="pinned-context-input" class="settings-textarea" placeholder="Ví dụ: Dự án này viết bằng Next.js 14, Tailwind CSS, dùng ngôn ngữ Tiếng Việt..." rows="5" aria-label="Ngữ cảnh ghim cho đoạn chat"></textarea>
                 <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:12px;">
                     <button id="btn-clear-pinned-context" class="btn-secondary" title="Xóa ghim" aria-label="Xóa ghim">Xóa ghim</button>
                     <button id="btn-save-pinned-context" class="btn-primary" title="Lưu ngữ cảnh" aria-label="Lưu ngữ cảnh"><span class="material-icons-round">save</span> Lưu ngữ cảnh</button>
@@ -835,6 +892,119 @@
         </div>
     </div>
 
+    <!-- Skills Center Modal -->
+    <div id="skills-modal" class="modal-overlay" style="display:none;">
+        <div class="modal skills-modal" style="max-width: 860px; width: 92%;">
+            <div class="modal-header">
+                <div class="skills-modal-title-wrap">
+                    <h2><span class="material-icons-round" style="color: var(--accent);">bolt</span> Trung Tâm Kỹ Năng AI (Skills Center)</h2>
+                    <p class="skills-modal-subtitle">Bộ kỹ năng Antigravity thực chiến và kỹ năng tự tạo để tăng tốc độ chuẩn xác, thẩm mỹ và lập trình của AI</p>
+                </div>
+                <button class="btn-close-modal" data-close="skills-modal" title="Đóng" aria-label="Đóng"><span class="material-icons-round">close</span></button>
+            </div>
+            <div class="modal-body skills-modal-body">
+                <!-- Skills Controls Toolbar -->
+                <div class="skills-toolbar">
+                    <div class="skills-search-wrapper">
+                        <span class="material-icons-round">search</span>
+                        <label for="skills-search-input" class="sr-only">Tìm kiếm kỹ năng</label>
+                        <input type="text" id="skills-search-input" class="skills-search-input" placeholder="Tìm kiếm kỹ năng hoặc lệnh slash (/taste, /ponytail)..." aria-label="Tìm kiếm kỹ năng">
+                        <button id="btn-skills-clear-search" class="skills-clear-search" style="display:none;" title="Xóa tìm kiếm" aria-label="Xóa tìm kiếm"><span class="material-icons-round">close</span></button>
+                    </div>
+                    <div class="skills-actions">
+                        <button id="btn-open-create-skill" class="btn btn-primary btn-sm" title="Tạo kỹ năng mới" aria-label="Tạo kỹ năng mới">
+                            <span class="material-icons-round">add</span>
+                            <span>Thêm Kỹ Năng</span>
+                        </button>
+                        <button id="btn-deactivate-all-skills" class="btn btn-secondary btn-sm" title="Tắt tất cả kỹ năng đang bật" aria-label="Tắt tất cả kỹ năng">
+                            <span class="material-icons-round">power_settings_new</span>
+                            <span>Tắt tất cả</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Skills Category Tabs -->
+                <div class="skills-category-tabs" id="skills-category-tabs">
+                    <button class="skill-tab active" data-category="all">Tất cả (<span id="count-all-skills">10</span>)</button>
+                    <button class="skill-tab" data-category="active">Đang bật (<span id="count-active-skills">0</span>)</button>
+                    <button class="skill-tab" data-category="design">Giao diện & UI/UX (<span id="count-design-skills">4</span>)</button>
+                    <button class="skill-tab" data-category="coding">Lập trình & Fix lỗi (<span id="count-coding-skills">4</span>)</button>
+                    <button class="skill-tab" data-category="workflow">Quy trình & Tối ưu (<span id="count-workflow-skills">2</span>)</button>
+                    <button class="skill-tab" data-category="custom">Kỹ năng tự tạo (<span id="count-custom-skills">0</span>)</button>
+                </div>
+
+                <!-- Skills Grid Container -->
+                <div id="skills-grid" class="skills-grid">
+                    <!-- Populated dynamically via JS -->
+                </div>
+            </div>
+            <div class="modal-footer skills-modal-footer">
+                <div class="skills-footer-hint">
+                    <span class="material-icons-round">info</span>
+                    <span>Mẹo: Gõ <code>/</code> trong ô chat bất kỳ lúc nào để hiện danh sách lệnh tắt nhanh</span>
+                </div>
+                <button class="btn btn-secondary" data-close="skills-modal" title="Đóng" aria-label="Đóng">Đóng</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Skill Editor Modal (Create / Edit Custom Skill) -->
+    <div id="skill-editor-modal" class="modal-overlay" style="display:none; z-index: 2100;">
+        <div class="modal skill-editor-modal" style="max-width: 680px; width: 92%;">
+            <div class="modal-header">
+                <h2 id="skill-editor-title"><span class="material-icons-round">edit_note</span> Thêm Kỹ Năng Mới</h2>
+                <button class="btn-close-modal" data-close="skill-editor-modal" title="Đóng" aria-label="Đóng"><span class="material-icons-round">close</span></button>
+            </div>
+            <div class="modal-body">
+                <form id="skill-editor-form" onsubmit="return false;">
+                    <input type="hidden" id="skill-edit-id" value="">
+                    <div class="form-row skills-form-row">
+                        <div class="form-group skills-form-group-flex">
+                            <label for="skill-input-name">Tên kỹ năng <span class="required">*</span></label>
+                            <input type="text" id="skill-input-name" class="form-input" placeholder="Ví dụ: Backend Security Auditor" required aria-label="Tên kỹ năng">
+                        </div>
+                        <div class="form-group skills-form-group-icon">
+                            <label for="skill-input-icon">Icon / Emoji</label>
+                            <input type="text" id="skill-input-icon" class="form-input" placeholder="⚡" value="⚡" maxlength="10" aria-label="Icon Emoji kỹ năng">
+                        </div>
+                    </div>
+                    <div class="form-row skills-form-row">
+                        <div class="form-group skills-form-group-flex">
+                            <label for="skill-input-command">Lệnh Slash tắt <span class="required">*</span></label>
+                            <div class="slash-prefix-input">
+                                <span class="slash-prefix">/</span>
+                                <input type="text" id="skill-input-command" class="form-input" placeholder="security" required pattern="^[a-zA-Z0-9_-]+$" aria-label="Lệnh Slash tắt">
+                            </div>
+                            <small class="field-hint">Chỉ dùng chữ cái, số, gạch ngang (không dấu cách)</small>
+                        </div>
+                        <div class="form-group skills-form-group-flex">
+                            <label for="skill-input-category">Danh mục</label>
+                            <select id="skill-input-category" class="form-select" aria-label="Danh mục kỹ năng">
+                                <option value="coding">Lập trình & Fix lỗi</option>
+                                <option value="design">Giao diện & UI/UX</option>
+                                <option value="workflow">Quy trình & Tối ưu</option>
+                                <option value="custom">Kỹ năng đặc biệt khác</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="skill-input-desc">Mô tả ngắn gọn <span class="required">*</span></label>
+                        <input type="text" id="skill-input-desc" class="form-input" placeholder="Mô tả 1 dòng về vai trò và thế mạnh của kỹ năng..." required aria-label="Mô tả ngắn gọn kỹ năng">
+                    </div>
+                    <div class="form-group">
+                        <label for="skill-input-prompt">Chỉ dẫn & Quy chuẩn Hệ thống (System Prompt) <span class="required">*</span></label>
+                        <textarea id="skill-input-prompt" class="form-textarea code-font" rows="8" placeholder="Nhập quy chuẩn, nguyên tắc hoặc prompt chuyên sâu mà AI bắt buộc phải tuân theo khi kỹ năng này được kích hoạt..." required aria-label="Chỉ dẫn System Prompt kỹ năng"></textarea>
+                        <small class="field-hint">Nội dung này sẽ được tiêm trực tiếp vào System Prompt của AI khi kích hoạt thật.</small>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-close="skill-editor-modal" title="Hủy bỏ" aria-label="Hủy bỏ">Hủy</button>
+                <button type="button" id="btn-save-skill" class="btn btn-primary" title="Lưu Kỹ Năng" aria-label="Lưu Kỹ Năng"><span class="material-icons-round">save</span> Lưu Kỹ Năng</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Artifacts / Code Preview Panel -->
     <div id="artifacts-panel" class="artifacts-panel" data-view="split">
         <div id="workspace-left-handle" class="workspace-left-handle" title="Kéo để chỉnh kích thước màn hình làm việc"></div>
@@ -867,7 +1037,8 @@
             <div id="artifact-editor-container" class="artifact-editor-container">
                 <div class="workspace-editor-toolbar">
                     <button id="btn-new-session" class="btn-toolbar-action" title="Tạo bài mới" aria-label="Tạo bài mới"><span class="material-icons-round">add</span><span>Bài mới</span></button>
-                    <select id="select-session-template" class="select-toolbar-template">
+                    <label for="select-session-template" class="sr-only">Chọn mẫu template workspace</label>
+                    <select id="select-session-template" class="select-toolbar-template" aria-label="Chọn mẫu template workspace">
                         <option value="blank">📄 Trang trống</option>
                         <option value="html5" selected>🌐 HTML5 Boilerplate</option>
                         <option value="svg">🖼️ SVG Canvas</option>
@@ -876,7 +1047,8 @@
                         <option value="particles">🎮 Canvas Particle Game</option>
                     </select>
                 </div>
-                <textarea id="artifact-editor-textarea" class="artifact-editor-textarea" placeholder="Nhập code HTML/CSS/JS..." spellcheck="false"></textarea>
+                <label for="artifact-editor-textarea" class="sr-only">Trình soạn thảo mã nguồn workspace</label>
+                <textarea id="artifact-editor-textarea" class="artifact-editor-textarea" placeholder="Nhập code HTML/CSS/JS..." spellcheck="false" aria-label="Trình soạn thảo mã nguồn workspace"></textarea>
             </div>
             <div id="artifact-resizer-1" class="artifact-resizer" title="Kéo để chỉnh kích thước"></div>
             <div id="artifact-preview-container" class="artifact-preview-container">
@@ -911,7 +1083,8 @@
                     </div>
                 </div>
                 <div class="workspace-chat-input-container">
-                    <textarea id="workspace-chat-input" class="workspace-chat-input" placeholder="Hỏi Suna về code..." rows="2"></textarea>
+                    <label for="workspace-chat-input" class="sr-only">Tin nhắn hỏi Suna Workspace AI</label>
+                    <textarea id="workspace-chat-input" class="workspace-chat-input" placeholder="Hỏi Suna về code..." rows="2" aria-label="Tin nhắn hỏi Suna Workspace AI"></textarea>
                     <button id="btn-send-workspace-chat" class="btn-send-workspace" title="Gửi tin nhắn" aria-label="Gửi tin nhắn"><span class="material-icons-round">send</span></button>
                 </div>
             </div>
@@ -921,7 +1094,9 @@
     <!-- Toast Container -->
     <div id="toast-container" class="toast-container"></div>
 
-    <script src="app.js?v=7"></script>
+    <script src="suna_harness.js"></script>
+    <script src="suna_agent.js"></script>
+    <script src="app.js?v=10"></script>
 </body>
 
 </html>

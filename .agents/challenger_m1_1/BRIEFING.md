@@ -1,14 +1,14 @@
-# BRIEFING — 2026-08-27T15:29:00Z
+# BRIEFING — 2026-09-07T14:10:00Z
 
 ## Mission
-Empirically verify and stress-test the correctness and robustness of `resolveModelMaxTokens`, `makeApiRequest`, and `callWorkspaceChatApi` for Milestone 1 (Token Maximization & System Prompt Directives).
+Empirically stress-test Sub-harness lifecycle and VFS isolation: share, clone, branch modes, mergeSubHarness 3-way clean & conflict handling across 4 conflict classes with safe/force strategies, recursion limit guard (depth >= 5), and delegation cycle guard.
 
 ## 🔒 My Identity
 - Archetype: empirical_challenger
 - Roles: critic, specialist
 - Working directory: d:\Suna Chat\.agents\challenger_m1_1
-- Original parent: b5bb109f-65cd-45b2-9501-db6808511939
-- Milestone: M1 (Token Maximization & System Prompt Directives)
+- Original parent: 54f8a5c6-f5e1-47fc-bcb2-f13faec46da4
+- Milestone: Milestone 1: Sub-harness Delegation & Event Bus (R1)
 - Instance: 1 of 1
 
 ## 🔒 Key Constraints
@@ -17,35 +17,42 @@ Empirically verify and stress-test the correctness and robustness of `resolveMod
 - .agents/ holds only agent metadata
 
 ## Current Parent
-- Conversation ID: b5bb109f-65cd-45b2-9501-db6808511939
-- Updated: 2026-08-27T15:29:00Z
+- Conversation ID: 54f8a5c6-f5e1-47fc-bcb2-f13faec46da4
+- Updated: 2026-09-07T14:10:00Z
 
 ## Review Scope
-- **Files reviewed**: `app.js`, `tests/test_token_maximization_and_system_prompts.js`, `tests/test_challenger_m1_token_maximization.js`, `tests/test_challenger_m1_token_and_prompt_adversarial.js`
-- **Interface contracts**: `PROJECT.md` Milestone 1 specifications
-- **Review criteria**: Empirical correctness, casing, diacritics, empty/null inputs, flash vs pro mode, proxy 400 downgrade retry, signal abort binding.
+- **Files reviewed**: `suna_harness.js`, `tests/test_suna_harness.js`, `tests/test_challenger_m1_adversarial_vfs_lifecycle.js`, `d:\Suna Chat\.agents\worker_m1\handoff.md`
+- **Interface contracts**: `d:\Suna Chat\.agents\orchestrator_1\PROJECT.md`, `d:\Suna Chat\.agents\ORIGINAL_REQUEST.md`
+- **Review criteria**:
+  1. VFS isolation across `share`, `clone`, `branch`
+  2. `mergeSubHarness` with clean merges and 4 conflict types (`modify/modify`, `modify/delete`, `delete/modify`, `add/add`) under `safe` and `force`
+  3. Recursion guard (`depth >= 5` throws `MAX_RECURSION_DEPTH_EXCEEDED`) and delegation cycle guard (throws `DELEGATION_CYCLE_DETECTED`)
+
+## Key Decisions Made
+- Authored 19-test empirical stress harness in `tests/test_challenger_m1_adversarial_vfs_lifecycle.js`.
+- Verified all 4 conflict types under `safe` and `force` strategies.
+- Verified recursion limits at boundary depth 5 and custom maxDepth.
+- Verified lineage cycle detection on self and multi-hop ancestors.
+- Verified 1,001 passing tests in global test suite (`npm test`) and authoritative runner (`python run_verification.py`).
+- Issued verdict: **APPROVE**.
+
+## Artifact Index
+- `d:\Suna Chat\tests\test_challenger_m1_adversarial_vfs_lifecycle.js` — Empirical challenge test suite (19 tests)
+- `d:\Suna Chat\.agents\challenger_m1_1\challenge_report.md` — Detailed stress test report
+- `d:\Suna Chat\.agents\challenger_m1_1\handoff.md` — Formal 5-component handoff report
 
 ## Attack Surface
 - **Hypotheses tested**:
-  - Model tier resolution matrix across 50+ model identifiers (o1, o3, o4, gemini-2.5/3, claude-3-7, gpt-4o, qwen-2.5, llama-3.3, deepseek, legacy models). -> VERIFIED (100% correct).
-  - Casing insensitivity (UPPERCASE, TitleCase, mixed) and whitespace/diacritic resilience (`mô hình o3-mini`, `claude-3.7-✨`). -> VERIFIED.
-  - Tier precedence collision prevention (e.g. `claude-3-7` resolved to Tier 1 before `claude-3-5` in Tier 3 or `claude-3` in Tier 4; `gpt-4o` resolved to Tier 2 before `gpt-4` in Tier 4; `gemini-2.0-flash-thinking-exp` resolved to Tier 1 before Tier 2). -> VERIFIED.
-  - Hostile/falsy inputs (`null`, `undefined`, empty string, objects, numbers, booleans, NaN) safe fallback to mode defaults. -> VERIFIED.
-  - Mode interaction: Known models retain full ceiling regardless of mode; unknown models default to 8192 (pro) vs 4096 (flash). -> VERIFIED.
-  - `makeApiRequest`: Dynamically injects `max_tokens: resolveModelMaxTokens(...)`, intercepts HTTP 400 when `max_tokens > 4096` to downgrade to 4096, falls back to `altProxy`, halts on `AbortError`. -> VERIFIED.
-  - `callWorkspaceChatApi`: Resolves `maxTokensCeiling = resolveModelMaxTokens(model, 'pro')`, sends ceiling in both `stream: true` and `stream: false` payloads, binds `customSignal || _workspaceAbortController?.signal`. -> VERIFIED.
-  - Anti-placeholder and full-file mandate prompts in `buildSystemPrompt()` and `sendWorkspaceMessage()`. -> VERIFIED.
-- **Vulnerabilities found**: None in implementation logic. Fixed 1 syntax error in test regex of peer adversarial test file.
-- **Untested angles**: None for Milestone 1 scope.
+  - VFS isolation modes (`share`, `clone`, `branch`): VERIFIED (100% correct).
+  - 4 conflict classes (`modify_modify_conflict`, `modify_delete_conflict`, `delete_modify_conflict`, `add_add_conflict`): VERIFIED (100% correct).
+  - Safe vs Force merge strategies: VERIFIED (Safe aborts atomically without VFS pollution; Force applies child).
+  - Double merge protection: VERIFIED (Throws `ALREADY_MERGED`).
+  - Recursion limit guard (`depth >= 5`): VERIFIED (Depth 5 throws `MAX_RECURSION_DEPTH_EXCEEDED`).
+  - Delegation cycle guard: VERIFIED (Self-delegation and circular lineage throw `DELEGATION_CYCLE_DETECTED`).
+  - Cascading emergency stop: VERIFIED (Descendants halted; post-halt spawning throws `PARENT_HALTED`).
+  - Trajectory tree stitching: VERIFIED (Child steps attached under parent spawn node in `getHierarchicalTree()`).
+- **Vulnerabilities found**: None.
+- **Untested angles**: Milestones 2, 3, and 4 (out of scope for Milestone 1).
 
 ## Loaded Skills
 - None
-
-## Key Decisions Made
-- Executed 18-assertion challenger test suite in `tests/test_challenger_m1_token_maximization.js`.
-- Executed 27-assertion adversarial suite in `tests/test_challenger_m1_token_and_prompt_adversarial.js`.
-- Executed full 557-test verification suite via `python run_verification.py`.
-- Verified 100% green status across all suites.
-
-## Artifact Index
-- d:\Suna Chat\.agents\challenger_m1_1\handoff.md — Empirical challenge handoff report

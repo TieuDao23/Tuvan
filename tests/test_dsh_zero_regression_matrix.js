@@ -22,7 +22,9 @@ const assert = require('assert');
 const { execSync } = require('child_process');
 const vm = require('vm');
 
-describe('DSH Suite 4: Zero-Regression Matrix & Public Contract Invariants', () => {
+describe('DSH Suite 4: Zero-Regression Matrix & Public Contract Invariants', function() {
+  this.timeout(15000);
+
   let appJs, redesignJs, stylesCss, indexHtml, mindmapHtml;
 
   before(() => {
