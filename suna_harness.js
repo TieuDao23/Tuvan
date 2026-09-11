@@ -3711,7 +3711,17 @@
       return { allowed: true };
     }
 
-    async executeAction(toolName, args) {
+    async executeAction(toolName, args, executionOptions = {}) {
+      const suppliedSignal = executionOptions && executionOptions.signal;
+      if (suppliedSignal && suppliedSignal.aborted) {
+        return {
+          success: false,
+          status: 'error',
+          code: 'ABORTED',
+          error: suppliedSignal.reason ? String(suppliedSignal.reason) : `Tool "${toolName}" aborted before execution.`
+        };
+      }
+
       if (this.isHalted || this.turnsCompleted >= this.maxTurns) {
         return {
           halted: true,
@@ -3772,32 +3782,65 @@
         };
       }
 
+      const actionTimeoutMs = Math.max(1, Number(executionOptions && executionOptions.timeoutMs) || this.timeoutMs);
       try {
         const actionStart = Date.now();
-        let result;
-        if (typeof this.aci[toolName] === 'function') {
-          result = this.aci[toolName](args);
-        } else if (typeof this.vfs[toolName] === 'function') {
-          result = this.vfs[toolName](args);
-        } else {
-          result = { error: `Tool ${toolName} not supported` };
+        const externalSignal = executionOptions && executionOptions.signal;
+        const actionAbortController = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        const actionSignal = actionAbortController ? actionAbortController.signal : externalSignal;
+        const abortFromExternal = () => {
+          if (actionAbortController && !actionAbortController.signal.aborted) {
+            actionAbortController.abort(externalSignal && externalSignal.reason);
+          }
+        };
+        if (externalSignal && externalSignal.aborted) abortFromExternal();
+        if (externalSignal && typeof externalSignal.addEventListener === 'function') {
+          externalSignal.addEventListener('abort', abortFromExternal, { once: true });
         }
-        if (result && typeof result.then === 'function') {
-          const remainingMs = Math.max(1, this.timeoutMs - (Date.now() - this.startTime));
-          let timeoutHandle;
-          try {
+        let result;
+        let timeoutHandle;
+        let abortHandler;
+        try {
+          const toolContext = { signal: actionSignal, controller: this, toolName };
+          if (typeof this.aci[toolName] === 'function') {
+            result = this.aci[toolName](args, toolContext);
+          } else if (typeof this.vfs[toolName] === 'function') {
+            result = this.vfs[toolName](args, toolContext);
+          } else {
+            result = { error: `Tool ${toolName} not supported` };
+          }
+          if (result && typeof result.then === 'function') {
             result = await Promise.race([
               result,
               new Promise((_, reject) => {
                 timeoutHandle = setTimeout(() => {
-                  const err = new Error(`Tool "${toolName}" timed out after ${remainingMs}ms.`);
+                  const err = new Error(`Tool "${toolName}" timed out after ${actionTimeoutMs}ms.`);
                   err.code = 'EXECUTION_TIMEOUT';
                   reject(err);
-                }, remainingMs);
+                  if (actionAbortController && !actionAbortController.signal.aborted) {
+                    actionAbortController.abort(`Tool "${toolName}" timed out`);
+                  }
+                }, actionTimeoutMs);
+              }),
+              new Promise((_, reject) => {
+                if (!actionSignal || typeof actionSignal.addEventListener !== 'function') return;
+                abortHandler = () => {
+                  const err = new Error(actionSignal.reason ? String(actionSignal.reason) : `Tool "${toolName}" aborted.`);
+                  err.code = 'ABORTED';
+                  reject(err);
+                };
+                if (actionSignal.aborted) abortHandler();
+                else actionSignal.addEventListener('abort', abortHandler, { once: true });
               })
             ]);
-          } finally {
-            if (timeoutHandle) clearTimeout(timeoutHandle);
+          }
+        } finally {
+          if (timeoutHandle) clearTimeout(timeoutHandle);
+          if (actionSignal && abortHandler && typeof actionSignal.removeEventListener === 'function') {
+            actionSignal.removeEventListener('abort', abortHandler);
+          }
+          if (externalSignal && typeof externalSignal.removeEventListener === 'function') {
+            externalSignal.removeEventListener('abort', abortFromExternal);
           }
         }
         if (this.resourceMeter && typeof this.resourceMeter.recordOperation === 'function') {
@@ -3811,7 +3854,7 @@
         return result;
       } catch (err) {
         if (err && err.code === 'EXECUTION_TIMEOUT') {
-          this.halt('EXECUTION_TIMEOUT', { toolName, timeoutMs: this.timeoutMs });
+          this.halt('EXECUTION_TIMEOUT', { toolName, timeoutMs: actionTimeoutMs });
         }
         return {
           success: false,
@@ -3874,6 +3917,12 @@
       // Cascades reset to Guardrail if present
       if (this.guardrail && typeof this.guardrail.reset === 'function') {
         this.guardrail.reset();
+      }
+
+      // Resource budgets are run-scoped and must not leak throttled state into
+      // a reused harness after reset.
+      if (this.resourceMeter && typeof this.resourceMeter.reset === 'function') {
+        this.resourceMeter.reset();
       }
 
       this.emit('reset', { timestamp: Date.now() });

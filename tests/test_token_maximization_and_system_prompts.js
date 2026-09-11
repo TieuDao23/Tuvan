@@ -196,11 +196,9 @@ describe('Milestone 1 (R1): Token Maximization & System Prompt Anti-Placeholder 
   // =========================================================================
   describe('4. API Request Payload Ceilings & Static Integrity', () => {
     it('T4.1: should bind max_tokens to resolveModelMaxTokens in makeApiRequest', () => {
-      assert.match(
-        appJs,
-        /max_tokens:\s*resolveModelMaxTokens\(/,
-        'makeApiRequest must use resolveModelMaxTokens for max_tokens payload parameter'
-      );
+      assert.match(appJs, /const\s+maxTokensCeiling\s*=\s*resolveModelMaxTokens\(modelToUse,\s*State\.mode\)/);
+      assert.match(appJs, /max_tokens:\s*maxTokensCeiling/,
+        'makeApiRequest must resolve and reuse the model max-token ceiling');
     });
 
     it('T4.2: should bind max_tokens to resolveModelMaxTokens in callWorkspaceChatApi', () => {

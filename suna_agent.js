@@ -1269,7 +1269,7 @@
       });
     }
 
-    async invokeAciTool(toolName, rawArgs) {
+    async invokeAciTool(toolName, rawArgs, executionOptions = {}) {
       if (!this.vfs) throw new Error('Harness VFS not attached');
 
       const H = getHarnessComponents();
@@ -1307,11 +1307,11 @@
       let result;
       if (this.controller && typeof this.controller.executeAction === 'function' &&
           this.controller.aci && typeof this.controller.aci[toolName] === 'function') {
-        result = await this.controller.executeAction(toolName, normalized);
+        result = await this.controller.executeAction(toolName, normalized, executionOptions);
       } else if (aci && typeof aci[toolName] === 'function') {
-        result = await aci[toolName](normalized);
+        result = await aci[toolName](normalized, executionOptions);
       } else if (this.tools && this.tools[toolName]) {
-        result = await this.tools[toolName](normalized);
+        result = await this.tools[toolName](normalized, executionOptions);
       } else {
         throw new Error(`Tool "${toolName}" not found`);
       }
@@ -1475,7 +1475,7 @@
       let isError = false;
       const startTime = Date.now();
       try {
-        toolResult = await this.invokeAciTool(activeStep.tool, activeStep.params);
+        toolResult = await this.invokeAciTool(activeStep.tool, activeStep.params, executionOptions);
         if (toolResult && (
           toolResult.status === 'error' ||
           toolResult.status === 'ERROR' ||
@@ -1487,14 +1487,40 @@
         }
       } catch (err) {
         isError = true;
-        toolResult = { status: 'error', error: err.message };
+        toolResult = {
+          status: 'error',
+          error: err.message,
+          code: err && err.code ? err.code : 'TOOL_EXECUTION_ERROR',
+          details: err && err.details ? err.details : undefined
+        };
+      }
+
+      // Promise.race cannot hard-cancel an arbitrary tool promise. Once the
+      // enclosing run has been cancelled or timed out, suppress all late
+      // agent-side bookkeeping when a cooperative/non-cooperative tool settles.
+      const executionSignal = executionOptions && executionOptions.signal;
+      const isCurrentExecution = typeof executionOptions.isCurrentExecution === 'function'
+        ? executionOptions.isCurrentExecution
+        : null;
+      if ((executionSignal && executionSignal.aborted) || (isCurrentExecution && !isCurrentExecution())) {
+        return {
+          step: activeStep,
+          thought: thoughtText,
+          observation: toolResult,
+          reflection: null,
+          status: 'cancelled',
+          cancelled: true,
+          halted: false,
+          reason: executionSignal && executionSignal.aborted
+            ? (executionSignal.reason ? String(executionSignal.reason) : 'Agent tool execution aborted')
+            : 'Agent tool execution is no longer current.'
+        };
       }
       const durationMs = Date.now() - startTime;
       const boundedObservation = this._boundObservation(toolResult, executionOptions.maxObservationChars);
-      toolResult = boundedObservation.value;
 
       // 5. Cognitive Brain OODA: Observation Reflection
-      const reflection = this.brain.reflectObservation(activeStep, toolResult, intent);
+      const reflection = this.brain.reflectObservation(activeStep, boundedObservation.value, intent);
       const reflectionText = (reflection && (reflection.reflection || reflection.reflectionText)) || 'Reflection completed cleanly';
 
       // 6. Trajectory & Memory Envelope Recording
@@ -1507,7 +1533,7 @@
         thought: thoughtText,
         plan: plan,
         action: { tool: activeStep.tool, params: activeStep.params },
-        observation: toolResult,
+        observation: boundedObservation.value,
         reflection: reflectionText,
         metadata: { reflection: reflectionText, plan: plan },
         status: isError ? 'failed' : 'success',
@@ -1619,8 +1645,24 @@
       const explicitPlan = Array.isArray(options.plan) ? options.plan.slice() : null;
       if (!decisionProvider && !explicitPlan) return this._runLegacy(prompt, options);
 
+      if (this.status !== 'halted' && !this.isAgentAborted) this.haltReason = null;
+
+      if (explicitPlan && explicitPlan.length === 0) {
+        return {
+          status: 'invalid_plan',
+          turnsExecuted: 0,
+          results: [],
+          finalAnswer: '',
+          verified: false,
+          verification: { passed: false, reason: 'Explicit plan must contain at least one executable step.' },
+          trajectory: (this.trajectory && typeof this.trajectory.getEvents === 'function') ? this.trajectory.getEvents() : [],
+          haltReason: null
+        };
+      }
+
       const signal = options.signal || null;
       const decisionTimeoutMs = options.decisionTimeoutMs || 30000;
+      const toolTimeoutMs = options.toolTimeoutMs || (this.controller && this.controller.timeoutMs) || decisionTimeoutMs;
       const maxObservationChars = options.maxObservationChars || this.MAX_RESULT_LENGTH;
       const turnResults = [];
       let turn = 0;
@@ -1702,13 +1744,29 @@
         if (typeof options.onTurnStart === 'function') {
           try { options.onTurnStart(turn); } catch (_) {}
         }
-        const stepResult = await this.executeStep({
-          id: decision.id || turn,
-          name: decision.name || decision.tool,
-          tool: decision.tool,
-          args: decision.args || {},
-          thought: decision.thought || ''
-        }, { maxObservationChars });
+        let stepResult;
+        const stepExecution = { active: true };
+        try {
+          stepResult = await this._awaitBounded(() => this.executeStep({
+            id: decision.id || turn,
+            name: decision.name || decision.tool,
+            tool: decision.tool,
+            args: decision.args || {},
+            thought: decision.thought || ''
+          }, {
+            maxObservationChars,
+            signal,
+            timeoutMs: toolTimeoutMs,
+            isCurrentExecution: () => stepExecution.active
+          }), toolTimeoutMs, signal, 'Agent tool execution');
+        } catch (err) {
+          stepExecution.active = false;
+          finalStatus = err && err.code === 'ABORTED' ? 'aborted' : (err && err.code === 'TIMEOUT' ? 'timeout' : 'failed');
+          this.haltReason = err.message;
+          if (this.status === 'running') this.status = 'idle';
+          break;
+        }
+        stepExecution.active = false;
         turnResults.push(stepResult);
         if (typeof options.onStep === 'function') {
           try { options.onStep(stepResult, turn); } catch (_) {}

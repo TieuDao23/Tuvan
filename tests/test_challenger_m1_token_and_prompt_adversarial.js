@@ -422,11 +422,9 @@ ${currentCode}
   // =========================================================================
   describe('4. API Request Payload Ceilings & Downgrade Fallbacks', () => {
     it('C4.1: should verify makeApiRequest sets max_tokens via resolveModelMaxTokens dynamically', () => {
-      assert.match(
-        appJs,
-        /max_tokens:\s*resolveModelMaxTokens\(modelToUse,\s*State\.mode\)/,
-        'makeApiRequest must bind max_tokens to resolveModelMaxTokens'
-      );
+      assert.match(appJs, /const\s+maxTokensCeiling\s*=\s*resolveModelMaxTokens\(modelToUse,\s*State\.mode\)/);
+      assert.match(appJs, /max_tokens:\s*maxTokensCeiling/,
+        'makeApiRequest must bind max_tokens to its resolved model ceiling');
     });
 
     it('C4.2: should verify makeApiRequest includes HTTP 400 downgrade retry safety', () => {

@@ -1532,13 +1532,14 @@ function initMemoryCabinet() {
 // =============================================
 
 // Robust fetch utility with multiple CORS proxy fallbacks: corsproxy.io -> api.allorigins.win -> api.codetabs.com
-window.fetchWithProxy = async function(url) {
+window.fetchWithProxy = async function(url, options = {}) {
+  const maxResponseBytes = options.maxResponseBytes || 1024 * 1024;
   // 1. Try corsproxy.io first
   try {
     const proxyUrl = `https://corsproxy.io/?url=${encodeURIComponent(url)}`;
-    const response = await fetch(proxyUrl);
+    const response = await fetch(proxyUrl, { signal: options.signal });
     if (response.ok) {
-      const text = await response.text();
+      const text = await readResponseTextLimited(response, maxResponseBytes, options.signal);
       return new Response(text, { status: response.status, headers: response.headers });
     }
   } catch (err) {
@@ -1548,9 +1549,9 @@ window.fetchWithProxy = async function(url) {
   // 2. Try api.allorigins.win next
   try {
     const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
-    const response = await fetch(proxyUrl);
+    const response = await fetch(proxyUrl, { signal: options.signal });
     if (response.ok) {
-      const data = await response.json();
+      const data = JSON.parse(await readResponseTextLimited(response, maxResponseBytes, options.signal));
       if (data && data.contents !== undefined) {
         return new Response(data.contents, { status: 200 });
       }
@@ -1562,9 +1563,9 @@ window.fetchWithProxy = async function(url) {
   // 3. Try api.codetabs.com next
   try {
     const proxyUrl = `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(url)}`;
-    const response = await fetch(proxyUrl);
+    const response = await fetch(proxyUrl, { signal: options.signal });
     if (response.ok) {
-      const text = await response.text();
+      const text = await readResponseTextLimited(response, maxResponseBytes, options.signal);
       return new Response(text, { status: response.status, headers: response.headers });
     }
   } catch (err) {
@@ -8791,40 +8792,83 @@ Nếu là sơ đồ quy trình phức tạp, lược đồ luồng dữ liệu h
   return parts.join('\n\n');
 }
 
-async function fetchLinkContext(text) {
+const MAX_LINK_RESPONSE_BYTES = 1024 * 1024;
+const IMAGE_COMPRESSION_CONCURRENCY = 2;
+
+async function readResponseTextLimited(response, maxBytes, signal) {
+  if (!response || !response.body || typeof response.body.getReader !== 'function') {
+    const text = response ? await response.text() : '';
+    return text.slice(0, maxBytes);
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let text = '';
+  let bytesRead = 0;
+  try {
+    while (bytesRead < maxBytes) {
+      if (signal && signal.aborted) break;
+      const { done, value } = await reader.read();
+      if (done) break;
+      const remaining = maxBytes - bytesRead;
+      const chunk = value.byteLength > remaining ? value.subarray(0, remaining) : value;
+      bytesRead += chunk.byteLength;
+      text += decoder.decode(chunk, { stream: bytesRead < maxBytes });
+      if (value.byteLength > remaining) break;
+    }
+  } finally {
+    if (bytesRead >= maxBytes && typeof reader.cancel === 'function') {
+      try { await reader.cancel(); } catch (_) {}
+    }
+    if (typeof reader.releaseLock === 'function') reader.releaseLock();
+  }
+  return text;
+}
+
+async function mapWithConcurrency(items, concurrency, mapper) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+  async function worker() {
+    while (nextIndex < items.length) {
+      const index = nextIndex++;
+      results[index] = await mapper(items[index], index);
+    }
+  }
+  const workerCount = Math.min(Math.max(1, concurrency), items.length);
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  return results;
+}
+
+async function fetchLinkContext(text, options = {}) {
   const urlRegex = /(https?:\/\/[^\s]+)/g;
   const urls = text.match(urlRegex);
   if (!urls) return null;
-  
-  let linkContextText = '';
-  for (const link of urls) {
+
+  const MAX_LINK_CONTEXT_URLS = 5;
+  const contexts = await Promise.all(urls.slice(0, MAX_LINK_CONTEXT_URLS).map(async (link) => {
     try {
       let html = '';
       if (typeof window.fetchWithProxy === 'function') {
-        const res = await window.fetchWithProxy(link);
-        if (res && res.ok) {
-          html = await res.text();
-        }
+        const res = await window.fetchWithProxy(link, { signal: options.signal, maxResponseBytes: MAX_LINK_RESPONSE_BYTES });
+        if (res && res.ok) html = await readResponseTextLimited(res, MAX_LINK_RESPONSE_BYTES, options.signal);
       } else {
         const corsProxy = `https://api.allorigins.win/get?url=${encodeURIComponent(link)}`;
-        const res = await fetch(corsProxy);
+        const res = await fetch(corsProxy, { signal: options.signal });
         if (res.ok) {
-          const data = await res.json();
+          const data = JSON.parse(await readResponseTextLimited(res, MAX_LINK_RESPONSE_BYTES, options.signal));
           html = data.contents;
         }
       }
-      if (html) {
-        const doc = new DOMParser().parseFromString(html, 'text/html');
-        doc.querySelectorAll('script, style, nav, footer, iframe').forEach(el => el.remove());
-        let content = doc.body ? doc.body.textContent : '';
-        content = content.replace(/\s+/g, ' ').trim().slice(0, 6000); 
-        linkContextText += `\n--- Trích xuất từ ${link} ---\n${content}\n`;
-      }
-    } catch(e) {
+      if (!html) return '';
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      doc.querySelectorAll('script, style, nav, footer, iframe').forEach(el => el.remove());
+      const content = (doc.body ? doc.body.textContent : '').replace(/\s+/g, ' ').trim().slice(0, 6000);
+      return `\n--- Trích xuất từ ${link} ---\n${content}\n`;
+    } catch (e) {
       console.error('Lỗi đọc link:', e);
+      return '';
     }
-  }
-  return linkContextText;
+  }));
+  return contexts.join('');
 }
 
 function isPotentialJailbreakOrNSFW(text) {
@@ -8886,26 +8930,46 @@ async function sendMessage() {
   touchUserActivity();
 
   State.isGenerating = true;
+  const sendAbortController = new AbortController();
+  State.abortController = sendAbortController;
+  State.generatingChatId = chat.id;
+  const isCurrentSend = () => State.abortController === sendAbortController && !sendAbortController.signal.aborted;
   updateSendButtonState();
 
-  let linkContext = null;
   const urlRegex = /(https?:\/\/[^\s]+)/g;
-  if (urlRegex.test(processedText)) {
-    toast('Đang đọc liên kết trực tuyến...', 'info');
-    linkContext = await fetchLinkContext(processedText);
-    if (linkContext) toast('Đã lấy xong nội dung link', 'success');
-  }
-
-      // Compress images before saving to reduce storage
-  const compressedImages = [];
-  for (const img of images) {
+  const hasLinks = urlRegex.test(processedText);
+  if (hasLinks) toast('Đang đọc liên kết trực tuyến...', 'info');
+  const LINK_CONTEXT_TIMEOUT_MS = 6000;
+  const linkContextController = hasLinks ? new AbortController() : null;
+  const abortLinkContext = () => {
+    if (linkContextController && !linkContextController.signal.aborted) linkContextController.abort();
+  };
+  sendAbortController.signal.addEventListener('abort', abortLinkContext, { once: true });
+  const linkContextTimeout = linkContextController
+    ? setTimeout(() => linkContextController.abort(), LINK_CONTEXT_TIMEOUT_MS)
+    : null;
+  const linkContextPromise = hasLinks
+    ? fetchLinkContext(processedText, { signal: linkContextController.signal }).finally(() => clearTimeout(linkContextTimeout))
+    : Promise.resolve(null);
+  const compressedImagesPromise = mapWithConcurrency(images, IMAGE_COMPRESSION_CONCURRENCY, async (img) => {
     try {
-      const compressed = await compressImage(img, 1024, 0.7);
-      compressedImages.push(compressed);
-    } catch(e) {
-      compressedImages.push(img);
+      return await compressImage(img, 1024, 0.7);
+    } catch (e) {
+      return img;
     }
+  });
+  const [linkContext, compressedImages] = await Promise.all([linkContextPromise, compressedImagesPromise]);
+  sendAbortController.signal.removeEventListener('abort', abortLinkContext);
+  if (!isCurrentSend()) {
+    if (State.abortController === sendAbortController) {
+      State.abortController = null;
+      State.generatingChatId = null;
+      State.isGenerating = false;
+      updateSendButtonState();
+    }
+    return;
   }
+  if (linkContext) toast('Đã lấy xong nội dung link', 'success');
 
     // Collect pending files
   const files = [...State.pendingFiles];
@@ -9000,7 +9064,10 @@ async function generateAIResponse() {
   const generatingChatId = chat.id;
   State.isGenerating = true;
   State.generatingChatId = generatingChatId;
-  State.abortController = new AbortController();
+  const responseAbortController = State.abortController && !State.abortController.signal.aborted
+    ? State.abortController
+    : new AbortController();
+  State.abortController = responseAbortController;
   
   // Reset SunaAgent engine and hook abort listener to signal
   if (window.SunaAgent) {
@@ -9161,7 +9228,7 @@ async function generateAIResponse() {
         messages, 
         stream: true,
         temperature: State.mode === 'flash' ? 0.3 : 0.75,
-        max_tokens: resolveModelMaxTokens(modelToUse, State.mode),
+        max_tokens: maxTokensCeiling,
         ...(State.mode === 'flash' ? {
           top_p: 0.85,
           frequency_penalty: 0.1,
@@ -9240,40 +9307,8 @@ async function generateAIResponse() {
       return { res, fetchError };
     }
 
-    // --- LƯỢT 1 (NGẦM) ---
-    let implicitContext = '';
-    let chamberModel = null;
-    const intent = lastMsg ? classifyIntent(lastMsg.content) : 'fast';
-    if (intent === 'logic' || intent === 'search') {
-      const suffix = intent === 'logic' ? '-maxthinking' : '-search';
-      chamberModel = findChamberModel(suffix);
-      if (chamberModel) {
-        const typingTextEl = typingEl.querySelector('.typing-text');
-        if (typingTextEl) {
-          typingTextEl.textContent = `[Ngầm] Đang xử lý Lượt 1 với ${chamberModel}...`;
-        }
-        try {
-          const { res: luot1Res, fetchError: luot1Err } = await makeApiRequest(apiMessages, chamberModel);
-          if (luot1Res && luot1Res.ok) {
-            implicitContext = await consumeStream(luot1Res);
-          } else {
-            console.warn("Implicit Lượt 1 failed:", luot1Err || (luot1Res ? await luot1Res.text() : ''));
-          }
-        } catch(e) {
-          console.warn("Implicit Lượt 1 failed with error:", e);
-        }
-        if (typingTextEl) {
-          typingTextEl.textContent = `Đang tổng hợp phản hồi với ${model}...`;
-        }
-      }
-    }
-
-    if (implicitContext) {
-      apiMessages.push({
-        role: 'system',
-        content: `[Bối cảnh phân tích từ Lượt 1 - Model: ${chamberModel}]:\n${implicitContext}\n\nHãy sử dụng bối cảnh phân tích trên để trả lời người dùng một cách tối ưu nhất.`
-      });
-    }
+    // Start the user-visible streamed request immediately. A hidden model preflight
+    // previously doubled time-to-first-token for logic/search prompts.
 
     // --- LƯỢT 2 (CHÍNH) & MULTI-TURN AUTO-CONTINUATION STREAMING ---
     const assistantEl = document.createElement('div');
@@ -9314,12 +9349,6 @@ async function generateAIResponse() {
         await runVisionTaskIfNeeded();
         
         const textOnlyMessages = buildTextOnlyMessages(chat, systemPrompt);
-        if (implicitContext) {
-          textOnlyMessages.push({
-            role: 'system',
-            content: `[Bối cảnh phân tích từ Lượt 1 - Model: ${chamberModel}]:\n${implicitContext}\n\nHãy sử dụng bối cảnh phân tích trên để trả lời người dùng một cách tối ưu nhất.`
-          });
-        }
         const retry = await makeApiRequest(textOnlyMessages);
         res = retry.res;
         fetchError = retry.fetchError;
@@ -9563,10 +9592,12 @@ async function generateAIResponse() {
     }
   } finally {
     if (!hasPendingRecursiveTurn) {
-      State.isGenerating = false;
-      State.generatingChatId = null;
-      State.abortController = null;
-      updateSendButtonState();
+      if (State.abortController === responseAbortController) {
+        State.isGenerating = false;
+        State.generatingChatId = null;
+        State.abortController = null;
+        updateSendButtonState();
+      }
       
       // Xóa cache tin nhắn cuối cùng của assistant để force re-render từ skeleton-loading sang iframe thực tế
       const currentChat = getActiveChat();
