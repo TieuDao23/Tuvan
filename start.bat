@@ -1,10 +1,10 @@
 @echo off
 chcp 65001 >nul
-title Suna Chat 2.0 - Local & LAN Server
+title Suna Chat 2.0 - Local & LAN Server (Zero-CORS)
 
 cls
 echo =======================================================
-echo          🌸 SUNA CHAT 2.0 - LIVE WORKSPACE 🌸
+echo          🌸 SUNA CHAT 2.0 - ZERO-CORS SERVER 🌸
 echo =======================================================
 echo.
 
@@ -14,7 +14,7 @@ for /f "tokens=4" %%a in ('route print ^| findstr 0.0.0.0.*0.0.0.0') do (
     if not defined LAN_IP if not "%%a"=="0.0.0.0" set "LAN_IP=%%a"
 )
 
-echo  [1/2] Dang khoi dong Web Server...
+echo  [1/2] Dang khoi dong Web Server co san Reverse Proxy Zero-CORS...
 echo  [2/2] Dang tu dong mo trinh duyet...
 echo.
 echo  =======================================================
@@ -31,14 +31,22 @@ echo.
 :: Mo trinh duyet sau 1 giay
 start "" http://localhost:8080
 
-:: Kiem tra Python va chay Server tren tat ca interface (0.0.0.0)
+:: Kiem tra Python va chay Server co ho tro proxy
 python --version >nul 2>&1
 if %errorlevel% equ 0 (
-    python -m http.server 8080 --bind 0.0.0.0
+    if exist server.py (
+        python server.py 8080
+    ) else (
+        python -m http.server 8080 --bind 0.0.0.0
+    )
 ) else (
     py --version >nul 2>&1
     if %errorlevel% equ 0 (
-        py -m http.server 8080 --bind 0.0.0.0
+        if exist server.py (
+            py server.py 8080
+        ) else (
+            py -m http.server 8080 --bind 0.0.0.0
+        )
     ) else (
         echo [INFO] Khoi dong bang npx serve...
         npx --yes serve -p 8080 -a 0.0.0.0 .

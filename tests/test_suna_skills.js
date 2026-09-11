@@ -35,9 +35,8 @@ describe('Antigravity Skills & Skills Management Center Suite', function() {
       assert.match(htmlContent, /id="btn-skills"[^>]*aria-label="[^"]+"/, 'btn-skills must have aria-label');
     });
 
-    it('should have #btn-skills-chip in input tools bar with badge counter', () => {
-      assert.match(htmlContent, /id="btn-skills-chip"[^>]*class="[^"]*tool-chip[^"]*"/, 'btn-skills-chip must be a tool chip');
-      assert.match(htmlContent, /id="active-skills-count"/, 'active-skills-count badge must exist');
+    it('should have streamlined input tools bar without redundant btn-skills-chip', () => {
+      assert.doesNotMatch(htmlContent, /id="btn-skills-chip"/, 'btn-skills-chip must be removed to prevent toolbar clutter');
     });
 
     it('should have #active-skills-bar container and #btn-add-more-skills', () => {

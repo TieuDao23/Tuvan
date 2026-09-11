@@ -7555,7 +7555,8 @@ async function fetchModels(source = 'both') {
     } else {
       try {
         const cleanBase = baseUrl.replace(/\/+$/, '');
-        const url = bridge ? `${bridge}/models?target=${encodeURIComponent(cleanBase)}` : `${cleanBase}/models`;
+        const isLocal = /^(https?:\/\/)?(127\.0\.0\.1|localhost)(:\d+)?/i.test(cleanBase);
+        const url = (bridge && !isLocal) ? `${bridge}/models?target=${encodeURIComponent(cleanBase)}` : `${cleanBase}/models`;
         const res = await fetch(url, { headers: { 'Authorization': `Bearer ${apiKey}` } });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
@@ -7576,7 +7577,8 @@ async function fetchModels(source = 'both') {
     } else {
       try {
         const cleanBase2 = baseUrl2.replace(/\/+$/, '');
-        const url2 = bridge ? `${bridge}/models?target=${encodeURIComponent(cleanBase2)}` : `${cleanBase2}/models`;
+        const isLocal2 = /^(https?:\/\/)?(127\.0\.0\.1|localhost)(:\d+)?/i.test(cleanBase2);
+        const url2 = (bridge && !isLocal2) ? `${bridge}/models?target=${encodeURIComponent(cleanBase2)}` : `${cleanBase2}/models`;
         const res2 = await fetch(url2, { headers: { 'Authorization': `Bearer ${apiKey2}` } });
         if (!res2.ok) throw new Error(`HTTP ${res2.status}`);
         const data2 = await res2.json();
@@ -8929,6 +8931,14 @@ async function sendMessage() {
   saveChatScrollPosition(chat.id, null);
   touchUserActivity();
 
+  // Clear input immediately to give instant UI feedback and prevent double submission
+  input.value = '';
+  input.style.height = 'auto';
+  State.pendingImages = [];
+  State.pendingFiles = [];
+  renderPendingImages();
+  renderPendingFiles();
+
   State.isGenerating = true;
   const sendAbortController = new AbortController();
   State.abortController = sendAbortController;
@@ -9001,14 +9011,8 @@ async function sendMessage() {
     chat.title = text.slice(0, 40) + (text.length > 40 ? '...' : '');
   }
 
-  input.value = '';
-  input.style.height = 'auto';
-  State.pendingImages = [];
-  State.pendingFiles = [];
   State.agentRecursionDepth = 0;
   if (State.toolFailures && State.toolFailures.clear) State.toolFailures.clear();
-  renderPendingImages();
-  renderPendingFiles();
   renderMessages();
   renderChatList();
   saveState();
@@ -9081,19 +9085,53 @@ async function generateAIResponse() {
   updateSendButtonState();
   const isStillActiveChat = () => State.activeChatId === generatingChatId;
 
-  // Show typing
+  // Show typing: reuse existing #restore-typing from renderMessages or create exactly one indicator
   const container = $('#messages-container');
-  const typingEl = document.createElement('div');
-  typingEl.className = 'message assistant';
-  typingEl.innerHTML = `
-    <div class="message-avatar"><img src="assets/avatar.png" alt="Suna"></div>
-    <div class="message-content">
-      <div class="message-header"><span class="msg-name">✨ Suna Chat</span></div>
-      <div class="message-bubble"><div class="typing-indicator"><span></span><span></span><span></span><span class="typing-text">Đang suy nghĩ...</span></div></div>
-    </div>`;
-  container.appendChild(typingEl);
-  container.scrollTop = container.scrollHeight;
-  $('#chat-area').scrollTop = $('#chat-area').scrollHeight;
+  const existingIndicators = container ? Array.from(container.querySelectorAll('.typing-indicator')) : [];
+  let typingEl = document.getElementById('restore-typing');
+  if (!typingEl && existingIndicators.length > 0) {
+    typingEl = existingIndicators[0].closest('.message.assistant');
+  }
+
+  // Remove any duplicate typing indicators to guarantee strictly at most one
+  if (container) {
+    existingIndicators.forEach((ti) => {
+      const parentMsg = ti.closest('.message.assistant');
+      if (parentMsg && parentMsg !== typingEl && parentMsg.parentNode) {
+        parentMsg.remove();
+      }
+    });
+  }
+
+  if (!typingEl && container) {
+    typingEl = document.createElement('div');
+    typingEl.id = 'restore-typing';
+    typingEl.className = 'message assistant';
+    typingEl.innerHTML = `
+      <div class="message-avatar"><img src="assets/avatar.png" alt="Suna"></div>
+      <div class="message-content">
+        <div class="message-header"><span class="msg-name">✨ Suna Chat</span></div>
+        <div class="message-bubble"><div class="typing-indicator"><span></span><span></span><span></span><span class="typing-text">Đang suy nghĩ...</span></div></div>
+      </div>`;
+    container.appendChild(typingEl);
+  } else if (typingEl) {
+    typingEl.id = 'restore-typing';
+  }
+  if (container) container.scrollTop = container.scrollHeight;
+  const chatAreaEl = $('#chat-area');
+  if (chatAreaEl) chatAreaEl.scrollTop = chatAreaEl.scrollHeight;
+
+  const removeAllTypingIndicators = () => {
+    if (typingEl && typingEl.parentNode) typingEl.remove();
+    const rt = document.getElementById('restore-typing');
+    if (rt && rt.parentNode) rt.remove();
+    if (container) {
+      container.querySelectorAll('.typing-indicator').forEach(ti => {
+        const parent = ti.closest('.message.assistant');
+        if (parent && parent.parentNode) parent.remove();
+      });
+    }
+  };
 
   // Build API messages
   const systemPrompt = buildSystemPrompt();
@@ -9207,7 +9245,8 @@ async function generateAIResponse() {
       const proxy = getProxyForModel(modelToUse);
       function resolveTargetUrl(targetBase, bridgeUrl) {
         const cleanBase = (targetBase || '').replace(/\/+$/, '');
-        if (bridgeUrl && bridgeUrl.trim()) {
+        const isLocal = /^(https?:\/\/)?(127\.0\.0\.1|localhost)(:\d+)?/i.test(cleanBase);
+        if (bridgeUrl && bridgeUrl.trim() && !isLocal) {
           const cleanBridge = bridgeUrl.trim().replace(/\/+$/, '');
           return `${cleanBridge}/chat/completions?target=${encodeURIComponent(cleanBase)}`;
         }
@@ -9400,13 +9439,13 @@ async function generateAIResponse() {
               if (!typingRemoved) {
                 typingRemoved = true;
                 if (typingEl.parentNode) typingEl.remove();
+                removeAllTypingIndicators();
               }
 
               if (isStillActiveChat()) {
                 // Phục hồi kết nối DOM nếu user chuyển chat qua lại
                 if (!assistantEl.parentNode) {
-                  const restoreTyping = document.getElementById('restore-typing');
-                  if (restoreTyping) restoreTyping.remove();
+                  removeAllTypingIndicators();
                   container.appendChild(assistantEl);
                 }
 
@@ -9451,9 +9490,7 @@ async function generateAIResponse() {
     }
 
     if (isStillActiveChat()) {
-      if (typingEl.parentNode) typingEl.remove();
-      const restoreTyping = document.getElementById('restore-typing');
-      if (restoreTyping) restoreTyping.remove();
+      removeAllTypingIndicators();
       if (!assistantEl.parentNode && assistantContent) {
         container.appendChild(assistantEl);
         const displayContent = parser ? parser.filteredText : assistantContent;
@@ -9555,8 +9592,8 @@ async function generateAIResponse() {
     }
 
   } catch(e) {
+    removeAllTypingIndicators();
     if (e.name === 'AbortError') {
-      if (typingEl && typingEl.parentNode) typingEl.remove();
       const currentChat = State.chats.find(c => c.id === generatingChatId);
       if (currentChat && assistantContent) {
         currentChat.messages.push({ id: genId(), role: 'assistant', content: assistantContent + '\n\n*(Đã dừng)*', timestamp: Date.now(), updatedAt: Date.now() });
@@ -9573,7 +9610,6 @@ async function generateAIResponse() {
       if (isStillActiveChat()) renderMessages();
       toast('Đã dừng tạo phản hồi.', 'info');
     } else {
-      if (typingEl && typingEl.parentNode) typingEl.remove();
       const isCors = e.isCorsError || (e.name === 'TypeError' && String(e.message).toLowerCase().includes('fetch'));
       const isModelNotFound = String(e.message).includes('model_not_found') || String(e.message).includes('Model not found') || (String(e.message).includes('404') && String(e.message).includes('model'));
       const errorContent = isCors
@@ -9591,6 +9627,7 @@ async function generateAIResponse() {
       toast(isCors ? 'Lỗi kết nối CORS (Preflight): Vui lòng kiểm tra CORS Proxy' : (isModelNotFound ? 'Lỗi: Model không tồn tại trên server' : 'Lỗi: ' + e.message), 'error');
     }
   } finally {
+    removeAllTypingIndicators();
     if (!hasPendingRecursiveTurn) {
       if (State.abortController === responseAbortController) {
         State.isGenerating = false;
@@ -10483,6 +10520,7 @@ function initEvents() {
     }
 
     if (e.key === 'Enter' && !e.shiftKey) { 
+      if (e.isComposing || e.keyCode === 229) return;
       e.preventDefault(); 
       if (!State.isGenerating) sendMessage(); 
     }
@@ -11029,9 +11067,6 @@ export default {
   // --- Skills System Event Listeners ---
   const btnSkills = document.getElementById('btn-skills');
   if (btnSkills) btnSkills.addEventListener('click', () => openModal('skills-modal'));
-
-  const btnSkillsChip = document.getElementById('btn-skills-chip');
-  if (btnSkillsChip) btnSkillsChip.addEventListener('click', () => openModal('skills-modal'));
 
   const btnAddMoreSkills = document.getElementById('btn-add-more-skills');
   if (btnAddMoreSkills) btnAddMoreSkills.addEventListener('click', () => openModal('skills-modal'));
