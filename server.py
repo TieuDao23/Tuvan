@@ -123,6 +123,10 @@ class SunaProxyHandler(http.server.SimpleHTTPRequestHandler):
         if self.path == '/api/health':
             self._send_json(200, {'status': 'ok', 'proxy': True})
             return
+        if self.path == '/api/client-info':
+            client_ip = self.client_address[0] if self.client_address else '127.0.0.1'
+            self._send_json(200, {'client_ip': client_ip, 'status': 'ok'})
+            return
         if self.path.startswith('/api/proxy') or self.path.startswith('/proxy'):
             self.handle_proxy('GET')
             return
