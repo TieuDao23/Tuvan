@@ -116,10 +116,10 @@ function upgradeStateLocal() {
   });
   
   if (State.settings && !State.settings.updatedAt) {
-    State.settings.updatedAt = Date.now();
+    State.settings.updatedAt = 0;
   }
   if (State.memory) {
-    if (!State.memory.lastUpdated) State.memory.lastUpdated = Date.now();
+    if (!State.memory.lastUpdated) State.memory.lastUpdated = 0;
     State.memory.facts = (State.memory.facts || []).map(f => {
       const fact = { ...f };
       if (!fact.timestamp) fact.timestamp = Date.now();
@@ -128,9 +128,31 @@ function upgradeStateLocal() {
   }
 }
 
+function normalizeTimestamp(ts) {
+  if (!ts) return 0;
+  if (typeof ts === 'number') return ts;
+  if (typeof ts.toMillis === 'function') return ts.toMillis();
+  if (typeof ts.seconds === 'number') return ts.seconds * 1000 + (ts.nanoseconds ? Math.floor(ts.nanoseconds / 1e6) : 0);
+  if (typeof ts === 'string') {
+    const parsed = Date.parse(ts);
+    if (!isNaN(parsed)) return parsed;
+  }
+  return 0;
+}
+
 function mergeChats(localChats, remoteChats) {
+  const parseTime = (ts) => {
+    if (typeof normalizeTimestamp === 'function') return normalizeTimestamp(ts);
+    if (!ts) return 0;
+    if (typeof ts === 'number') return ts;
+    if (typeof ts.toMillis === 'function') return ts.toMillis();
+    if (typeof ts.seconds === 'number') return ts.seconds * 1000 + Math.floor((ts.nanoseconds || 0) / 1e6);
+    const parsed = Date.parse(ts);
+    return isNaN(parsed) ? 0 : parsed;
+  };
+
   const mergedMap = new Map();
-  const localDeleted = State.deletedChats || {};
+  const localDeleted = (typeof State !== 'undefined' && State.deletedChats) ? State.deletedChats : {};
   
   for (const c of (localChats || [])) {
     const chat = { ...c };
@@ -155,10 +177,41 @@ function mergeChats(localChats, remoteChats) {
       mergedMap.set(remoteChat.id, remoteChat);
     } else {
       const mergedChat = { ...localChat };
+      const localUpdated = parseTime(localChat.updatedAt);
+      const remoteUpdated = parseTime(remoteChat.updatedAt);
 
-      if ((remoteChat.updatedAt || 0) > (localChat.updatedAt || 0)) {
-        mergedChat.title = remoteChat.title;
-        mergedChat.updatedAt = remoteChat.updatedAt;
+      if (remoteUpdated > localUpdated) {
+        Object.assign(mergedChat, remoteChat);
+        mergedChat.updatedAt = remoteUpdated;
+        if ((!remoteChat.title || remoteChat.title === 'Chat mới') && (localChat.title && localChat.title !== 'Chat mới')) {
+          mergedChat.title = localChat.title;
+        }
+        if ((!remoteChat.folder || remoteChat.folder === 'Tất cả') && (localChat.folder && localChat.folder !== 'Tất cả')) {
+          mergedChat.folder = localChat.folder;
+        }
+        if (!remoteChat.pinnedContext && localChat.pinnedContext) {
+          mergedChat.pinnedContext = localChat.pinnedContext;
+        }
+      } else if (remoteUpdated === localUpdated) {
+        if (remoteChat.title && remoteChat.title !== 'Chat mới' && localChat.title === 'Chat mới') {
+          mergedChat.title = remoteChat.title;
+        }
+        if (remoteChat.folder && remoteChat.folder !== 'Tất cả' && (!localChat.folder || localChat.folder === 'Tất cả')) {
+          mergedChat.folder = remoteChat.folder;
+        }
+        if (remoteChat.pinnedContext && !localChat.pinnedContext) {
+          mergedChat.pinnedContext = remoteChat.pinnedContext;
+        }
+      } else {
+        if (remoteChat.title && remoteChat.title !== 'Chat mới' && localChat.title === 'Chat mới') {
+          mergedChat.title = remoteChat.title;
+        }
+        if (remoteChat.folder && remoteChat.folder !== 'Tất cả' && (!localChat.folder || localChat.folder === 'Tất cả')) {
+          mergedChat.folder = remoteChat.folder;
+        }
+        if (remoteChat.pinnedContext && !localChat.pinnedContext) {
+          mergedChat.pinnedContext = remoteChat.pinnedContext;
+        }
       }
 
       mergedChat.deletedMessageIds = {
@@ -174,7 +227,9 @@ function mergeChats(localChats, remoteChats) {
         if (!lm) {
           msgMap.set(rm.id, rm);
         } else {
-          if ((rm.updatedAt || 0) > (lm.updatedAt || 0)) {
+          const rmTime = parseTime(rm.updatedAt || rm.timestamp);
+          const lmTime = parseTime(lm.updatedAt || lm.timestamp);
+          if (rmTime > lmTime) {
             const mergedMsg = { ...rm };
             // Preserve local base64 images if remote has '__large_image__'
             if (lm.images && lm.images.length) {
@@ -215,7 +270,7 @@ function mergeChats(localChats, remoteChats) {
 
       finalMessages.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
       mergedChat.messages = finalMessages;
-      mergedChat.updatedAt = Math.max(localChat.updatedAt || 0, remoteChat.updatedAt || 0);
+      mergedChat.updatedAt = Math.max(localUpdated, remoteUpdated);
       mergedMap.set(mergedChat.id, mergedChat);
     }
   }
@@ -237,16 +292,36 @@ function mergeSettings(localSettings, remoteSettings) {
   if (!localSettings) return remoteSettings || {};
   if (!remoteSettings) return localSettings || {};
   
-  const localTime = localSettings.updatedAt || 0;
-  const remoteTime = remoteSettings.updatedAt || 0;
+  const parseTime = (ts) => {
+    if (typeof normalizeTimestamp === 'function') return normalizeTimestamp(ts);
+    if (!ts) return 0;
+    if (typeof ts === 'number') return ts;
+    if (typeof ts.toMillis === 'function') return ts.toMillis();
+    if (typeof ts.seconds === 'number') return ts.seconds * 1000 + Math.floor((ts.nanoseconds || 0) / 1e6);
+    const parsed = Date.parse(ts);
+    return isNaN(parsed) ? 0 : parsed;
+  };
+
+  const localTime = parseTime(localSettings.updatedAt);
+  const remoteTime = parseTime(remoteSettings.updatedAt);
   
-  if (remoteTime > localTime) {
-    return { ...remoteSettings };
+  if (remoteTime >= localTime) {
+    return { ...localSettings, ...remoteSettings, updatedAt: remoteTime };
   }
-  return localSettings;
+  return { ...remoteSettings, ...localSettings, updatedAt: localTime };
 }
 
 function mergeMemory(localMemory, remoteMemory) {
+  const parseTime = (ts) => {
+    if (typeof normalizeTimestamp === 'function') return normalizeTimestamp(ts);
+    if (!ts) return 0;
+    if (typeof ts === 'number') return ts;
+    if (typeof ts.toMillis === 'function') return ts.toMillis();
+    if (typeof ts.seconds === 'number') return ts.seconds * 1000 + Math.floor((ts.nanoseconds || 0) / 1e6);
+    const parsed = Date.parse(ts);
+    return isNaN(parsed) ? 0 : parsed;
+  };
+
   const mergedFacts = new Map();
   const factsL = (localMemory && localMemory.facts) || [];
   const factsR = (remoteMemory && remoteMemory.facts) || [];
@@ -260,7 +335,9 @@ function mergeMemory(localMemory, remoteMemory) {
     if (!f.fact) continue;
     const key = f.fact.trim().toLowerCase();
     const existing = mergedFacts.get(key);
-    if (!existing || (f.timestamp || 0) > (existing.timestamp || 0)) {
+    const fTime = parseTime(f.timestamp);
+    const exTime = parseTime(existing && existing.timestamp);
+    if (!existing || fTime > exTime) {
       mergedFacts.set(key, { ...f });
     }
   }
@@ -272,86 +349,226 @@ function mergeMemory(localMemory, remoteMemory) {
     sortedFacts.shift();
   }
   
+  const localLast = parseTime(localMemory && localMemory.lastUpdated);
+  const remoteLast = parseTime(remoteMemory && remoteMemory.lastUpdated);
+  
   return {
     facts: sortedFacts,
-    lastUpdated: Math.max((localMemory && localMemory.lastUpdated) || 0, (remoteMemory && remoteMemory.lastUpdated) || 0, Date.now())
+    lastUpdated: Math.max(localLast, remoteLast)
   };
+}
+
+// ===== Browser Standard BroadcastChannel for 0ms Zero-Latency Multi-Tab Sync =====
+const _tabId = 'tab_' + Math.random().toString(36).substring(2, 9) + '_' + Date.now();
+let _broadcastChannel = null;
+
+function initBroadcastChannel() {
+  if (typeof BroadcastChannel === 'undefined') return;
+  try {
+    if (!_broadcastChannel) {
+      _broadcastChannel = new BroadcastChannel('suna_sync_channel');
+      _broadcastChannel.onmessage = handleBroadcastMessage;
+    }
+  } catch (e) {
+    console.warn('BroadcastChannel initialization failed:', e);
+  }
+}
+initBroadcastChannel();
+
+function broadcastLocalSync(payload = {}) {
+  if (!_broadcastChannel) return;
+  try {
+    const currentUid = (typeof AuthState !== 'undefined' && AuthState.user && AuthState.user.uid) || (typeof getOrCreateGuestUid === 'function' ? getOrCreateGuestUid() : null);
+    _broadcastChannel.postMessage({
+      type: 'suna_local_sync',
+      sourceTabId: _tabId,
+      uid: currentUid,
+      chats: State.chats,
+      deletedChats: State.deletedChats || {},
+      settings: State.settings,
+      memory: State.memory,
+      timestamp: Date.now(),
+      ...payload
+    });
+  } catch (e) {
+    // Ignore postMessage issues
+  }
+}
+
+function handleBroadcastMessage(event) {
+  try {
+    const data = event && event.data;
+    if (!data || data.type !== 'suna_local_sync' || data.sourceTabId === _tabId) return;
+
+    // Strict account isolation: only accept updates for matching UID (or matching guest)
+    const currentUid = (typeof AuthState !== 'undefined' && AuthState.user && AuthState.user.uid) || (typeof getOrCreateGuestUid === 'function' ? getOrCreateGuestUid() : null);
+    const incomingUid = data.uid || null;
+    if (incomingUid !== currentUid) return;
+
+    upgradeStateLocal();
+
+    let hasChanges = false;
+
+    // 1. Sync deleted chats
+    if (data.deletedChats) {
+      State.deletedChats = {
+        ...(State.deletedChats || {}),
+        ...data.deletedChats
+      };
+      hasChanges = true;
+    }
+
+    // 2. Sync chats
+    if (data.chats && Array.isArray(data.chats)) {
+      const mergedChats = mergeChats(State.chats, data.chats);
+      const isStreamingActiveChat = typeof State !== 'undefined' && State.isGenerating && State.activeChatId === State.generatingChatId;
+      State.chats = mergedChats;
+      if (State.chats.length > 0) {
+        if (!State.chats.find(c => c.id === State.activeChatId)) {
+          State.activeChatId = State.chats[0].id;
+        }
+      } else {
+        State.activeChatId = null;
+      }
+      if (typeof window.renderChatList === 'function') {
+        try { window.renderChatList(); } catch (_) {}
+      }
+      if (typeof window.renderMessages === 'function' && !isStreamingActiveChat) {
+        try { window.renderMessages(); } catch (_) {}
+      }
+      hasChanges = true;
+    }
+
+    // 3. Sync settings
+    if (data.settings) {
+      const mergedSettings = mergeSettings(State.settings, data.settings);
+      Object.assign(State.settings, mergedSettings);
+      if (typeof window.updateUserDisplay === 'function') {
+        try { window.updateUserDisplay(); } catch (_) {}
+      }
+      if (typeof window.applyTheme === 'function') {
+        try { window.applyTheme(); } catch (_) {}
+      }
+      hasChanges = true;
+    }
+
+    // 4. Sync memory
+    if (data.memory) {
+      const mergedMemory = mergeMemory(State.memory, data.memory);
+      State.memory = mergedMemory;
+      if (typeof window.renderMemoryList === 'function') {
+        try { window.renderMemoryList(); } catch (_) {}
+      }
+      hasChanges = true;
+    }
+
+    if (_warmedSnapshots && _warmedSnapshots.uid === currentUid) {
+      if (data.chats) {
+        _warmedSnapshots.chats = State.chats;
+        _warmedSnapshots.deletedChats = { ...(State.deletedChats || {}) };
+        if (_warmedSnapshots.warmed) _warmedSnapshots.warmed.chats = true;
+      }
+      if (data.settings) {
+        _warmedSnapshots.settings = { ...State.settings };
+        if (_warmedSnapshots.warmed) _warmedSnapshots.warmed.settings = true;
+      }
+      if (data.memory) {
+        _warmedSnapshots.memory = { ...State.memory };
+        if (_warmedSnapshots.warmed) _warmedSnapshots.warmed.memory = true;
+      }
+    }
+
+    if (hasChanges && window.saveLocalStateOnly) {
+      window.saveLocalStateOnly();
+    }
+  } catch (e) {
+    console.warn('Broadcast sync handler error:', e);
+  }
 }
 
 // ===== Cloud Sync (Resilient Fetch-Merge-Save) =====
 let _syncRetryCount = 0;
 let _syncRetryTimer = null;
+let _hasPendingSync = false;
+let _pendingSyncPromise = null;
+let _pendingSyncResolver = null;
+let _pendingTargets = new Set();
+let _lastSyncedSettingsTime = 0;
+let _lastSyncedMemoryTime = 0;
+let _lastSyncedChatsJson = '';
+let _lastSyncedDeletedChatsJson = '{}';
 
-function cloudSave(immediate = false) {
-  if (!AuthState.isLoggedIn || AuthState.useLocalOnly || !_fb) return;
+let _warmedSnapshots = {
+  uid: null,
+  chats: null,
+  deletedChats: null,
+  settings: null,
+  memory: null,
+  warmed: {
+    chats: false,
+    settings: false,
+    memory: false
+  },
+  get isWarmed() {
+    return !!(this.warmed && this.warmed.chats && this.warmed.settings && this.warmed.memory);
+  }
+};
+
+function cloudSave(immediate = false, target = null) {
+  if (!AuthState.isLoggedIn || AuthState.useLocalOnly || !_fb) return Promise.resolve();
   if (AuthState.user && AuthState.user.uid && AuthState.user.uid.startsWith('guest_')) {
     updateSyncIndicator('offline');
-    return;
+    return Promise.resolve();
   }
   if (typeof navigator !== 'undefined' && navigator.onLine === false) {
     updateSyncIndicator('offline');
-    return;
+    return Promise.resolve();
   }
-  if (AuthState.syncDebounceTimer) clearTimeout(AuthState.syncDebounceTimer);
+
+  if (target) {
+    _pendingTargets.add(target);
+  }
+
+  // If already syncing, queue the next sync to prevent silent data drop
+  if (AuthState.isSyncing) {
+    _hasPendingSync = true;
+    if (!_pendingSyncPromise) {
+      _pendingSyncPromise = new Promise((resolve) => {
+        _pendingSyncResolver = resolve;
+      });
+    }
+    return _pendingSyncPromise;
+  }
+
+  if (AuthState.syncDebounceTimer) {
+    clearTimeout(AuthState.syncDebounceTimer);
+    AuthState.syncDebounceTimer = null;
+  }
 
   const doSave = async () => {
-    if (AuthState.isSyncing) return;
+    if (AuthState.isSyncing) {
+      _hasPendingSync = true;
+      if (!_pendingSyncPromise) {
+        _pendingSyncPromise = new Promise((resolve) => {
+          _pendingSyncResolver = resolve;
+        });
+      }
+      return _pendingSyncPromise;
+    }
     if (!AuthState.isLoggedIn || AuthState.useLocalOnly || !_fb) return;
     if (AuthState.user && AuthState.user.uid && AuthState.user.uid.startsWith('guest_')) {
       updateSyncIndicator('offline');
       return;
     }
     AuthState.isSyncing = true;
+    if (_syncRetryTimer) {
+      clearTimeout(_syncRetryTimer);
+      _syncRetryTimer = null;
+    }
+
     try {
       const uid = AuthState.user.uid;
       upgradeStateLocal();
-
-      // Retrieve current remote data to perform pre-merge before writing (prevents overwrites)
-      let remoteChats = [];
-      let remoteDeleted = {};
-      let remoteSettings = {};
-      let remoteMemory = { facts: [] };
-
-      try {
-        const [sSnap, mSnap, cSnap] = await Promise.all([
-          _fb.getDoc(_fb.doc(_fb.db, 'users', uid, 'data', 'settings')),
-          _fb.getDoc(_fb.doc(_fb.db, 'users', uid, 'data', 'memory')),
-          _fb.getDoc(_fb.doc(_fb.db, 'users', uid, 'data', 'chats'))
-        ]);
-
-        if (sSnap.exists()) remoteSettings = sSnap.data();
-        if (mSnap.exists()) remoteMemory = mSnap.data();
-        if (cSnap.exists()) {
-          const rawChats = cSnap.data().chats;
-          if (rawChats) remoteChats = JSON.parse(rawChats);
-          const rawDel = cSnap.data().deletedChats;
-          if (rawDel) remoteDeleted = JSON.parse(rawDel);
-        }
-      } catch (err) {
-        console.warn("Failed to fetch remote data for pre-merge (offline-first). Pushing local state directly.", err);
-      }
-
-      // Merge remote deleted chats lists
-      State.deletedChats = {
-        ...(State.deletedChats || {}),
-        ...remoteDeleted
-      };
-
-      // Perform three-way merges
-      const mergedChats = mergeChats(State.chats, remoteChats);
-      const mergedSettings = mergeSettings(State.settings, remoteSettings);
-      const mergedMemory = mergeMemory(State.memory, remoteMemory);
-
-      State.chats = mergedChats;
-      Object.assign(State.settings, mergedSettings);
-      State.memory = mergedMemory;
-
-      if (State.chats.length > 0 && !State.chats.find(c => c.id === State.activeChatId)) {
-        State.activeChatId = State.chats[0].id;
-      }
-
-      // Persist merged data locally first
-      if (window.saveLocalStateOnly) window.saveLocalStateOnly();
 
       // Clean large images to satisfy 1MB Document quota
       let chatsClean = State.chats.map(c => ({
@@ -367,33 +584,213 @@ function cloudSave(immediate = false) {
 
       // Document Quota Safety Guard: Ensure Firestore payload < 750KB
       let chatsJson = JSON.stringify(chatsClean);
-      if (chatsJson.length > 750000) {
-        chatsClean = chatsClean.map(c => {
-          if (c.id === State.activeChatId || !c.messages || c.messages.length <= 20) {
-            return c;
-          }
-          return {
-            ...c,
-            messages: c.messages.slice(-20)
-          };
-        });
-        chatsJson = JSON.stringify(chatsClean);
+        if (chatsJson.length > 750000) {
+          chatsClean = chatsClean.map(c => {
+            if (c.id === State.activeChatId || !c.messages || c.messages.length <= 20) {
+              return c;
+            }
+            return {
+              ...c,
+              messages: c.messages.slice(-20)
+            };
+          });
+          chatsJson = JSON.stringify(chatsClean);
+        }
+        if (chatsJson.length > 900000) {
+          chatsClean = chatsClean.map(c => {
+            if (!c.messages || c.messages.length <= 10) return c;
+            return {
+              ...c,
+              messages: c.messages.slice(-10)
+            };
+          });
+          chatsJson = JSON.stringify(chatsClean);
+        }
+
+      const isFirstSync = !_warmedSnapshots || !_warmedSnapshots.warmed || !_warmedSnapshots.warmed.chats || !_warmedSnapshots.warmed.settings || !_warmedSnapshots.warmed.memory || _warmedSnapshots.uid !== uid;
+
+      const deletedChatsJson = JSON.stringify(State.deletedChats || {});
+      const currentSettingsTime = normalizeTimestamp(State.settings && State.settings.updatedAt);
+      const currentMemoryTime = normalizeTimestamp(State.memory && State.memory.lastUpdated);
+
+      const isChatsDirty = (chatsJson !== _lastSyncedChatsJson) || (deletedChatsJson !== _lastSyncedDeletedChatsJson);
+      const isSettingsDirty = (currentSettingsTime > 0 && currentSettingsTime !== _lastSyncedSettingsTime);
+      const isMemoryDirty = (currentMemoryTime > 0 && currentMemoryTime !== _lastSyncedMemoryTime);
+
+      const targets = new Set(_pendingTargets);
+      _pendingTargets.clear();
+
+      if (isFirstSync) {
+        targets.add('chats');
+        targets.add('settings');
+        targets.add('memory');
+      } else {
+        if (isChatsDirty) targets.add('chats');
+        if (isSettingsDirty) targets.add('settings');
+        if (isMemoryDirty) targets.add('memory');
+
+        if (targets.has('chats') && !isChatsDirty) targets.delete('chats');
+        if (targets.has('settings') && !isSettingsDirty) targets.delete('settings');
+        if (targets.has('memory') && !isMemoryDirty) targets.delete('memory');
       }
 
-      // Commit fully merged data to cloud in parallel
-      await Promise.all([
-        _fb.setDoc(_fb.doc(_fb.db, 'users', uid, 'data', 'settings'), {
-          ...State.settings, updatedAt: _fb.serverTimestamp()
-        }),
-        _fb.setDoc(_fb.doc(_fb.db, 'users', uid, 'data', 'memory'), {
-          ...State.memory, updatedAt: _fb.serverTimestamp()
-        }),
-        _fb.setDoc(_fb.doc(_fb.db, 'users', uid, 'data', 'chats'), {
-          chats: chatsJson,
-          deletedChats: JSON.stringify(State.deletedChats || {}),
-          updatedAt: _fb.serverTimestamp()
-        })
-      ]);
+      if (targets.size === 0) {
+        AuthState.isSyncing = false;
+        return Promise.resolve();
+      }
+
+      // Pre-merge targeted documents: use warmed snapshot if available, else fetch via getDoc
+      const fetchTasks = [];
+      let remoteChats = (_warmedSnapshots && _warmedSnapshots.chats) || [];
+      let remoteDeleted = (_warmedSnapshots && _warmedSnapshots.deletedChats) || {};
+      let remoteSettings = (_warmedSnapshots && _warmedSnapshots.settings) || {};
+      let remoteMemory = (_warmedSnapshots && _warmedSnapshots.memory) || { facts: [] };
+
+      if (targets.has('chats') && (!_warmedSnapshots || !_warmedSnapshots.warmed || !_warmedSnapshots.warmed.chats || _warmedSnapshots.uid !== uid)) {
+        fetchTasks.push(
+          _fb.getDoc(_fb.doc(_fb.db, 'users', uid, 'data', 'chats')).then(cSnap => {
+            if (cSnap && cSnap.exists()) {
+              const rawChats = cSnap.data().chats;
+              if (rawChats) remoteChats = JSON.parse(rawChats);
+              const rawDel = cSnap.data().deletedChats;
+              if (rawDel) remoteDeleted = JSON.parse(rawDel);
+            }
+          }).catch(err => console.warn('Failed to fetch remote chats for pre-merge:', err))
+        );
+      }
+
+      if (targets.has('settings') && (!_warmedSnapshots || !_warmedSnapshots.warmed || !_warmedSnapshots.warmed.settings || _warmedSnapshots.uid !== uid)) {
+        fetchTasks.push(
+          _fb.getDoc(_fb.doc(_fb.db, 'users', uid, 'data', 'settings')).then(sSnap => {
+            if (sSnap && sSnap.exists()) remoteSettings = sSnap.data() || {};
+          }).catch(err => console.warn('Failed to fetch remote settings for pre-merge:', err))
+        );
+      }
+
+      if (targets.has('memory') && (!_warmedSnapshots || !_warmedSnapshots.warmed || !_warmedSnapshots.warmed.memory || _warmedSnapshots.uid !== uid)) {
+        fetchTasks.push(
+          _fb.getDoc(_fb.doc(_fb.db, 'users', uid, 'data', 'memory')).then(mSnap => {
+            if (mSnap && mSnap.exists()) remoteMemory = mSnap.data() || { facts: [] };
+          }).catch(err => console.warn('Failed to fetch remote memory for pre-merge:', err))
+        );
+      }
+
+      if (fetchTasks.length > 0) {
+        await Promise.all(fetchTasks);
+      }
+
+      // Perform three-way merges only for targets being updated
+      if (targets.has('chats')) {
+        State.deletedChats = {
+          ...(State.deletedChats || {}),
+          ...remoteDeleted
+        };
+        const mergedChats = mergeChats(State.chats, remoteChats);
+        State.chats = mergedChats;
+        if (State.chats.length > 0 && !State.chats.find(c => c.id === State.activeChatId)) {
+          State.activeChatId = State.chats[0].id;
+        }
+      }
+
+      if (targets.has('settings')) {
+        const mergedSettings = mergeSettings(State.settings, remoteSettings);
+        Object.assign(State.settings, mergedSettings);
+      }
+
+      if (targets.has('memory')) {
+        const mergedMemory = mergeMemory(State.memory, remoteMemory);
+        State.memory = mergedMemory;
+      }
+
+      // Persist merged data locally first
+      if (window.saveLocalStateOnly) window.saveLocalStateOnly();
+
+      // Recalculate chats clean after merge
+      if (targets.has('chats')) {
+        chatsClean = State.chats.map(c => ({
+          ...c,
+          messages: (c.messages || []).map(m => {
+            const copy = { ...m };
+            if (copy.images && copy.images.length) {
+              copy.images = copy.images.map(img => (img && img.length > 70000) ? '__large_image__' : img);
+            }
+            return copy;
+          })
+        }));
+        chatsJson = JSON.stringify(chatsClean);
+        if (chatsJson.length > 750000) {
+          chatsClean = chatsClean.map(c => {
+            if (c.id === State.activeChatId || !c.messages || c.messages.length <= 20) {
+              return c;
+            }
+            return {
+              ...c,
+              messages: c.messages.slice(-20)
+            };
+          });
+          chatsJson = JSON.stringify(chatsClean);
+        }
+        if (chatsJson.length > 900000) {
+          chatsClean = chatsClean.map(c => {
+            if (!c.messages || c.messages.length <= 10) return c;
+            return {
+              ...c,
+              messages: c.messages.slice(-10)
+            };
+          });
+          chatsJson = JSON.stringify(chatsClean);
+        }
+      }
+
+      // Commit TARGETED documents to cloud in parallel
+      const writeTasks = [];
+      if (targets.has('settings')) {
+        writeTasks.push(
+          _fb.setDoc(_fb.doc(_fb.db, 'users', uid, 'data', 'settings'), {
+            ...State.settings, updatedAt: _fb.serverTimestamp()
+          })
+        );
+      }
+      if (targets.has('memory')) {
+        writeTasks.push(
+          _fb.setDoc(_fb.doc(_fb.db, 'users', uid, 'data', 'memory'), {
+            ...State.memory, updatedAt: _fb.serverTimestamp()
+          })
+        );
+      }
+      if (targets.has('chats')) {
+        writeTasks.push(
+          _fb.setDoc(_fb.doc(_fb.db, 'users', uid, 'data', 'chats'), {
+            chats: chatsJson,
+            deletedChats: JSON.stringify(State.deletedChats || {}),
+            updatedAt: _fb.serverTimestamp()
+          })
+        );
+      }
+
+      await Promise.all(writeTasks);
+
+      // Update warmed snapshots with decoupled cloned state
+      if (!_warmedSnapshots) _warmedSnapshots = { warmed: {} };
+      if (!_warmedSnapshots.warmed) _warmedSnapshots.warmed = {};
+      _warmedSnapshots.uid = uid;
+      if (targets.has('settings')) {
+        _warmedSnapshots.settings = { ...State.settings };
+        _warmedSnapshots.warmed.settings = true;
+        _lastSyncedSettingsTime = normalizeTimestamp(State.settings.updatedAt) || Date.now();
+      }
+      if (targets.has('memory')) {
+        _warmedSnapshots.memory = { ...State.memory };
+        _warmedSnapshots.warmed.memory = true;
+        _lastSyncedMemoryTime = normalizeTimestamp(State.memory.lastUpdated) || Date.now();
+      }
+      if (targets.has('chats')) {
+        _warmedSnapshots.chats = JSON.parse(chatsJson);
+        _warmedSnapshots.deletedChats = { ...(State.deletedChats || {}) };
+        _warmedSnapshots.warmed.chats = true;
+        _lastSyncedChatsJson = chatsJson;
+        _lastSyncedDeletedChatsJson = deletedChatsJson;
+      }
 
       AuthState.lastSyncTime = Date.now();
       _syncRetryCount = 0;
@@ -416,13 +813,29 @@ function cloudSave(immediate = false) {
       }
     } finally {
       AuthState.isSyncing = false;
+      // Continuous sync queue: flush any pending modifications accumulated during sync
+      if (_hasPendingSync || _pendingTargets.size > 0) {
+        _hasPendingSync = false;
+        const resolvePending = _pendingSyncResolver;
+        _pendingSyncPromise = null;
+        _pendingSyncResolver = null;
+        cloudSave(true).then((res) => {
+          if (resolvePending) resolvePending(res);
+        }).catch(() => {
+          if (resolvePending) resolvePending();
+        });
+      } else if (_pendingSyncResolver) {
+        _pendingSyncResolver();
+        _pendingSyncPromise = null;
+        _pendingSyncResolver = null;
+      }
     }
   };
 
   if (immediate) {
     return doSave();
   } else {
-    AuthState.syncDebounceTimer = setTimeout(doSave, 2000);
+    AuthState.syncDebounceTimer = setTimeout(doSave, 150);
     return Promise.resolve();
   }
 }
@@ -453,58 +866,178 @@ async function cloudLoad() {
       State.deletedChats = {};
       State.settings = typeof getDefaultSettings === 'function' ? getDefaultSettings() : State.settings;
       State.memory = { facts: [], lastUpdated: 0 };
+      _warmedSnapshots = {
+        uid,
+        settings: { ...State.settings },
+        memory: { ...State.memory },
+        chats: JSON.parse(JSON.stringify(State.chats)),
+        deletedChats: {},
+        warmed: {
+          chats: true,
+          settings: true,
+          memory: true
+        },
+        get isWarmed() { return true; }
+      };
+      _lastSyncedSettingsTime = normalizeTimestamp(State.settings.updatedAt);
+      _lastSyncedMemoryTime = normalizeTimestamp(State.memory.lastUpdated);
+      _lastSyncedChatsJson = JSON.stringify(State.chats);
       if (typeof window.saveLocalStateOnly === 'function') window.saveLocalStateOnly();
       if (typeof window.saveMemory === 'function') window.saveMemory();
       await cloudSave(true);
     } else {
       upgradeStateLocal();
 
+      let remoteSettings = {};
+      let remoteMemory = { facts: [] };
+      let remoteChats = [];
+      let remoteDeleted = {};
+
       if (sSnap.exists()) {
-        const d = sSnap.data(); delete d.updatedAt;
+        const d = sSnap.data();
+        remoteSettings = d;
         const mergedSettings = mergeSettings(State.settings, d);
         Object.assign(State.settings, mergedSettings);
       }
       
       if (mSnap.exists()) {
         const d = mSnap.data(); delete d.updatedAt;
+        remoteMemory = d;
         if (d.facts) {
           const mergedMemory = mergeMemory(State.memory, d);
           State.memory = mergedMemory;
         }
       }
 
+      let needReconcileSync = false;
       if (cSnap.exists()) {
         const rawChats = cSnap.data().chats;
         const rawDel = cSnap.data().deletedChats;
         
         if (rawDel) {
+          remoteDeleted = JSON.parse(rawDel);
           State.deletedChats = {
             ...(State.deletedChats || {}),
-            ...JSON.parse(rawDel)
+            ...remoteDeleted
           };
         }
         
-        if (rawChats) {
+        if (rawChats !== undefined && rawChats !== null) {
           const cc = JSON.parse(rawChats);
-          if (cc && cc.length > 0) {
-            const mergedChats = mergeChats(State.chats, cc);
-            State.chats = mergedChats;
-            if (State.chats.length > 0 && !State.chats.find(c => c.id === State.activeChatId)) {
+          remoteChats = Array.isArray(cc) ? cc : [];
+          const mergedChats = mergeChats(State.chats, remoteChats);
+          if (hasLocalChatChanges(mergedChats, remoteChats, State.deletedChats, remoteDeleted)) {
+            needReconcileSync = true;
+          }
+          State.chats = mergedChats;
+          if (State.chats.length > 0) {
+            if (!State.chats.find(c => c.id === State.activeChatId)) {
               State.activeChatId = State.chats[0].id;
             }
+          } else {
+            State.activeChatId = null;
           }
         }
       }
 
-      if (window.saveLocalStateOnly) window.saveLocalStateOnly();
+      const localSettingsTime = normalizeTimestamp(State.settings && State.settings.updatedAt);
+      const remoteSettingsTime = normalizeTimestamp(remoteSettings && remoteSettings.updatedAt);
+      const hasOutgoingSettings = localSettingsTime > remoteSettingsTime;
+
+      const localMemoryTime = normalizeTimestamp(State.memory && State.memory.lastUpdated);
+      const remoteMemoryTime = normalizeTimestamp(remoteMemory && remoteMemory.lastUpdated);
+      const hasOutgoingMemory = localMemoryTime > remoteMemoryTime;
+
+      _warmedSnapshots = {
+        uid,
+        settings: hasOutgoingSettings ? { ...State.settings } : remoteSettings,
+        memory: hasOutgoingMemory ? { ...State.memory } : remoteMemory,
+        chats: needReconcileSync ? State.chats : remoteChats,
+        deletedChats: { ...(remoteDeleted || {}), ...(State.deletedChats || {}) },
+        warmed: {
+          chats: true,
+          settings: true,
+          memory: true
+        },
+        get isWarmed() { return true; }
+      };
+      _lastSyncedSettingsTime = normalizeTimestamp(_warmedSnapshots.settings.updatedAt);
+      _lastSyncedMemoryTime = normalizeTimestamp(_warmedSnapshots.memory.lastUpdated);
+      _lastSyncedChatsJson = needReconcileSync ? '' : JSON.stringify(remoteChats);
+      _lastSyncedDeletedChatsJson = needReconcileSync ? '' : JSON.stringify(remoteDeleted);
+
+      if (window.saveLocalStateOnly) {
+        try { window.saveLocalStateOnly(); } catch (_) {}
+      }
+      if (typeof window.renderChatList === 'function') {
+        try { window.renderChatList(); } catch (_) {}
+      }
+      if (typeof window.renderMessages === 'function') {
+        try { window.renderMessages(); } catch (_) {}
+      }
+      if (typeof window.updateUserDisplay === 'function') {
+        try { window.updateUserDisplay(); } catch (_) {}
+      }
+      if (typeof window.applyTheme === 'function') {
+        try { window.applyTheme(); } catch (_) {}
+      }
+      if (typeof window.renderMemoryList === 'function') {
+        try { window.renderMemoryList(); } catch (_) {}
+      }
+
+      const reconcileTasks = [];
+      if (needReconcileSync) reconcileTasks.push('chats');
+      if (hasOutgoingSettings) reconcileTasks.push('settings');
+      if (hasOutgoingMemory) reconcileTasks.push('memory');
+
+      if (reconcileTasks.length > 0) {
+        reconcileTasks.forEach(t => _pendingTargets.add(t));
+        await cloudSave(true);
+      }
     }
     return true;
   } catch (e) { console.error('Cloud load error:', e); return false; }
 }
 
+function hasLocalChatChanges(mergedChats, remoteChats, localDeleted, remoteDeleted) {
+  const rChatMap = new Map();
+  for (const rc of (remoteChats || [])) {
+    if (rc && rc.id) rChatMap.set(rc.id, rc);
+  }
+
+  for (const mc of (mergedChats || [])) {
+    if (!mc || !mc.id) continue;
+    const rc = rChatMap.get(mc.id);
+    if (!rc) return true;
+    if ((mc.updatedAt || 0) > (rc.updatedAt || 0)) return true;
+
+    if (mc.title && mc.title !== rc.title && rc.title === 'Chat mới') return true;
+    if (mc.folder && mc.folder !== rc.folder && (!rc.folder || rc.folder === 'Tất cả')) return true;
+    if (mc.pinnedContext && mc.pinnedContext !== rc.pinnedContext && !rc.pinnedContext) return true;
+
+    const rMsgIds = new Set((rc.messages || []).map(m => m && m.id));
+    for (const m of (mc.messages || [])) {
+      if (m && m.id && !rMsgIds.has(m.id)) return true;
+    }
+
+    if (mc.deletedMessageIds) {
+      for (const delId of Object.keys(mc.deletedMessageIds)) {
+        if (rMsgIds.has(delId)) return true;
+      }
+    }
+  }
+
+  const rDel = remoteDeleted || {};
+  for (const k of Object.keys(localDeleted || {})) {
+    if (rDel[k] === undefined || (localDeleted[k] || 0) > (rDel[k] || 0)) return true;
+  }
+
+  return false;
+}
+
 let _syncUnsubscribes = [];
 function initRealtimeSync() {
-  if (!AuthState.isLoggedIn || !_fb || AuthState.useLocalOnly) return;
+  if (!AuthState.isLoggedIn || !_fb || typeof _fb.onSnapshot !== 'function' || AuthState.useLocalOnly) return;
   if (AuthState.user && AuthState.user.uid && AuthState.user.uid.startsWith('guest_')) return;
   const uid = AuthState.user.uid;
   
@@ -513,7 +1046,7 @@ function initRealtimeSync() {
 
   // 1. Listen to chats
   _syncUnsubscribes.push(_fb.onSnapshot(_fb.doc(_fb.db, 'users', uid, 'data', 'chats'), (doc) => {
-    if (!doc.exists() || doc.metadata.hasPendingWrites) return; 
+    if (!doc.exists() || (doc.metadata && doc.metadata.hasPendingWrites)) return; 
     try {
       const rawChats = doc.data().chats;
       const rawDel = doc.data().deletedChats;
@@ -532,19 +1065,40 @@ function initRealtimeSync() {
 
       const mergedChats = mergeChats(State.chats, cc);
       const isStreamingActiveChat = typeof State !== 'undefined' && State.isGenerating && State.activeChatId === State.generatingChatId;
+      const hasOutgoingDiff = hasLocalChatChanges(mergedChats, cc, State.deletedChats, dc);
 
       State.chats = mergedChats;
-      if (State.chats.length > 0 && !State.chats.find(c => c.id === State.activeChatId)) {
-        State.activeChatId = State.chats[0].id;
+      if (State.chats.length > 0) {
+        if (!State.chats.find(c => c.id === State.activeChatId)) {
+          State.activeChatId = State.chats[0].id;
+        }
+      } else {
+        State.activeChatId = null;
       }
 
-      if (typeof window.renderChatList === 'function') window.renderChatList();
+      if (!_warmedSnapshots) _warmedSnapshots = { uid: null, chats: null, deletedChats: null, settings: null, memory: null, warmed: {} };
+      if (!_warmedSnapshots.warmed) _warmedSnapshots.warmed = {};
+      _warmedSnapshots.uid = uid;
+      _warmedSnapshots.chats = hasOutgoingDiff ? mergedChats : cc;
+      _warmedSnapshots.deletedChats = { ...(dc || {}), ...(State.deletedChats || {}) };
+      _warmedSnapshots.warmed.chats = true;
+      _lastSyncedChatsJson = JSON.stringify(_warmedSnapshots.chats);
+
+      if (typeof window.renderChatList === 'function') {
+        try { window.renderChatList(); } catch (_) {}
+      }
       
       // Defer active chat re-rendering if AI is actively streaming to prevent DOM glitches
       if (typeof window.renderMessages === 'function' && !isStreamingActiveChat) {
-        window.renderMessages();
+        try { window.renderMessages(); } catch (_) {}
       }
-      if (window.saveLocalStateOnly) window.saveLocalStateOnly();
+      if (window.saveLocalStateOnly) {
+        try { window.saveLocalStateOnly(); } catch (_) {}
+      }
+
+      if (hasOutgoingDiff) {
+        triggerCloudSync(true, 'chats');
+      }
     } catch (e) { console.error('Realtime chat sync error', e); }
   }, (err) => {
     console.warn('Realtime chat sync snapshot error:', err);
@@ -555,15 +1109,30 @@ function initRealtimeSync() {
 
   // 2. Listen to memory
   _syncUnsubscribes.push(_fb.onSnapshot(_fb.doc(_fb.db, 'users', uid, 'data', 'memory'), (doc) => {
-    if (!doc.exists() || doc.metadata.hasPendingWrites) return;
+    if (!doc.exists() || (doc.metadata && doc.metadata.hasPendingWrites)) return;
     try {
       const d = doc.data(); delete d.updatedAt;
       if (d.facts) {
         upgradeStateLocal();
+        const localTime = normalizeTimestamp(State.memory && State.memory.lastUpdated);
+        const remoteTime = normalizeTimestamp(d.lastUpdated);
         const mergedMemory = mergeMemory(State.memory, d);
+        const hasOutgoingMemory = localTime > remoteTime;
         State.memory = mergedMemory;
+
+        if (!_warmedSnapshots) _warmedSnapshots = { uid: null, chats: null, deletedChats: null, settings: null, memory: null, warmed: {} };
+        if (!_warmedSnapshots.warmed) _warmedSnapshots.warmed = {};
+        _warmedSnapshots.uid = uid;
+        _warmedSnapshots.memory = hasOutgoingMemory ? mergedMemory : d;
+        _warmedSnapshots.warmed.memory = true;
+        _lastSyncedMemoryTime = normalizeTimestamp(mergedMemory.lastUpdated);
+
         if (typeof window.renderMemoryList === 'function') window.renderMemoryList();
         if (window.saveLocalStateOnly) window.saveLocalStateOnly();
+
+        if (hasOutgoingMemory) {
+          triggerCloudSync(true, 'memory');
+        }
       }
     } catch (e) {}
   }, (err) => {
@@ -572,28 +1141,50 @@ function initRealtimeSync() {
   
   // 3. Listen to settings
   _syncUnsubscribes.push(_fb.onSnapshot(_fb.doc(_fb.db, 'users', uid, 'data', 'settings'), (doc) => {
-    if (!doc.exists() || doc.metadata.hasPendingWrites) return;
+    if (!doc.exists() || (doc.metadata && doc.metadata.hasPendingWrites)) return;
     try {
-      const d = doc.data(); delete d.updatedAt;
+      const d = doc.data();
       upgradeStateLocal();
+      const localTime = normalizeTimestamp(State.settings && State.settings.updatedAt);
+      const remoteTime = normalizeTimestamp(d.updatedAt);
       const mergedSettings = mergeSettings(State.settings, d);
+      const hasOutgoingSettings = localTime > remoteTime;
       Object.assign(State.settings, mergedSettings);
-      if (typeof window.updateUserDisplay === 'function') window.updateUserDisplay();
-      if (typeof window.applyTheme === 'function') window.applyTheme();
-      if (window.saveLocalStateOnly) window.saveLocalStateOnly();
+
+      if (!_warmedSnapshots) _warmedSnapshots = { uid: null, chats: null, deletedChats: null, settings: null, memory: null, warmed: {} };
+      if (!_warmedSnapshots.warmed) _warmedSnapshots.warmed = {};
+      _warmedSnapshots.uid = uid;
+      _warmedSnapshots.settings = hasOutgoingSettings ? mergedSettings : d;
+      _warmedSnapshots.warmed.settings = true;
+      _lastSyncedSettingsTime = normalizeTimestamp(mergedSettings.updatedAt);
+
+      if (typeof window.updateUserDisplay === 'function') {
+        try { window.updateUserDisplay(); } catch (_) {}
+      }
+      if (typeof window.applyTheme === 'function') {
+        try { window.applyTheme(); } catch (_) {}
+      }
+      if (window.saveLocalStateOnly) {
+        try { window.saveLocalStateOnly(); } catch (_) {}
+      }
+
+      if (hasOutgoingSettings) {
+        triggerCloudSync(true, 'settings');
+      }
     } catch (e) {}
   }, (err) => {
     console.warn('Realtime settings sync snapshot error:', err);
   }));
 }
 
-function triggerCloudSync() {
+function triggerCloudSync(immediate = false, target = null) {
   if (AuthState.isLoggedIn && !AuthState.useLocalOnly && !(AuthState.user && AuthState.user.uid && AuthState.user.uid.startsWith('guest_'))) {
-    cloudSave(false);
     updateSyncIndicator('syncing');
+    return cloudSave(immediate, target);
   } else if (AuthState.useLocalOnly) {
     updateSyncIndicator('offline');
   }
+  return Promise.resolve();
 }
 
 // ===== Sync Indicator =====
@@ -849,7 +1440,8 @@ function getDefaultSettings() {
     currentModel: '', flashModel: '', proModel: '',
     systemPrompt: '', userPurpose: '', tone: 'friendly', theme: 'aurora',
     customPersonality: '', fontFamily: "'Inter', sans-serif", fontSize: 15,
-    userName: 'Bạn', userAvatar: ''
+    userName: 'Bạn', userAvatar: '',
+    updatedAt: 0
   };
 }
 window.getDefaultSettings = getDefaultSettings;
@@ -872,7 +1464,8 @@ function clearInMemoryState() {
     currentModel: '', flashModel: '', proModel: '',
     systemPrompt: '', userPurpose: '', tone: 'friendly', theme: 'aurora',
     customPersonality: '', fontFamily: "'Inter', sans-serif", fontSize: 15,
-    userName: 'Bạn', userAvatar: ''
+    userName: 'Bạn', userAvatar: '',
+    updatedAt: 0
   };
   State.memory = { facts: [], lastUpdated: 0 };
   State.deletedChats = {};
@@ -885,6 +1478,29 @@ function clearInMemoryState() {
   State.toolFailures = new Map();
   State.agentRecursionDepth = 0;
   State.activeFolder = 'Tất cả';
+  _warmedSnapshots = {
+    uid: null,
+    chats: null,
+    deletedChats: null,
+    settings: null,
+    memory: null,
+    warmed: {
+      chats: false,
+      settings: false,
+      memory: false
+    },
+    get isWarmed() {
+      return !!(this.warmed && this.warmed.chats && this.warmed.settings && this.warmed.memory);
+    }
+  };
+  _hasPendingSync = false;
+  if (_pendingTargets && typeof _pendingTargets.clear === 'function') {
+    _pendingTargets.clear();
+  }
+  _lastSyncedSettingsTime = 0;
+  _lastSyncedMemoryTime = 0;
+  _lastSyncedChatsJson = '';
+  _lastSyncedDeletedChatsJson = '{}';
   // ZERO storage writes!
 }
 window.clearInMemoryState = clearInMemoryState;
@@ -1508,7 +2124,7 @@ function initMemoryCabinet() {
       b.addEventListener('click', (e) => {
         const idx = e.currentTarget.dataset.idx;
         window.State.memory.facts.splice(idx, 1);
-        if (window.saveMemory) window.saveMemory();
+        if (window.saveMemory) window.saveMemory(true);
         renderMemoryList();
       });
     });
@@ -1521,7 +2137,7 @@ function initMemoryCabinet() {
     if (!window.State.memory.facts) window.State.memory.facts = [];
     // Store as object {fact, category, timestamp} to match State.memory structure
     window.State.memory.facts.push({ fact: val, category: 'context', timestamp: Date.now() });
-    if (window.saveMemory) window.saveMemory();
+    if (window.saveMemory) window.saveMemory(true);
     input.value = '';
     renderMemoryList();
   });
@@ -3539,11 +4155,12 @@ const SunaAgent = {
       }
       
       // Save changes locally and trigger sync
+      if (window.State && window.State.settings) window.State.settings.updatedAt = Date.now();
       if (typeof window.saveStateOnly === 'function') window.saveStateOnly();
       else if (typeof window.saveLocalStateOnly === 'function') window.saveLocalStateOnly();
       
       if (typeof window.updateUserDisplay === 'function') window.updateUserDisplay();
-      if (typeof window.triggerCloudSync === 'function') window.triggerCloudSync();
+      if (typeof window.triggerCloudSync === 'function') window.triggerCloudSync(true, 'settings');
       
       return `User settings updated successfully: ${updates.join(', ')}.`;
     },
@@ -3629,26 +4246,33 @@ const SunaAgent = {
       if (typeof window !== 'undefined' && typeof window.performWebSearch === 'function') {
         try {
           const liveRes = await window.performWebSearch(query);
-          if (Array.isArray(liveRes) && liveRes.length > 0) {
-            return { success: true, query, count: Math.min(liveRes.length, maxResults), results: liveRes.slice(0, maxResults) };
+          let normalizedResults = [];
+          if (Array.isArray(liveRes)) {
+            normalizedResults = liveRes.filter(item => item && typeof item === 'object');
+          } else if (typeof liveRes === 'string' && liveRes.trim()) {
+            normalizedResults = liveRes.split(/\n\s*\n/).map(block => {
+              const title = (block.match(/^Tiêu đề:\s*(.+)$/mi) || [])[1];
+              const url = (block.match(/^URL:\s*(.+)$/mi) || [])[1];
+              const snippet = (block.match(/^Trích dẫn:\s*([\s\S]+)$/mi) || [])[1];
+              return title && url ? { title: title.trim(), url: url.trim(), snippet: (snippet || '').trim() } : null;
+            }).filter(Boolean);
           }
-        } catch (e) {}
+          if (normalizedResults.length > 0) {
+            const results = normalizedResults.slice(0, maxResults);
+            return { success: true, query, count: results.length, results };
+          }
+        } catch (e) {
+          return { success: false, query, count: 0, results: [], error: `Web search failed: ${e && e.message ? e.message : 'unknown error'}` };
+        }
       }
 
-      const results = [
-        {
-          title: `Kết quả tìm kiếm cho "${query}"`,
-          snippet: `Thông tin chi tiết và dữ liệu cập nhật liên quan đến ${query}.`,
-          url: `https://search.sunachat.internal/query?q=${encodeURIComponent(query)}`
-        },
-        {
-          title: `Tài liệu tham khảo chuyên sâu: ${query}`,
-          snippet: `Tài liệu phân tích, kiến trúc và hướng dẫn thực thi cho ${query}.`,
-          url: `https://docs.sunachat.internal/ref/${encodeURIComponent(query)}`
-        }
-      ].slice(0, maxResults);
-
-      return { success: true, query, count: results.length, results };
+      return {
+        success: false,
+        query,
+        count: 0,
+        results: [],
+        error: 'No live web search results are available.'
+      };
     },
 
     // 8. fetch_page_summary (Core Tool 3: Web Page Fetch & Cleaner)
@@ -4528,14 +5152,19 @@ async function loadMemory() {
   } catch(e) { console.error('Load memory error:', e); }
 }
 
-async function saveMemory() {
+async function saveMemory(immediate = false) {
   try {
     const suffix = getStorageSuffix();
     State.memory.lastUpdated = Date.now();
     await idbSet('suna_memory' + suffix, State.memory);
+    if (typeof triggerCloudSync === 'function') {
+      triggerCloudSync(immediate, 'memory');
+    }
+    if (typeof broadcastLocalSync === 'function') {
+      broadcastLocalSync({ memory: State.memory });
+    }
   } catch(e) { console.error('Save memory error:', e); }
 }
-
 
 function addMemoryFact(fact, category = 'context') {
   // Tránh trùng lặp (so sánh nội dung tương tự)
@@ -4553,14 +5182,14 @@ function addMemoryFact(fact, category = 'context') {
     category,
     timestamp: Date.now()
   });
-  saveMemory();
+  saveMemory(true);
   return true;
 }
 
 function removeMemoryFact(index) {
   if (index >= 0 && index < State.memory.facts.length) {
     State.memory.facts.splice(index, 1);
-    saveMemory();
+    saveMemory(true);
   }
 }
 
@@ -4599,7 +5228,8 @@ function extractMemoryFromMessage(text) {
       // Tự động cập nhật tên hiển thị
       if (State.settings.userName === 'Bạn' || State.settings.userName === '') {
         State.settings.userName = m[1];
-        saveState();
+        State.settings.updatedAt = Date.now();
+        saveState(true, 'settings');
       }
       break;
     }
@@ -4679,6 +5309,7 @@ let _dbInstance = null;
 
 function initDB() {
   if (_dbInstance) return Promise.resolve(_dbInstance);
+  if (typeof indexedDB === 'undefined') return Promise.reject(new Error('IndexedDB not supported'));
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, 1);
     req.onupgradeneeded = e => {
@@ -4801,9 +5432,23 @@ window.saveLocalStateOnly = function() {
   safeSaveLocalStorage('suna_deleted_chats' + suffix, State.deletedChats || {});
 };
 
-function saveState(forceIndexedDB = false) {
-  if (_saveTimeout) clearTimeout(_saveTimeout);
-  _saveTimeout = setTimeout(() => {
+function saveState(forceIndexedDB = false, target = null) {
+  const isImmediate = (typeof forceIndexedDB === 'object' && forceIndexedDB?.immediate) || forceIndexedDB === true;
+  if (target && typeof _pendingTargets !== 'undefined') {
+    _pendingTargets.add(target);
+  }
+
+  // 0ms Zero-Latency inter-tab synchronization via BroadcastChannel
+  if (typeof broadcastLocalSync === 'function') {
+    broadcastLocalSync();
+  }
+
+  if (_saveTimeout) {
+    clearTimeout(_saveTimeout);
+    _saveTimeout = null;
+  }
+
+  const executeSave = async () => {
     try {
       // Prune chat messages to avoid infinite lag and Firebase 1MB limits
       State.chats.forEach(c => pruneChatMessages(c));
@@ -4819,11 +5464,15 @@ function saveState(forceIndexedDB = false) {
       }
 
       // Tối ưu hiệu suất: Không ghi IndexedDB liên tục khi AI đang stream chữ
-      // Trừ khi bị ép buộc lưu (forceIndexedDB) khi kết thúc
-      if (!State.isGenerating || forceIndexedDB) {
-        idbSet('suna_chats' + suffix, State.chats).catch(e => console.error('IndexedDB save error:', e));
+      // Trừ khi bị ép buộc lưu (forceIndexedDB) khi kết thúc hoặc gửi tin nhắn
+      if (!State.isGenerating || isImmediate) {
+        try {
+          await idbSet('suna_chats' + suffix, State.chats);
+        } catch (e) {
+          console.error('IndexedDB save error:', e);
+        }
         // Cloud sync chỉ nên gọi khi đã lưu xong chat hoàn chỉnh
-        if (typeof triggerCloudSync === 'function') triggerCloudSync();
+        if (typeof triggerCloudSync === 'function') await triggerCloudSync(isImmediate, target);
       }
     } catch (e) {
       if (e.name === 'QuotaExceededError' || e.code === 22 || e.code === 1014 || (e.message && e.message.toLowerCase().includes('quota'))) {
@@ -4839,7 +5488,14 @@ function saveState(forceIndexedDB = false) {
         console.error('Lỗi khi lưu trạng thái:', e);
       }
     }
-  }, 500);
+  };
+
+  if (isImmediate) {
+    return executeSave();
+  } else {
+    _saveTimeout = setTimeout(executeSave, 150);
+    return Promise.resolve();
+  }
 }
 
 // ===== Session Idle Timeout & Scroll Position Preservation =====
@@ -5075,6 +5731,7 @@ window.renderMermaid = renderMermaid;
 
 // ===== Theme =====
 function applyTheme() {
+  if (typeof document === 'undefined' || !document.body) return;
   const theme = (State.settings && State.settings.theme) || 'aurora';
   const fontFamily = (State.settings && State.settings.fontFamily) || "'Inter', sans-serif";
   const fontSize = (State.settings && State.settings.fontSize) || 15;
@@ -5165,7 +5822,7 @@ function createChat() {
     localStorage.setItem('suna_active_chat_id' + getStorageSuffix(), State.activeChatId);
     touchUserActivity();
   } catch (_) {}
-  saveState();
+  saveState(true, 'chats');
   renderChatList();
   renderMessages();
   if (isMobile()) closeSidebar();
@@ -5268,9 +5925,10 @@ function deleteChat(id) {
     localStorage.setItem('suna_active_chat_id' + getStorageSuffix(), State.activeChatId);
     touchUserActivity();
   } catch (_) {}
-  saveState(true); // Force push deletions immediately
+  const savePromise = saveState(true, 'chats'); // Force push deletions immediately
   renderChatList();
   renderMessages();
+  return savePromise;
 }
 
 function getActiveChat() {
@@ -5494,8 +6152,9 @@ function renderMessages() {
 
   container.innerHTML = htmlContent;
 
-  requestAnimationFrame(() => {
+  const postRenderScroll = () => {
     const chatArea = $('#chat-area');
+    if (!chatArea) return;
     const savedScroll = getChatScrollPosition(chat.id);
 
     // Khôi phục mốc đánh dấu / vị trí cuộn tin nhắn cũ nếu người dùng đang đọc dở và không trong luồng sinh mới
@@ -5513,7 +6172,13 @@ function renderMessages() {
     if (!State.isGenerating) {
       renderMermaid();
     }
-  });
+  };
+
+  if (typeof requestAnimationFrame === 'function') {
+    requestAnimationFrame(postRenderScroll);
+  } else {
+    try { postRenderScroll(); } catch (_) {}
+  }
 }
 
 function renderKatex(math, displayMode) {
@@ -9015,7 +9680,7 @@ async function sendMessage() {
   if (State.toolFailures && State.toolFailures.clear) State.toolFailures.clear();
   renderMessages();
   renderChatList();
-  saveState();
+  saveState(true, 'chats');
 
   await generateAIResponse();
 }
@@ -9164,7 +9829,7 @@ async function generateAIResponse() {
           }
         });
       }
-      saveState();
+      saveState(true, 'chats');
     } catch (visionErr) {
       console.error('Vision task error:', visionErr);
     }
@@ -9185,7 +9850,7 @@ async function generateAIResponse() {
       const searchResults = await window.performWebSearch(lastMsg.content);
       if (searchResults) {
         lastMsg.linkContext = (lastMsg.linkContext || '') + `\n\n[Kết quả Web Search trực tiếp]:\n${searchResults}`;
-        saveState();
+        saveState(true, 'chats');
       }
       lastMsg.webSearchDone = true;
     } catch(e) {
@@ -9502,7 +10167,7 @@ async function generateAIResponse() {
     const assistantMsg = { id: genId(), role: 'assistant', content: assistantContent, trajectory: [], timestamp: Date.now(), updatedAt: Date.now() };
     activeChat.messages.push(assistantMsg);
     activeChat.updatedAt = Date.now(); // Parent chat updated
-    saveState(true); // Ép lưu vào IndexedDB và Cloud khi stream kết thúc
+    saveState(true, 'chats'); // Ép lưu vào IndexedDB và Cloud khi stream kết thúc
     if (isStillActiveChat()) renderMessages();
 
     // Classify sentiment of assistant response to adjust theme/particles/lofi mood
@@ -9682,7 +10347,7 @@ window.submitEdit = async function(idx) {
   }
   chat.messages = chat.messages.slice(0, idx + 1);
   chat.updatedAt = Date.now(); // Parent chat updated
-  saveState();
+  saveState(true, 'chats');
   renderMessages();
   await generateAIResponse();
 }
@@ -9700,7 +10365,7 @@ window.reloadMessage = async function(idx) {
   }
   chat.messages = chat.messages.slice(0, idx);
   chat.updatedAt = Date.now(); // Parent chat updated
-  saveState();
+  saveState(true, 'chats');
   renderMessages();
   await generateAIResponse();
 }
@@ -9718,7 +10383,7 @@ window.deleteMessage = function(idx) {
 
   chat.messages.splice(idx, 1);
   chat.updatedAt = Date.now(); // Parent chat updated
-  saveState(true);
+  saveState(true, 'chats');
   renderMessages();
 }
 
@@ -10190,6 +10855,10 @@ function initParticles() {
 // ===== Mode Toggle =====
 function setMode(mode) {
   State.mode = mode;
+  if (State.settings) {
+    State.settings.mode = mode;
+    State.settings.updatedAt = Date.now();
+  }
   $$('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
   const slider = $('.mode-slider');
   if (slider) {
@@ -10199,7 +10868,7 @@ function setMode(mode) {
   const badge = $('#mode-badge');
   if (badge) badge.textContent = mode === 'flash' ? 'Flash' : 'Pro';
   updateModelDisplay();
-  saveState();
+  saveState(true, 'settings');
 }
 
 function updateModelDisplay() {
@@ -10256,6 +10925,23 @@ function initEvents() {
     } catch (_) {}
   });
 
+  let _lastFocusSyncTime = 0;
+  const handleTabResumed = () => {
+    touchUserActivity();
+    if (typeof AuthState !== 'undefined' && AuthState.isLoggedIn && !AuthState.useLocalOnly && typeof _fb !== 'undefined' && _fb && !(AuthState.user && AuthState.user.uid && AuthState.user.uid.startsWith('guest_'))) {
+      if (typeof _syncUnsubscribes !== 'undefined' && _syncUnsubscribes.length === 0) {
+        initRealtimeSync();
+      }
+      const now = Date.now();
+      if (now - _lastFocusSyncTime > 5000) {
+        _lastFocusSyncTime = now;
+        if (typeof cloudLoad === 'function') {
+          cloudLoad().catch(() => {});
+        }
+      }
+    }
+  };
+
   document.addEventListener('visibilitychange', () => {
     touchUserActivity();
     if (document.visibilityState === 'hidden') {
@@ -10263,7 +10949,17 @@ function initEvents() {
       if (ca && State.activeChatId && !State.isGenerating) {
         saveChatScrollPosition(State.activeChatId, ca.scrollTop);
       }
+    } else if (document.visibilityState === 'visible') {
+      handleTabResumed();
     }
+  });
+
+  window.addEventListener('pageshow', () => {
+    handleTabResumed();
+  });
+
+  window.addEventListener('focus', () => {
+    handleTabResumed();
   });
 
   ['click', 'keydown', 'touchstart'].forEach(evt => {
@@ -10275,8 +10971,9 @@ function initEvents() {
   if (btnToggleTheme) {
     btnToggleTheme.addEventListener('click', () => {
       State.settings.lightMode = !State.settings.lightMode;
+      State.settings.updatedAt = Date.now();
       applyTheme();
-      saveState();
+      saveState(true, 'settings');
     });
   }
   
@@ -10841,8 +11538,9 @@ export default {
     State.settings.currentModel = getActiveModel();
     if ($('#model-select')) $('#model-select').value = State.settings.currentModel;
     // Lưu NGAY LẬP TỨC (bypass debounce)
+    State.settings.updatedAt = Date.now();
     safeSaveLocalStorage('suna_settings' + getStorageSuffix(), State.settings);
-    saveState();
+    saveState(true, 'settings');
     updateModelDisplay();
     closeModal('api-modal');
     toast('Đã lưu cấu hình API', 'success');
@@ -10863,7 +11561,8 @@ export default {
     if ($('#pro-model-select')) State.settings.proModel = $('#pro-model-select').value;
     State.settings.currentModel = testModel;
     if ($('#model-select')) $('#model-select').value = testModel;
-    saveState();
+    State.settings.updatedAt = Date.now();
+    saveState(true, 'settings');
     updateModelDisplay();
     closeModal('api-modal');
     
@@ -10882,8 +11581,9 @@ export default {
     if ($('#pro-model-select')) State.settings.proModel = $('#pro-model-select').value;
     
     // Lưu NGAY LẬP TỨC (bypass debounce) để tránh mất dữ liệu khi reload
+    State.settings.updatedAt = Date.now();
     safeSaveLocalStorage('suna_settings' + getStorageSuffix(), State.settings);
-    saveState(); // Vẫn gọi debounce để lưu chats
+    saveState(true, 'settings');
     
     updateModelDisplay();
     renderMessages();
@@ -10927,8 +11627,9 @@ export default {
 
       State.settings.userAvatar = compressedDataUrl;
       $('#user-avatar-preview').src = compressedDataUrl;
+      State.settings.updatedAt = Date.now();
       safeSaveLocalStorage('suna_settings' + getStorageSuffix(), State.settings);
-      saveState();
+      saveState(true, 'settings');
       renderMessages();
       toast('Đã cập nhật avatar', 'success');
     } catch (err) {
@@ -10946,7 +11647,7 @@ export default {
       if (chat) {
         chat.title = newTitle;
         chat.updatedAt = Date.now(); // Mark modified for sync
-        saveState();
+        saveState(true, 'chats');
         renderChatList();
         toast('Đã đổi tên đoạn chat', 'success');
       }
@@ -11003,8 +11704,9 @@ export default {
     applyTheme();
     
     // Lưu NGAY LẬP TỨC (bypass debounce)
+    State.settings.updatedAt = Date.now();
     safeSaveLocalStorage('suna_settings' + getStorageSuffix(), State.settings);
-    saveState();
+    saveState(true, 'settings');
     closeModal('personality-modal');
     toast('Đã lưu tính cách AI', 'success');
   });
@@ -11033,8 +11735,9 @@ export default {
       if (fontRange) State.settings.fontSize = parseInt(fontRange.value);
       applyTheme();
       // Lưu NGAY LẬP TỨC (bypass debounce)
+      State.settings.updatedAt = Date.now();
       safeSaveLocalStorage('suna_settings' + getStorageSuffix(), State.settings);
-      saveState();
+      saveState(true, 'settings');
       closeModal('font-modal');
       toast('Đã áp dụng font chữ', 'success');
     });
@@ -11225,6 +11928,7 @@ window.onUserSignedIn = function() {
 
 // ===== Main App Init (called by auth.js doAppInit) =====
 async function init() {
+  if (typeof initBroadcastChannel === 'function') initBroadcastChannel();
   await loadState();
   await loadMemory();
   applyTheme();
@@ -11241,6 +11945,7 @@ async function init() {
 
 // ===== App Entry Point =====
 document.addEventListener('DOMContentLoaded', function() {
+  if (typeof initBroadcastChannel === 'function') initBroadcastChannel();
   if (typeof initAuth === 'function') {
     initAuth();
   } else {
@@ -11497,12 +12202,14 @@ function savePinnedContext() {
   const input = document.getElementById('pinned-context-input');
   if (activeChat && input) {
     activeChat.pinnedContext = input.value.trim();
-    saveState(true);
+    activeChat.updatedAt = Date.now();
+    const savePromise = saveState(true, 'chats');
     closeModal('pinned-context-modal');
     renderChatList();
     if (typeof toast === 'function') {
       toast(activeChat.pinnedContext ? 'Đã ghim ngữ cảnh cho đoạn chat này!' : 'Đã xóa ngữ cảnh ghim!', 'success');
     }
+    return savePromise;
   }
 }
 window.savePinnedContext = savePinnedContext;
@@ -11513,10 +12220,12 @@ function clearPinnedContext() {
   if (input) input.value = '';
   if (activeChat) {
     activeChat.pinnedContext = '';
-    saveState(true);
+    activeChat.updatedAt = Date.now();
+    const savePromise = saveState(true, 'chats');
     closeModal('pinned-context-modal');
     renderChatList();
     if (typeof toast === 'function') toast('Đã xóa ngữ cảnh ghim!', 'info');
+    return savePromise;
   }
 }
 window.clearPinnedContext = clearPinnedContext;
@@ -11525,9 +12234,11 @@ function setChatFolder(chatId, folderName) {
   const chat = State.chats.find(c => c.id === chatId);
   if (chat) {
     chat.folder = folderName || 'Tất cả';
-    saveState();
+    chat.updatedAt = Date.now();
+    const savePromise = saveState(true, 'chats');
     renderChatList();
     if (typeof toast === 'function') toast(`Đã gán vào thư mục: ${chat.folder}`, 'info');
+    return savePromise;
   }
 }
 window.setChatFolder = setChatFolder;
@@ -11610,7 +12321,7 @@ ${(docContent || '').slice(0, 12000)}`;
     timestamp: Date.now(),
     updatedAt: Date.now()
   });
-  saveState();
+  saveState(true);
   renderMessages();
 
   if (typeof toast === 'function') toast('Đang phân tích tài liệu và phác thảo Sơ đồ tư duy...', 'info');
