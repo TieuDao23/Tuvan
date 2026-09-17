@@ -461,23 +461,216 @@
     constructor(options = {}) {
       super();
       this.onThoughtChunk = options.onThoughtChunk || null;
+      this.onContentChunk = options.onContentChunk || null;
       this.fullThought = '';
+      this.isThinking = false;
+      this.isThinkingDone = false;
+      this._activeTag = null;
+      this._buffer = '';
+    }
+
+    pushReasoning(chunk) {
+      if (!chunk) return '';
+      this.isThinking = true;
+      this._activeTag = 'out_of_band';
+      this.fullThought += chunk;
+      if (typeof this.onThoughtChunk === 'function') {
+        this.onThoughtChunk(chunk);
+      }
+      return chunk;
+    }
+
+    parseReasoningChunk(chunk) {
+      return this.pushReasoning(chunk);
+    }
+
+    getThought() {
+      return this.fullThought;
     }
 
     push(chunk) {
       if (!chunk) return '';
-      const extracted = MultiSyntaxParser.extractThinking(chunk);
-      if (extracted.thought) {
-        this.fullThought += (this.fullThought ? '\n' : '') + extracted.thought;
-        if (typeof this.onThoughtChunk === 'function') {
-          this.onThoughtChunk(extracted.thought);
+      if (this.isThinking && this._activeTag === 'out_of_band') {
+        this.isThinking = false;
+        this.isThinkingDone = true;
+        this._activeTag = null;
+      }
+      this._buffer += chunk;
+      let emitted = '';
+
+      const thinkTagNames = ['think', 'thought', 'scratchpad'];
+
+      while (this._buffer.length > 0) {
+        if (!this.isThinking) {
+          // TEXT mode
+          const openIdx = this._buffer.indexOf('<');
+          if (openIdx === -1) {
+            const textToEmit = this._buffer;
+            this._buffer = '';
+            const passed = super.push(textToEmit);
+            emitted += passed;
+            if (typeof this.onContentChunk === 'function' && passed) {
+              this.onContentChunk(passed);
+            }
+            break;
+          }
+
+          if (openIdx > 0) {
+            const textToEmit = this._buffer.slice(0, openIdx);
+            this._buffer = this._buffer.slice(openIdx);
+            const passed = super.push(textToEmit);
+            emitted += passed;
+            if (typeof this.onContentChunk === 'function' && passed) {
+              this.onContentChunk(passed);
+            }
+          }
+
+          // Buffer begins with '<'
+          const closeAngle = this._buffer.indexOf('>');
+          if (closeAngle === -1) {
+            const candidate = this._buffer.toLowerCase();
+            const isPotentialThinkTag = thinkTagNames.some(tag =>
+              (`<${tag}`).startsWith(candidate) ||
+              candidate.startsWith(`<${tag} `) ||
+              candidate.startsWith(`<${tag}\n`) ||
+              candidate.startsWith(`<${tag}\t`)
+            );
+            if (isPotentialThinkTag) {
+              break; // Wait for '>' in subsequent chunks
+            } else {
+              const passed = super.push(this._buffer[0]);
+              emitted += passed;
+              if (typeof this.onContentChunk === 'function' && passed) {
+                this.onContentChunk(passed);
+              }
+              this._buffer = this._buffer.slice(1);
+            }
+          } else {
+            const tagStr = this._buffer.slice(0, closeAngle + 1);
+            const match = tagStr.match(/^<(think|thought|scratchpad)(\s[^>]*)?>/i);
+            if (match) {
+              this._activeTag = match[1].toLowerCase();
+              this.isThinking = true;
+              this._buffer = this._buffer.slice(closeAngle + 1);
+            } else {
+              const passed = super.push(tagStr);
+              emitted += passed;
+              if (typeof this.onContentChunk === 'function' && passed) {
+                this.onContentChunk(passed);
+              }
+              this._buffer = this._buffer.slice(closeAngle + 1);
+            }
+          }
+        } else {
+          // THINKING mode
+          const closeTagPrefix = '</';
+          const closeIdx = this._buffer.indexOf(closeTagPrefix);
+          if (closeIdx === -1) {
+            if (this._buffer.endsWith('<')) {
+              const thoughtPart = this._buffer.slice(0, -1);
+              if (thoughtPart) {
+                this.fullThought += thoughtPart;
+                if (typeof this.onThoughtChunk === 'function') {
+                  this.onThoughtChunk(thoughtPart);
+                }
+              }
+              this._buffer = '<';
+              break;
+            } else {
+              const thoughtPart = this._buffer;
+              this._buffer = '';
+              this.fullThought += thoughtPart;
+              if (typeof this.onThoughtChunk === 'function') {
+                this.onThoughtChunk(thoughtPart);
+              }
+              break;
+            }
+          }
+
+          if (closeIdx > 0) {
+            const thoughtPart = this._buffer.slice(0, closeIdx);
+            this.fullThought += thoughtPart;
+            if (typeof this.onThoughtChunk === 'function') {
+              this.onThoughtChunk(thoughtPart);
+            }
+            this._buffer = this._buffer.slice(closeIdx);
+          }
+
+          // Buffer begins with '</'
+          const closeAngle = this._buffer.indexOf('>');
+          if (closeAngle === -1) {
+            const candidate = this._buffer.toLowerCase();
+            const isPotentialClose = thinkTagNames.some(tag =>
+              (`</${tag}`).startsWith(candidate) ||
+              candidate.startsWith(`</${tag} `) ||
+              candidate.startsWith(`</${tag}\t`) ||
+              candidate.startsWith(`</${tag}\n`) ||
+              candidate.startsWith(`</${tag}>`)
+            );
+            if (isPotentialClose) {
+              break; // Wait for '>'
+            } else {
+              const part = this._buffer.slice(0, 2);
+              this.fullThought += part;
+              if (typeof this.onThoughtChunk === 'function') {
+                this.onThoughtChunk(part);
+              }
+              this._buffer = this._buffer.slice(2);
+            }
+          } else {
+            const tagStr = this._buffer.slice(0, closeAngle + 1);
+            const match = tagStr.match(/^<\/(think|thought|scratchpad)\s*>/i);
+            if (match) {
+              this._buffer = this._buffer.slice(closeAngle + 1);
+              this.isThinking = false;
+              this.isThinkingDone = true;
+              this._activeTag = null;
+            } else {
+              this.fullThought += tagStr;
+              if (typeof this.onThoughtChunk === 'function') {
+                this.onThoughtChunk(tagStr);
+              }
+              this._buffer = this._buffer.slice(closeAngle + 1);
+            }
+          }
         }
       }
-      return super.push(extracted.content);
+
+      return emitted;
     }
 
-    parseChunk(chunk) {
-      return this.push(chunk);
+    parseChunk(chunk, reasoningChunk) {
+      if (reasoningChunk) {
+        this.pushReasoning(reasoningChunk);
+      }
+      if (chunk) {
+        return this.push(chunk);
+      }
+      return '';
+    }
+
+    flush() {
+      let emitted = '';
+      if (this._buffer) {
+        if (this.isThinking) {
+          this.fullThought += this._buffer;
+          if (typeof this.onThoughtChunk === 'function') {
+            this.onThoughtChunk(this._buffer);
+          }
+        } else {
+          const passed = super.push(this._buffer);
+          emitted += passed;
+          if (typeof this.onContentChunk === 'function' && passed) {
+            this.onContentChunk(passed);
+          }
+        }
+        this._buffer = '';
+      }
+      this.isThinking = false;
+      this.isThinkingDone = true;
+      this._activeTag = null;
+      emitted += super.flush();
+      return emitted;
     }
   }
 

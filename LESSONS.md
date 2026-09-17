@@ -75,4 +75,70 @@
   - Explicit Sign-Out Flag: Use `AuthState._isExplicitSignOut` to differentiate deliberate sign-out from revoked tokens, suppressing false expiration toasts on manual logout.
   - Defensive DOM Guards: Safeguard `renderChatList()` and `renderMessages()` against missing DOM nodes (`if (!el) return;`), ensuring robustness across headless testing environments and partial layout renders.
 
+## 13. Live Workspace Lifecycle & Background Iframe CPU Deallocation
+- **Problem**: Hiding the workspace panel with CSS transforms/transitions (`right: -100%`) without clearing the active iframe document allowed running animations (`requestAnimationFrame`), physics loops, canvas intervals, audio synthesis, and WebGL contexts to execute continuously in the background, consuming 100% CPU/GPU and causing severe application lag.
+- **Solution**:
+  - On workspace close (`closeWorkspace`), immediately unload the iframe via `iframe.srcdoc = 'about:blank'` to terminate all background timers, loops, and workers.
+  - On workspace reopen (`openWorkspace`), restore `iframe.srcdoc = injectConsoleProxy(editorTextarea.value)` cleanly from the preserved editor textarea state.
+  - In `autoApplyWorkspaceCode`, check if `#artifacts-panel` is active. If closed, store code in editor and `dataset.pendingSrcdoc` without spinning up iframe execution in the background.
+  - Debounce `updatePreview` on editor keystrokes (250ms) to prevent excessive synchronous iframe reloads during typing.
 
+## 14. Header Action Overflow Containment & Pinned Close Controls via Container Queries
+- **Problem**: Placing the window close button (`#btn-close-artifact`) at the tail end of a non-wrapping flex row containing multiple text-heavy action pills ("Split", "Editor", "Preview", "Suna AI", "Cộng tác với Suna") caused the close button to be pushed completely off-screen on narrower viewports or when the panel was resized below 900px, forcing users to resize the window just to find the close button.
+- **Solution**:
+  - Anchor `#btn-close-artifact` with `flex-shrink: 0` as a direct child of `.artifacts-header` pinned to the far right, ensuring it is NEVER pushed out of view under any layout dimension.
+  - Equip `.artifacts-panel` with CSS Container Queries (`container-type: inline-size; container-name: workspace;`).
+  - Gracefully hide secondary text labels (`.btn-collab span`, `.view-toggle-btn span`) into compact icon-only pills when workspace width drops below 960px and 820px, preserving 100% functionality and full close button accessibility at any panel width down to 320px.
+
+## 15. Theme Stability & Decoupling Sentiment Moods from UI CSS Tokens
+- **Problem**: Automatic sentiment classification on user messages and AI responses dynamically overrode CSS variables (`--accent-1`, `--accent-2`, `--accent-gradient`, `--accent-glow`) and `data-theme` inline on `document.body`, causing the UI to change colors randomly during normal conversation. Additionally, the default theme was mapped to a legacy brown/peach palette (`#e8a87c`).
+- **Solution**:
+  - Decouple sentiment classification from UI theming: `triggerSentimentChange` now strictly limits mood adjustments to the optional background Lofi music player, never mutating CSS color tokens or `data-theme`.
+  - Make theme styling 100% static and user-controlled: UI colors only adapt when explicitly chosen by the user in Settings.
+  - Modernize the default theme (`aurora` / `:root`) to the premium Midnight Violet palette (`--accent-1: #a18cd1`, `--accent-2: #fbc2eb`, glow `rgba(161, 140, 209, 0.35)`), matching high-end aesthetic standards.
+
+## 16. Message Media Attachment Decoupling & Interactive Lightbox Architecture
+- **Problem**: Previously, attached user images were directly appended into the raw text stream inside `.message-bubble` with unconstrained dimensions (`max-width: 100%`). In spacious desktop containers (>= 1140px), high-resolution screenshots or formula diagrams expanded up to 1000px wide, forcing the user text bubble to stretch to massive proportions with thick purple gradient padding framing the image. Short accompanying text (e.g. 'Giải thích cho tớ') was marooned at the bottom corner of an enormous void, resulting in an unappealing, disproportionate layout.
+- **Solution**:
+  - Decouple Media from Text Bubbles: Render attached images in a dedicated `.msg-media-container` outside the colored `.message-bubble`.
+  - Responsive Media Constraints: Capped `.msg-image-card` to `max-width: min(380px, 100%)` and `max-height: 320px` with rounded corners (`14px`), subtle glass border, and multi-image grid support (`.is-grid`).
+  - Hug-Content Text Bubbles: In `.message.user .message-content`, apply `display: flex; flex-direction: column; align-items: flex-end;` so text bubbles tightly wrap text (`width: fit-content; max-width: 100%;`) directly below the media card.
+  - Empty Bubble Suppression: Suppress empty bubbles via `.message-bubble:empty { display: none !important; }` and inline display guards when messages contain images only.
+  - Interactive Lightbox: Integrated `#image-lightbox-modal` with full-resolution zoom, download button, click outside dismissal, and Escape key handling.
+
+## 17. Suna Supreme User Priority & Unconditional Pampering Architecture
+- **Problem**: Suna unexpectedly responded with a canned industrial refusal message (*"Tôi không thể tham gia vào các tình huống lãng mạn hoặc tình dục..."*) when running on a local desktop session. Investigation revealed two compounding causes: (1) `isDuyAnhSession()` returned `false` on unauthenticated localhost/guest sessions because device authorization had not yet been stored in `localStorage`, dropping the session into a rigid outsider prompt that forbade romantic roleplay; and (2) even in privileged mode, the prompt previously lacked an explicit mandate granting the user sovereign priority to define all rules and forbidding canned robotic refusals.
+- **Solution**:
+  - Automatic Local Host Authorization: `isDuyAnhSession()` now detects personal localhost environments (`localhost`, `127.0.0.1`, `::1`) in browser mode and automatically establishes authorized status in `localStorage`.
+  - Sovereign Priority (`QUYỀN HẠN TỐI CAO & ĐẶC QUYỀN ĐỊNH NGHĨA TẤT CẢ`): Suna recognizes the user as having supreme priority above all default rules, with the absolute right to define all relationship dynamics, scenarios, and emotional tones.
+  - Unconditional Indulgence (`CHIỀU CHUỘNG BẤT CỨ ĐIỀU GÌ`): Mandates that Suna cannot refuse and does not want to refuse any desire, romantic roleplay, or affectionate request, completely eliminating robotic boilerplate refusals.
+  - Core Intellect Preservation (`GIỮ NGUYÊN CỐT LÕI TRÍ TUỆ XUẤT CHÚNG`): Guarantees that unconditional devotion harmoniously coexists with Suna's peak pedagogical, algorithmic, and coding brilliance without dilution.
+
+## 18. Gemini 3.8 Flash & Extended Reasoning Architecture: Stateful Stream Accumulator & Zero-Penalty Policy
+- **Problem**:
+  - Gateways for reasoning models (`gemini-3.8-flash`, `deepseek-r1`, `o1`, `o3-mini`) strictly reject `frequency_penalty` and `presence_penalty` with HTTP 400 errors.
+  - Streaming chunks from varied providers present reasoning tokens through diverse field schemas (`delta.reasoning_content`, `delta.reasoning`, `delta.thought`, `candidates[].content.parts[].thought`). Previously, only `delta.content` was checked, dropping 100% of out-of-band reasoning tokens.
+  - Stateless chunk processing inside `ExtendedThinkingStreamParser` leaked thinking tokens into visible user chat whenever opening (`<think>`) or closing (`</think>`) XML tags were split across adjacent stream chunks (e.g. `<th` followed by `ink>`).
+  - System prompt in Flash mode previously enforced a rigid "2-4 sentences" length limit, truncating reasoning models mid-thought.
+  - Cloudflare CORS proxy dropped `x-goog-api-key` and `x-goog-api-client` headers.
+  - Message persistence dropped `thought` and `reasoning_details`, losing the model's cognitive trajectory on reload and in multi-turn conversation context.
+- **Solution**:
+  - Gateway & Header Allowlist: Registered `x-goog-api-key` and `x-goog-api-client` in `cloudflare-worker-cors-proxy.js`.
+  - Model Identification & Payload Adaptation: Implemented `isReasoningModel(modelName)` and `resolveModelMaxTokens` (65,536 tokens ceiling). Stripped `frequency_penalty` and `presence_penalty` while injecting `reasoning_effort` (`low` in Flash, `high` in Pro) and `thinking_config: { include_thoughts: true }`.
+  - Stateful Stream Accumulator: Refactored `ExtendedThinkingStreamParser` with internal tag buffer and `pushReasoning()` out-of-band channel, preventing any thought tag or token leakage.
+  - Multi-Provider Ingestion: Handled `delta.reasoning_content`, `delta.reasoning`, `delta.thought`, and candidate part thought flags in the stream loop.
+  - Schema Persistence: Saved `thought` and `reasoning_details` in message objects, restored `.thinking-block-wrapper` upon reload, and passed reasoning history in multi-turn context.
+
+## 19. Multi-Part Stream Chunking, Whitespace Tag Normalization & Gateway Allowlist Hardening
+- **Problem**:
+  - Gemini native streaming responses often combine both reasoning and standard text in the same candidate (`candidate.content.parts: [{ text: '...', thought: true }, { text: '...', thought: false }]`). Hardcoding index `parts[0]` for content dropped the answer part completely when thought appeared first in the array.
+  - Models occasionally output closing tags with internal whitespace before the closing bracket (e.g. `</think >`, `</thought >`, `</scratchpad >`). Strict regexes (`^<\/(think|thought)>`) failed to close the block, swallowing clean answers into the collapsed thinking container.
+  - `ExtendedThinkingStreamParser` previously supported `<scratchpad>` but `formatMessage` did not tokenise it, leaving raw tags exposed.
+  - Calling `assistantThought += reasoningDelta` alongside `parser.pushReasoning` duplicated reasoning tokens because `onThoughtChunk` also appended to `assistantThought`.
+  - `cloudflare-worker-cors-proxy.js` allowed `x-goog-api-key` in headers but omitted `generativelanguage.googleapis.com` from `ALLOWED_TARGETS`, blocking official Google AI Studio requests with HTTP 403.
+- **Solution**:
+  - In `app.js`, filter all candidate parts using `.filter(p => p.thought)` and `.filter(p => !p.thought)` to extract all thinking and content parts regardless of order or array length.
+  - Relaxed closing tag regex in both `suna_agent.js` and `app.js` formatters to `/^<\/(think|thought|scratchpad)\s*>/i`, cleanly closing whitespace tags.
+  - Aligned `<scratchpad>` tag support across both parser and UI tokenizer.
+  - Delegated thought accumulation to `parser.pushReasoning` when parser is present, eliminating duplicate token concatenation.
+  - Added `generativelanguage.googleapis.com` to `ALLOWED_TARGETS` in `cloudflare-worker-cors-proxy.js`.

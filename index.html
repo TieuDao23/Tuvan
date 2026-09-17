@@ -22,7 +22,7 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" integrity="sha384-nB0miv6/jRmo5UMMR1wu3Gz6NLsoTkbqJghGIsx//Rlm+ZU03BU6SQNC66uf4l5+" crossorigin="anonymous" referrerpolicy="no-referrer">
     <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" integrity="sha384-7zkQWkzuo3B5mTepMUcHkMB5jZaolc2xDwL6VFqjFALcbeS9Ggm/Yr2r3Dy4lfFg" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" integrity="sha384-43gviWU0YVjaDtb/GhzOouOXtZMP/7XUzwPTstBeZFe/+rCMvRwr4yROQP43s0Xk" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-    <link rel="stylesheet" href="styles.css?v=12">
+    <link rel="stylesheet" href="styles.css?v=14">
     <!-- Preload Firebase SDK for instant auth -->
     <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js">
     <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js">
@@ -651,7 +651,7 @@
                     <h3><span class="material-icons-round">palette</span> Tông màu tính cách</h3>
                     <p class="settings-desc">Chọn tông màu thể hiện tính cách AI</p>
                     <div class="color-theme-options" id="color-theme-options">
-                        <button class="color-theme-btn active" data-theme="aurora" style="--theme-preview: linear-gradient(135deg, #667eea, #764ba2)"><div class="color-preview"></div><span>Aurora</span></button>
+                        <button class="color-theme-btn active" data-theme="aurora" style="--theme-preview: linear-gradient(135deg, #a18cd1, #fbc2eb)"><div class="color-preview"></div><span>Aurora</span></button>
                         <button class="color-theme-btn" data-theme="sunset" style="--theme-preview: linear-gradient(135deg, #f093fb, #f5576c)"><div class="color-preview"></div><span>Sunset</span></button>
                         <button class="color-theme-btn" data-theme="ocean" style="--theme-preview: linear-gradient(135deg, #4facfe, #00f2fe)"><div class="color-preview"></div><span>Ocean</span></button>
                         <button class="color-theme-btn" data-theme="forest" style="--theme-preview: linear-gradient(135deg, #43e97b, #38f9d7)"><div class="color-preview"></div><span>Forest</span></button>
@@ -1025,8 +1025,8 @@
                 <button id="btn-download-artifact" class="btn-icon" title="Tải xuống HTML" aria-label="Tải xuống HTML"><span class="material-icons-round">download</span></button>
                 <button id="btn-refresh-artifact" class="btn-icon" title="Tải lại" aria-label="Tải lại"><span class="material-icons-round">refresh</span></button>
                 <button id="btn-collab-suna" class="btn-collab" title="Nhờ Suna tối ưu code" aria-label="Nhờ Suna tối ưu code"><span class="material-icons-round">smart_toy</span><span>Cộng tác với Suna</span></button>
-                <button id="btn-close-artifact" class="btn-icon" title="Đóng" aria-label="Đóng"><span class="material-icons-round">close</span></button>
             </div>
+            <button id="btn-close-artifact" class="btn-icon" title="Đóng Live Workspace (Esc)" aria-label="Đóng Live Workspace"><span class="material-icons-round">close</span></button>
         </div>
         <div class="artifacts-content">
             <div id="artifact-editor-container" class="artifact-editor-container">
@@ -1086,12 +1086,28 @@
         </div>
     </div>
 
+    <!-- Image Lightbox Modal -->
+    <div id="image-lightbox-modal" class="image-lightbox-overlay" style="display:none;" role="dialog" aria-modal="true" aria-label="Xem ảnh phóng to" onclick="if(event.target===this)closeImageLightbox()">
+        <div class="lightbox-backdrop" onclick="closeImageLightbox()"></div>
+        <div class="lightbox-dialog">
+            <div class="lightbox-actions">
+                <a id="lightbox-download-btn" class="lightbox-btn" download="suna-image.png" target="_blank" rel="noopener noreferrer" title="Tải ảnh về" aria-label="Tải ảnh về">
+                    <span class="material-icons-round">download</span>
+                </a>
+                <button type="button" class="lightbox-btn" onclick="closeImageLightbox()" title="Đóng (Esc)" aria-label="Đóng">
+                    <span class="material-icons-round">close</span>
+                </button>
+            </div>
+            <img id="lightbox-img" class="lightbox-img" src="" alt="Phóng to ảnh">
+        </div>
+    </div>
+
     <!-- Toast Container -->
     <div id="toast-container" class="toast-container"></div>
 
     <script src="suna_harness.js"></script>
     <script src="suna_agent.js"></script>
-    <script src="app.js?v=10"></script>
+    <script src="app.js?v=12"></script>
 </body>
 
 </html>

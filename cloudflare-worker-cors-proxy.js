@@ -35,6 +35,7 @@
 const ALLOWED_TARGETS = [
   'api.justwoker.icu',
   'catiecli.sukaka.top',
+  'generativelanguage.googleapis.com',
 ];
 
 // Chỉ những Origin này được gọi worker. Để [] = cho phép tất cả (không khuyến nghị khi public).
@@ -49,6 +50,8 @@ const FORWARD_HEADER_ALLOWLIST = [
   'content-type',
   'accept',
   'x-api-key',
+  'x-goog-api-key',
+  'x-goog-api-client',
   'anthropic-version',
   'openai-organization',
 ];
