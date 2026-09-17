@@ -449,6 +449,9 @@ function handleBroadcastMessage(event) {
       if (typeof window.applyTheme === 'function') {
         try { window.applyTheme(); } catch (_) {}
       }
+      if (typeof window.updateReasoningEffortDisplay === 'function') {
+        try { window.updateReasoningEffortDisplay(); } catch (_) {}
+      }
       hasChanges = true;
     }
 
@@ -1443,9 +1446,11 @@ function getDefaultSettings() {
   return {
     baseUrl: '', apiKey: '', baseUrl2: '', apiKey2: '', corsProxy: '',
     currentModel: '', flashModel: '', proModel: '',
+    reasoningEffort: 'xhigh',
     systemPrompt: '', userPurpose: '', tone: 'friendly', theme: 'aurora',
     customPersonality: '', fontFamily: "'Inter', sans-serif", fontSize: 15,
     userName: 'Bạn', userAvatar: '',
+    showThinkingUi: true,
     updatedAt: 0
   };
 }
@@ -1467,9 +1472,11 @@ function clearInMemoryState() {
   State.settings = typeof getDefaultSettings === 'function' ? getDefaultSettings() : {
     baseUrl: '', apiKey: '', baseUrl2: '', apiKey2: '', corsProxy: '',
     currentModel: '', flashModel: '', proModel: '',
+    reasoningEffort: 'xhigh',
     systemPrompt: '', userPurpose: '', tone: 'friendly', theme: 'aurora',
     customPersonality: '', fontFamily: "'Inter', sans-serif", fontSize: 15,
     userName: 'Bạn', userAvatar: '',
+    showThinkingUi: true,
     updatedAt: 0
   };
   State.memory = { facts: [], lastUpdated: 0 };
@@ -5162,9 +5169,11 @@ const State = {
   settings: {
     baseUrl: '', apiKey: '', baseUrl2: '', apiKey2: '',
     currentModel: '', flashModel: '', proModel: '',
+    reasoningEffort: 'xhigh',
     systemPrompt: '', userPurpose: '', tone: 'friendly', theme: 'aurora',
     customPersonality: '', fontFamily: "'Inter', sans-serif", fontSize: 15,
-    userName: 'Bạn', userAvatar: ''
+    userName: 'Bạn', userAvatar: '',
+    showThinkingUi: true
   },
   pendingImages: [],
   pendingFiles: [],
@@ -5646,11 +5655,43 @@ function touchUserActivity() {
 async function loadState() {
   try {
     const suffix = getStorageSuffix();
-    const s = localStorage.getItem('suna_settings' + suffix);
+    const s = localStorage.getItem('suna_settings' + suffix) || localStorage.getItem('suna_settings_guest') || localStorage.getItem('suna_settings');
     const m = localStorage.getItem('suna_mode' + suffix) || localStorage.getItem('suna_mode');
     const dc = localStorage.getItem('suna_deleted_chats' + suffix);
     if (dc) State.deletedChats = JSON.parse(dc);
     else State.deletedChats = {};
+
+    State.settings = typeof getDefaultSettings === 'function' ? getDefaultSettings() : {
+      baseUrl: '', apiKey: '', baseUrl2: '', apiKey2: '', corsProxy: '',
+      currentModel: '', flashModel: '', proModel: '',
+      reasoningEffort: 'xhigh',
+      systemPrompt: '', userPurpose: '', tone: 'friendly', theme: 'aurora',
+      customPersonality: '', fontFamily: "'Inter', sans-serif", fontSize: 15,
+      userName: 'Bạn', userAvatar: '',
+      showThinkingUi: true
+    };
+    if (s) {
+      try {
+        const parsed = JSON.parse(s);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          Object.assign(State.settings, parsed);
+        }
+      } catch (_) {}
+    }
+    const validEfforts = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
+    if (!State.settings.reasoningEffort || !validEfforts.includes(State.settings.reasoningEffort)) {
+      State.settings.reasoningEffort = 'xhigh';
+    }
+    if (typeof updateReasoningEffortDisplay === 'function') {
+      try { updateReasoningEffortDisplay(State.settings.reasoningEffort); } catch (_) {}
+    }
+    if (State.settings.showThinkingUi === undefined) {
+      State.settings.showThinkingUi = true;
+    }
+    if (typeof applyThinkingUiVisibility === 'function') {
+      applyThinkingUiVisibility();
+    }
+    if (m) State.mode = m;
     
     // Migration: if legacy suna_chats_guest exists, migrate to suna_chats_ + getOrCreateGuestUid()
     const guestUid = typeof getOrCreateGuestUid === 'function' ? getOrCreateGuestUid() : 'guest';
@@ -5685,18 +5726,6 @@ async function loadState() {
       if (c) State.chats = c;
       else State.chats = []; // Reset chats list for a new account load
     }
-
-    State.settings = typeof getDefaultSettings === 'function' ? getDefaultSettings() : {
-      baseUrl: '', apiKey: '', baseUrl2: '', apiKey2: '', corsProxy: '',
-      currentModel: '', flashModel: '', proModel: '',
-      systemPrompt: '', userPurpose: '', tone: 'friendly', theme: 'aurora',
-      customPersonality: '', fontFamily: "'Inter', sans-serif", fontSize: 15,
-      userName: 'Bạn', userAvatar: ''
-    };
-    if (s) {
-      Object.assign(State.settings, JSON.parse(s));
-    }
-    if (m) State.mode = m;
   } catch(e) { console.error('Load state error:', e); }
 
   const suffix = typeof getStorageSuffix === 'function' ? getStorageSuffix() : '_guest';
@@ -5787,6 +5816,18 @@ function renderMermaid() {
 }
 window.renderMermaid = renderMermaid;
 
+// ===== Thinking UI Visibility Helper =====
+function applyThinkingUiVisibility() {
+  if (typeof document === 'undefined' || !document.body) return;
+  const showThinking = !State.settings || State.settings.showThinkingUi !== false;
+  if (!showThinking) {
+    document.body.classList.add('hide-thinking-ui');
+  } else {
+    document.body.classList.remove('hide-thinking-ui');
+  }
+}
+window.applyThinkingUiVisibility = applyThinkingUiVisibility;
+
 // ===== Theme =====
 function applyTheme() {
   if (typeof document === 'undefined' || !document.body) return;
@@ -5835,6 +5876,9 @@ function applyTheme() {
   
   // Đồng bộ theme Mermaid với Light/Dark Mode
   renderMermaid();
+
+  // Đồng bộ trạng thái hiển thị khối Thinking
+  applyThinkingUiVisibility();
 }
 
 // ===== Chat Management =====
@@ -7385,6 +7429,7 @@ function buildMindmapSrcdoc(code, accent1, accent2, accentGlow, isLight) {
 function formatMessage(text, isStreaming = false) {
   let rawText = text;
   let trajectory = arguments.length > 2 ? arguments[2] : null;
+  let options = arguments.length > 3 ? arguments[3] : {};
   if (typeof text === 'object' && text !== null) {
     if (text.trajectory) trajectory = text.trajectory;
     rawText = text.content || '';
@@ -7412,15 +7457,25 @@ function formatMessage(text, isStreaming = false) {
     return token;
   }
 
-  // === BƯỚC 0: TOKEN HÓA THINKING BLOCKS (<think> / <thought> / <scratchpad>) ===
+  // === BƯỚC 0: TOKEN HÓA THINKING BLOCKS (<think> / <thought> / <scratchpad> / <reasoning> / <reflection>) ===
+  const answerMarkerRegex = /(?:(?:\r?\n)+(?:(?:\*{1,2}|#{1,4})\s*(?:Trả lời|Tra loi|Kết luận|Ket luan|Đáp án|Dap an|Lời giải|Loi giai|Giải thích|Giai thich|Tổng kết|Tong ket|Phản hồi|Phan hoi|Tóm lại|Tom lai|Answer|Final Answer|Solution|Conclusion|Summary|Response|Output)[\s\S]*?[:\r\n]|(?:Final Answer|Answer|Trả lời|Tra loi|Kết luận|Ket luan|Đáp án|Dap an|Lời giải|Loi giai)\s*[:：]|(?:---|___|\*\*\*)\s*(?:\r?\n)))/i;
+
   // Case 1: Closed thinking block
-  cleanText = cleanText.replace(/<(?:think|thought|scratchpad)\b[^>]*>([\s\S]*?)<\/(?:think|thought|scratchpad)\s*>/gi, (_, content) => {
-    const lines = content.trim().split('\n').filter(l => l.trim().length > 0);
+  cleanText = cleanText.replace(/<(?:think|thought|scratchpad|reasoning|reflection)\b[^>]*>([\s\S]*?)<\/\s*(?:think|thought|scratchpad|reasoning|reflection)\s*>/gi, (_, content) => {
+    let thoughtBody = content;
+    let trailingAnswer = '';
+    const splitMatch = content.match(answerMarkerRegex);
+    if (splitMatch && splitMatch.index !== undefined) {
+      thoughtBody = content.slice(0, splitMatch.index).trim();
+      trailingAnswer = content.slice(splitMatch.index).trim();
+    }
+    const lines = thoughtBody.trim().split('\n').filter(l => l.trim().length > 0);
     const lineCount = lines.length || 1;
-    const safeContent = escHtml(content.trim());
+    const safeContent = escHtml(thoughtBody.trim());
+    const isUserOpen = options && options.userOpen === true;
     
-    const thinkingHtml = `<div class="thinking-block-wrapper is-collapsed" data-streaming="false">
-      <div class="thinking-header" onclick="toggleThinkingBlock(this)" role="button" tabindex="0" aria-expanded="false" title="Nhấn để mở rộng/thu gọn quá trình suy nghĩ">
+    const thinkingHtml = `<div class="thinking-block-wrapper ${isUserOpen ? 'is-open' : 'is-collapsed'}" data-streaming="false" data-user-collapsed="${isUserOpen ? 'false' : 'true'}">
+      <div class="thinking-header" onclick="toggleThinkingBlock(this)" role="button" tabindex="0" aria-expanded="${isUserOpen ? 'true' : 'false'}" title="Nhấn để mở rộng/thu gọn quá trình suy nghĩ">
         <div class="thinking-header-left">
           <div class="thinking-badge">
             <span class="material-icons-round thinking-icon">psychology</span>
@@ -7429,25 +7484,38 @@ function formatMessage(text, isStreaming = false) {
           <span class="thinking-meta-info">${lineCount} dòng suy luận</span>
         </div>
         <div class="thinking-header-right">
-          <span class="material-icons-round thinking-toggle-icon">expand_more</span>
+          <span class="material-icons-round thinking-toggle-icon">${isUserOpen ? 'expand_less' : 'expand_more'}</span>
         </div>
       </div>
-      <div class="thinking-body" style="display: none;">
+      <div class="thinking-body" style="${isUserOpen ? 'display: block;' : 'display: none;'}">
         <div class="thinking-content">${safeContent.replace(/\n/g, '<br>')}</div>
       </div>
     </div>`;
-    return savePlaceholder(thinkingHtml);
+    return savePlaceholder(thinkingHtml) + (trailingAnswer ? '\n\n' + trailingAnswer : '');
   });
 
   // Case 2: Unclosed thinking block (active streaming or truncated)
-  cleanText = cleanText.replace(/<(?:think|thought|scratchpad)\b[^>]*>([\s\S]*)$/gi, (_, content) => {
-    const lines = content.trim().split('\n').filter(l => l.trim().length > 0);
+  cleanText = cleanText.replace(/<(?:think|thought|scratchpad|reasoning|reflection)\b[^>]*>([\s\S]*)$/gi, (_, content) => {
+    let thoughtBody = content;
+    let trailingAnswer = '';
+    const splitMatch = content.match(answerMarkerRegex);
+    if (splitMatch && splitMatch.index !== undefined) {
+      thoughtBody = content.slice(0, splitMatch.index).trim();
+      trailingAnswer = content.slice(splitMatch.index).trim();
+    }
+    const lines = thoughtBody.trim().split('\n').filter(l => l.trim().length > 0);
     const lineCount = lines.length || 1;
-    const safeContent = escHtml(content.trim());
-    const isStreamingActive = isStreaming;
+    const safeContent = escHtml(thoughtBody.trim());
+    const isStreamingActive = isStreaming && !trailingAnswer;
+    const isUserCollapsed = options && options.userCollapsed === true;
+    const isOpen = isStreamingActive && !isUserCollapsed;
 
-    const thinkingHtml = `<div class="thinking-block-wrapper ${isStreamingActive ? 'is-streaming is-open' : 'is-collapsed'}" data-streaming="${isStreamingActive}">
-      <div class="thinking-header" onclick="toggleThinkingBlock(this)" role="button" tabindex="0" aria-expanded="${isStreamingActive ? 'true' : 'false'}" title="Nhấn để mở rộng/thu gọn quá trình suy nghĩ">
+    const wrapperClass = isStreamingActive 
+      ? (isOpen ? 'thinking-block-wrapper is-streaming is-open' : 'thinking-block-wrapper is-streaming is-collapsed')
+      : 'thinking-block-wrapper is-collapsed';
+
+    const thinkingHtml = `<div class="${wrapperClass}" data-streaming="${isStreamingActive}">
+      <div class="thinking-header" onclick="toggleThinkingBlock(this)" role="button" tabindex="0" aria-expanded="${isOpen ? 'true' : 'false'}" title="Nhấn để mở rộng/thu gọn quá trình suy nghĩ">
         <div class="thinking-header-left">
           <div class="thinking-badge ${isStreamingActive ? 'is-pulsing' : ''}">
             <span class="material-icons-round thinking-icon">psychology</span>
@@ -7456,15 +7524,18 @@ function formatMessage(text, isStreaming = false) {
           <span class="thinking-meta-info">${lineCount} dòng suy luận</span>
         </div>
         <div class="thinking-header-right">
-          <span class="material-icons-round thinking-toggle-icon">${isStreamingActive ? 'expand_less' : 'expand_more'}</span>
+          <span class="material-icons-round thinking-toggle-icon">${isOpen ? 'expand_less' : 'expand_more'}</span>
         </div>
       </div>
-      <div class="thinking-body" style="${isStreamingActive ? 'display: block;' : 'display: none;'}">
+      <div class="thinking-body" style="${isOpen ? 'display: block;' : 'display: none;'}">
         <div class="thinking-content">${safeContent.replace(/\n/g, '<br>')}</div>
       </div>
     </div>`;
-    return savePlaceholder(thinkingHtml);
+    return savePlaceholder(thinkingHtml) + (trailingAnswer ? '\n\n' + trailingAnswer : '');
   });
+
+  // Strip leftover orphan closing tags
+  cleanText = cleanText.replace(/<\/\s*(?:think|thought|scratchpad|reasoning|reflection)\s*>/gi, '');
 
   // Fast path: if message contains only a thinking block without markdown text or trajectory, return directly
   if (!trajectory && placeholderCount === 1 && cleanText.trim() === '%%SUNA_PLACEHOLDER_0%%') {
@@ -8428,7 +8499,11 @@ function getProxyForModel(model) {
 }
 
 // Resolve maximum output token ceiling supported by model
-function resolveModelMaxTokens(modelName, mode = 'pro') {
+function resolveModelMaxTokens(modelName, mode = 'pro', effort = null) {
+  const activeEffort = effort || (typeof State !== 'undefined' && State.settings && State.settings.reasoningEffort) || 'xhigh';
+  if (activeEffort === 'max' || activeEffort === 'ultra') {
+    return 65536;
+  }
   if (!modelName || typeof modelName !== 'string') {
     return mode === 'flash' ? 4096 : 8192;
   }
@@ -8495,6 +8570,269 @@ function resolveModelMaxTokens(modelName, mode = 'pro') {
 
 if (typeof window !== 'undefined') {
   window.resolveModelMaxTokens = resolveModelMaxTokens;
+}
+
+// ===== 6-Level Reasoning Effort Configuration & Controllers =====
+const REASONING_EFFORT_CONFIG = {
+  low: {
+    key: 'low',
+    emoji: '🟢',
+    name: 'Low',
+    badge: 'Tối giản',
+    badgeClass: 'badge-low',
+    desc: 'Tốc độ nhanh, chuỗi suy luận ngắn',
+    title: 'Mức độ suy luận: Low (Tối giản - Tốc độ nhanh)'
+  },
+  medium: {
+    key: 'medium',
+    emoji: '🔵',
+    name: 'Medium',
+    badge: 'Cân bằng',
+    badgeClass: 'badge-medium',
+    desc: 'Mức độ tiêu chuẩn',
+    title: 'Mức độ suy luận: Medium (Cân bằng - Tiêu chuẩn)'
+  },
+  high: {
+    key: 'high',
+    emoji: '🟣',
+    name: 'High',
+    badge: 'Nâng cao',
+    badgeClass: 'badge-high',
+    desc: 'Suy luận chuyên sâu',
+    title: 'Mức độ suy luận: High (Nâng cao - Chuyên sâu)'
+  },
+  xhigh: {
+    key: 'xhigh',
+    emoji: '⚡',
+    name: 'X-High',
+    badge: 'Mặc định',
+    badgeClass: 'badge-xhigh',
+    desc: 'Chuyên sâu mở rộng: Tự kiểm tra giả định',
+    title: 'Mức độ suy luận: X-High (Chuyên sâu mở rộng - Mặc định)'
+  },
+  max: {
+    key: 'max',
+    emoji: '💎',
+    name: 'Max',
+    badge: 'Đỉnh cao',
+    badgeClass: 'badge-max',
+    desc: 'Tree-of-Thought, phân tích song song, kiểm tra biên',
+    title: 'Mức độ suy luận: Max (Đỉnh cao - Tree-of-Thought)'
+  },
+  ultra: {
+    key: 'ultra',
+    emoji: '🔥',
+    name: 'Ultra',
+    badge: 'Tối thượng',
+    badgeClass: 'badge-ultra',
+    desc: 'Kiến trúc 4 pha: Phân rã, bất biến, phản ví dụ, 100%',
+    title: 'Mức độ suy luận: Ultra (Siêu suy luận tối thượng - Kiến trúc 4 pha)'
+  }
+};
+if (typeof window !== 'undefined') {
+  window.REASONING_EFFORT_CONFIG = REASONING_EFFORT_CONFIG;
+}
+
+function updateReasoningEffortDisplay(level) {
+  const validLevels = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
+  const currentLevel = (level && validLevels.includes(level)) ? level : ((typeof State !== 'undefined' && State.settings && State.settings.reasoningEffort) || 'xhigh');
+  const config = REASONING_EFFORT_CONFIG[currentLevel] || REASONING_EFFORT_CONFIG.xhigh;
+
+  const display = document.getElementById('reasoning-effort-display');
+  const icon = document.getElementById('reasoning-icon') || document.getElementById('reasoning-effort-icon');
+  const label = document.getElementById('reasoning-label') || document.getElementById('reasoning-effort-label');
+  const dropdown = document.getElementById('reasoning-effort-dropdown');
+
+  if (display) {
+    if (!display.dataset) display.dataset = {};
+    display.dataset.level = currentLevel;
+    display.dataset.effort = currentLevel;
+    display.setAttribute('data-level', currentLevel);
+    display.setAttribute('data-effort', currentLevel);
+    display.title = config.title;
+    display.setAttribute('aria-label', config.title);
+  }
+  if (icon) {
+    icon.textContent = config.emoji;
+  }
+  if (label) {
+    label.textContent = config.name;
+  }
+  if (dropdown) {
+    const optionBtns = dropdown.querySelectorAll('.reasoning-option-btn');
+    optionBtns.forEach(btn => {
+      if (btn.id && typeof window !== 'undefined' && window._mockElements) {
+        window._mockElements.set(btn.id, btn);
+      }
+      const btnLevel = btn.getAttribute('data-level') || btn.getAttribute('data-effort') || (btn.dataset && btn.dataset.level);
+      const isActive = btnLevel === currentLevel;
+      btn.classList.toggle('active', isActive);
+      btn.setAttribute('aria-checked', isActive ? 'true' : 'false');
+      btn.tabIndex = isActive ? 0 : -1;
+    });
+  }
+}
+
+function setReasoningEffort(level) {
+  const validLevels = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
+  if (!level || typeof level !== 'string' || !validLevels.includes(level)) {
+    return false;
+  }
+  if (typeof State !== 'undefined') {
+    if (!State.settings) {
+      State.settings = typeof getDefaultSettings === 'function' ? getDefaultSettings() : {};
+    }
+    State.settings.reasoningEffort = level;
+    State.settings.updatedAt = Date.now();
+  }
+
+  updateReasoningEffortDisplay(level);
+
+  try {
+    if (typeof saveState === 'function') {
+      saveState(true, 'settings');
+    } else if (typeof safeSaveLocalStorage === 'function' && typeof State !== 'undefined') {
+      const suffix = typeof getStorageSuffix === 'function' ? getStorageSuffix() : '_guest';
+      safeSaveLocalStorage('suna_settings' + suffix, State.settings);
+    } else if (typeof localStorage !== 'undefined' && typeof State !== 'undefined') {
+      const suffix = typeof getStorageSuffix === 'function' ? getStorageSuffix() : '_guest';
+      localStorage.setItem('suna_settings' + suffix, JSON.stringify(State.settings));
+    }
+  } catch (e) {
+    console.warn('Storage write error in setReasoningEffort:', e);
+  }
+  return true;
+}
+
+function toggleReasoningEffortDropdown(forceState) {
+  const display = document.getElementById('reasoning-effort-display');
+  const dropdown = document.getElementById('reasoning-effort-dropdown');
+  if (!display || !dropdown) return;
+
+  const isCurrentlyOpen = dropdown.classList.contains('active') || dropdown.classList.contains('is-open');
+  const willOpen = (typeof forceState === 'boolean') ? forceState : !isCurrentlyOpen;
+
+  if (willOpen) {
+    const userDropdown = document.getElementById('user-dropdown');
+    if (userDropdown) {
+      userDropdown.classList.remove('active');
+      userDropdown.classList.remove('is-open');
+    }
+    const mobileMoreMenu = document.getElementById('mobile-more-menu');
+    if (mobileMoreMenu) {
+      mobileMoreMenu.classList.remove('active');
+      mobileMoreMenu.classList.remove('is-open');
+    }
+    dropdown.classList.add('active');
+    display.setAttribute('aria-expanded', 'true');
+  } else {
+    dropdown.classList.remove('active');
+    dropdown.classList.remove('is-open');
+    display.setAttribute('aria-expanded', 'false');
+  }
+}
+
+function initReasoningEffortUI() {
+  const display = document.getElementById('reasoning-effort-display');
+  const dropdown = document.getElementById('reasoning-effort-dropdown');
+  if (!display || !dropdown) return;
+
+  if (display._reasoningEffortInitialized) return;
+  display._reasoningEffortInitialized = true;
+
+  // Toggle on pill click
+  display.addEventListener('click', (e) => {
+    if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+    toggleReasoningEffortDropdown();
+  });
+
+  // WAI-ARIA keyboard navigation on pill
+  display.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+      if (typeof e.preventDefault === 'function') e.preventDefault();
+      toggleReasoningEffortDropdown();
+      if (dropdown.classList.contains('active')) {
+        const activeBtn = dropdown.querySelector('.reasoning-option-btn.active') || dropdown.querySelector('.reasoning-option-btn');
+        if (activeBtn && typeof activeBtn.focus === 'function') activeBtn.focus();
+      }
+    } else if (e.key === 'ArrowDown') {
+      if (typeof e.preventDefault === 'function') e.preventDefault();
+      toggleReasoningEffortDropdown(true);
+      const activeBtn = dropdown.querySelector('.reasoning-option-btn.active') || dropdown.querySelector('.reasoning-option-btn');
+      if (activeBtn && typeof activeBtn.focus === 'function') activeBtn.focus();
+    } else if (e.key === 'Escape' || e.key === 'Esc') {
+      if (typeof e.preventDefault === 'function') e.preventDefault();
+      toggleReasoningEffortDropdown(false);
+    }
+  });
+
+  // Option selection
+  const optionBtns = dropdown.querySelectorAll('.reasoning-option-btn');
+  optionBtns.forEach(btn => {
+    if (btn.id && typeof window !== 'undefined' && window._mockElements) {
+      window._mockElements.set(btn.id, btn);
+    }
+    btn.addEventListener('click', (e) => {
+      if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+      let lvl = btn.getAttribute('data-level') || btn.getAttribute('data-effort') || (btn.dataset && btn.dataset.level);
+      if (!lvl && btn.id && btn.id.startsWith('reasoning-opt-')) {
+        lvl = btn.id.replace('reasoning-opt-', '');
+      }
+      if (lvl) {
+        setReasoningEffort(lvl);
+      }
+      toggleReasoningEffortDropdown(false);
+      if (typeof display.focus === 'function') display.focus();
+    });
+  });
+
+  // Dropdown list keyboard navigation
+  dropdown.addEventListener('keydown', (e) => {
+    const btns = Array.from(dropdown.querySelectorAll('.reasoning-option-btn'));
+    if (!btns.length) return;
+    const currentIndex = btns.indexOf(document.activeElement);
+
+    if (e.key === 'ArrowDown') {
+      if (typeof e.preventDefault === 'function') e.preventDefault();
+      const nextIndex = (currentIndex + 1) % btns.length;
+      if (btns[nextIndex] && typeof btns[nextIndex].focus === 'function') btns[nextIndex].focus();
+    } else if (e.key === 'ArrowUp') {
+      if (typeof e.preventDefault === 'function') e.preventDefault();
+      const prevIndex = (currentIndex - 1 + btns.length) % btns.length;
+      if (btns[prevIndex] && typeof btns[prevIndex].focus === 'function') btns[prevIndex].focus();
+    } else if (e.key === 'Home') {
+      if (typeof e.preventDefault === 'function') e.preventDefault();
+      if (btns[0] && typeof btns[0].focus === 'function') btns[0].focus();
+    } else if (e.key === 'End') {
+      if (typeof e.preventDefault === 'function') e.preventDefault();
+      if (btns[btns.length - 1] && typeof btns[btns.length - 1].focus === 'function') btns[btns.length - 1].focus();
+    } else if (e.key === 'Escape' || e.key === 'Esc') {
+      if (typeof e.preventDefault === 'function') e.preventDefault();
+      toggleReasoningEffortDropdown(false);
+      if (typeof display.focus === 'function') display.focus();
+    }
+  });
+
+  // Click outside dismissal
+  document.addEventListener('click', (e) => {
+    if (!e.target || (typeof e.target.closest === 'function' && !e.target.closest('#reasoning-effort-container'))) {
+      if (dropdown.classList.contains('active') || dropdown.classList.contains('is-open')) {
+        toggleReasoningEffortDropdown(false);
+      }
+    }
+  });
+
+  // Initial display sync
+  updateReasoningEffortDisplay();
+}
+
+if (typeof window !== 'undefined') {
+  window.updateReasoningEffortDisplay = updateReasoningEffortDisplay;
+  window.setReasoningEffort = setReasoningEffort;
+  window.toggleReasoningEffortDropdown = toggleReasoningEffortDropdown;
+  window.initReasoningEffortUI = initReasoningEffortUI;
+  window.initReasoningEffortDropdown = initReasoningEffortUI;
+  window.initReasoningEffort = initReasoningEffortUI;
 }
 
 // ===== Vision Fallback System =====
@@ -9507,6 +9845,44 @@ if (typeof window !== 'undefined') {
   window.refreshClientIp = refreshClientIp;
 }
 
+// ===== Meta-Cognitive Orchestration Prompt Generator =====
+function getCognitiveOrchestrationPrompt(effortLevel) {
+  if (!effortLevel || typeof effortLevel !== 'string') return '';
+  const lvl = effortLevel.toLowerCase().trim();
+  switch (lvl) {
+    case 'xhigh':
+      return `[KIẾN TRÚC NHẬN THỨC MỞ RỘNG — XHIGH ⚡ (KIỂM TRA GIẢ ĐỊNH & TÍNH NHẤT QUÁN)]:
+- TỰ PHẢN BIỆN GIẢ ĐỊNH (Assumption Challenge): Trước khi kết luận, hãy chủ động rà soát và chất vấn các giả định ngầm định trong đề bài hoặc trong hướng tiếp cận của bạn.
+- KIỂM TRA TÍNH NHẤT QUÁN (Consistency Verification): Đối chiếu logic từ đầu đến cuối, đảm bảo không có mâu thuẫn giữa các bước giải thích và kết quả cuối cùng.
+- BẢO TOÀN RÀNG BUỘC: Liệt kê rõ các ràng buộc, tiền điều kiện và phạm vi áp dụng của giải pháp.`;
+
+    case 'max':
+      return `[KIẾN TRÚC NHẬN THỨC ĐỈNH CAO — MAX 💎 (TREE-OF-THOUGHT & RÀ SOÁT LỖI BIÊN)]:
+- CÂY SUY LUẬN ĐA NHÁNH (Tree-of-Thought): BẮT BUỘC phân tích và so sánh tối thiểu 2 phương án giải quyết khả dĩ khác nhau (Phương án A vs Phương án B) trước khi chọn phương án tối ưu.
+- PHÂN TÍCH ƯU - NHƯỢC ĐIỂM ĐỐI CHIẾU: Đánh giá tường minh độ phức tạp thời gian/không gian, tính dễ bảo trì, khả năng mở rộng và rủi ro của từng phương án.
+- RÀ SOÁT ĐIỀU KIỆN BIÊN CỰC HẠN (Boundary & Edge-Case Analysis): Chủ động kiểm thử các trường hợp biên: tập rỗng, số âm, giá trị cực đại/cực tiểu, tràn số, bất đồng bộ, race conditions, lỗi định dạng dữ liệu.
+- TỔNG HỢP GIẢI PHÁP TỐI ƯU: Đưa ra mã nguồn hoặc kết luận toàn diện dựa trên phương án chiến thắng đã được kiểm chứng.`;
+
+    case 'ultra':
+      return `[KIẾN TRÚC NHẬN THỨC SIÊU CẤP TỐI THƯỢNG — ULTRA 🔥 (4-PHASE DEEP COGNITIVE ARCHITECTURE)]:
+Áp dụng quy trình tư duy 4 pha bất biến cho mọi bài toán (Toán học, Lập trình, Khoa học, Logic, Hệ thống):
+1. PHA 1 - PHÂN RÃ BÀI TOÁN (Deep Problem Decomposition):
+   - Tách nhỏ bài toán thành các thành phần nguyên tử (atomic sub-problems), xác định rõ đầu vào, đầu ra, ràng buộc ẩn và mục tiêu tối thượng.
+2. PHA 2 - CHỨNG MINH BẤT BIẾN (Mathematical / Logical Invariant Probing):
+   - Xác định các tính chất bất biến (invariants), tiền điều kiện (preconditions), hậu điều kiện (postconditions) và định lý nền tảng chi phối hệ thống.
+3. PHA 3 - TÌM KIẾM PHẢN VÍ DỤ ĐỐI KHÁNG (Counter-Example Adversarial Search):
+   - Đóng vai trò kẻ tấn công đối kháng (Adversarial Critic): Chủ động tìm kiếm các trường hợp đặc biệt, kịch bản edge case cực đoan, lỗi bế tắc có thể làm sụp đổ giải pháp. Tự chứng minh và bẻ gãy mọi lỗ hổng trước khi người dùng phát hiện.
+4. PHA 4 - GIẢI PHÁP TOÀN DIỆN KHÔNG THỎA HIỆP (Synthesized Zero-Compromise Solution):
+   - Xây dựng giải pháp hoàn mỹ 100%, kết hợp trọn vẹn sự chính xác logic, hiệu năng tối ưu, tính thẩm mỹ cấu trúc và khả năng phục hồi lỗi bền bỉ. Mã nguồn phải đầy đủ 100%, không rút gọn.`;
+
+    default:
+      return '';
+  }
+}
+if (typeof window !== 'undefined') {
+  window.getCognitiveOrchestrationPrompt = getCognitiveOrchestrationPrompt;
+}
+
 function buildSystemPrompt(modelOverride) {
   let parts = [];
   
@@ -9614,6 +9990,13 @@ function buildSystemPrompt(modelOverride) {
   
   // Logic & Tư duy (đặt sau mode để mode có priority cao hơn)
   parts.push(`[TƯ DUY]: Đọc kỹ lịch sử hội thoại. Hiểu ngữ cảnh và ý định thực sự. Nếu câu hỏi mơ hồ, suy luận từ ngữ cảnh. Ưu tiên: chính xác, hữu ích. Không từ chối giúp đỡ khi có thể.`);
+
+  // Cognitive Orchestration Meta-Prompt Injection
+  const activeReasoningEffort = (typeof State !== 'undefined' && State.settings && State.settings.reasoningEffort) || 'xhigh';
+  const cognitivePrompt = typeof getCognitiveOrchestrationPrompt === 'function' ? getCognitiveOrchestrationPrompt(activeReasoningEffort) : '';
+  if (cognitivePrompt) {
+    parts.push(cognitivePrompt);
+  }
 
   parts.push(`[NGUYÊN TẮC TOÀN VẸN MÃ NGUỒN & KHAI THÁC TOKEN TỐI ĐA]:
 1. [TUYỆT ĐỐI CẤM PLACEHOLDER & RÚT GỌN]: Nghiêm cấm hoàn toàn việc sử dụng bất kỳ dạng chú thích rút gọn, placeholder hoặc cắt bớt mã nguồn/nội dung. Các mẫu sau đây là VI PHẠM NGHIÊM TRỌNG:
@@ -10137,6 +10520,7 @@ async function generateAIResponse() {
   try {
     // --- Helper: send request with proxy fallback ---
     async function makeApiRequest(messages, targetModel) {
+      const isContinuation = arguments[2] === true;
       const modelToUse = targetModel || model;
       const proxy = getProxyForModel(modelToUse);
       function resolveTargetUrl(targetBase, bridgeUrl) {
@@ -10156,6 +10540,7 @@ async function generateAIResponse() {
             ? lastUserMessage.content.map(p => p.text || '').join(' ') 
             : '');
 
+      const activeEffort = (State.settings && State.settings.reasoningEffort) || 'xhigh';
       const maxTokensCeiling = resolveModelMaxTokens(modelToUse, State.mode);
       const isReasoning = typeof isReasoningModel === 'function' ? isReasoningModel(modelToUse) : false;
 
@@ -10170,6 +10555,14 @@ async function generateAIResponse() {
       if (isReasoning) {
         // Reasoning models strictly forbid frequency_penalty / presence_penalty on gateways (causes HTTP 400)
         reqBody.reasoning_effort = State.mode === 'flash' ? 'low' : 'high';
+        if (isContinuation) {
+          reqBody.reasoning_effort = 'low';
+        } else if (activeEffort === 'low' || activeEffort === 'medium' || activeEffort === 'high') {
+          reqBody.reasoning_effort = activeEffort;
+        } else if (activeEffort === 'xhigh' || activeEffort === 'max' || activeEffort === 'ultra') {
+          reqBody.reasoning_effort = 'high';
+          reqBody.thinking_config = { include_thoughts: true };
+        }
         if (modelToUse.toLowerCase().includes('gemini')) {
           reqBody.thinking_config = { include_thoughts: true };
         }
@@ -10302,7 +10695,8 @@ async function generateAIResponse() {
     const bubbleEl = assistantEl.querySelector('.message-bubble');
 
     let typingRemoved = false;
-    const MAX_CONTINUATION_TURNS = 5;
+    // Invariant preserved: const MAX_CONTINUATION_TURNS = 5;
+    const MAX_CONTINUATION_TURNS = (State.settings && ['max', 'ultra'].includes(State.settings.reasoningEffort)) ? 10 : 5;
     let turnCount = 0;
     let previousAssistantLength = 0;
 
@@ -10313,20 +10707,24 @@ async function generateAIResponse() {
       if (turnCount === 0) {
         currentReqMessages = apiMessages;
       } else {
+        const curFiltered = (parser ? parser.filteredText : assistantContent) || '';
+        const curThought = (parser ? parser.fullThought : '') || assistantThought;
         const continuationMsg = {
           role: 'assistant',
-          content: parser ? parser.filteredText : assistantContent
+          content: curFiltered.trim() ? curFiltered : (curThought ? `<think>${curThought}</think>` : ' ')
         };
-        const curThought = (parser ? parser.fullThought : '') || assistantThought;
         if (curThought) {
           continuationMsg.thought = curThought;
           continuationMsg.reasoning_content = curThought;
           continuationMsg.reasoning_details = { text: curThought };
         }
+        const continuationPrompt = !curFiltered.trim()
+          ? 'Dựa trên quá trình suy nghĩ trên, hãy xuất ra câu trả lời chính thức, chi tiết và đầy đủ cho người dùng ngay bây giờ mà không lặp lại phần suy nghĩ: Tiếp tục chính xác từ chỗ vừa dừng mà không lặp lại bất kỳ nội dung nào trước đó:'
+          : 'Tiếp tục chính xác từ chỗ vừa dừng mà không lặp lại bất kỳ nội dung nào trước đó:';
         currentReqMessages = [
           ...apiMessages,
           continuationMsg,
-          { role: 'user', content: 'Tiếp tục chính xác từ chỗ vừa dừng mà không lặp lại bất kỳ nội dung nào trước đó:' }
+          { role: 'user', content: continuationPrompt }
         ];
       }
 
@@ -10452,7 +10850,8 @@ async function generateAIResponse() {
                       displayContent = curFiltered;
                     }
 
-                    bubbleEl.innerHTML = formatMessage(displayContent, true);
+                    const isUserCollapsed = bubbleEl._userThinkingCollapsed === true;
+                    bubbleEl.innerHTML = formatMessage(displayContent, true, null, { userCollapsed: isUserCollapsed });
                     const chatArea = $('#chat-area');
                     if (chatArea) {
                       const isNearBottom = chatArea.scrollHeight - chatArea.scrollTop - chatArea.clientHeight < 150;
@@ -10476,9 +10875,12 @@ async function generateAIResponse() {
       previousAssistantLength = assistantContent.length;
 
       // Check if continuation is needed
-      const isLengthTruncated = turnFinishReason === 'length';
+      const isLengthTruncated = turnFinishReason === 'length' || (typeof turnFinishReason === 'string' && ['max_tokens', 'truncated', 'length'].includes(turnFinishReason.toLowerCase()));
       const unclosedFences = (assistantContent.match(/```/g) || []).length % 2 === 1;
-      const isTruncated = (isLengthTruncated || unclosedFences || isResponseTruncated(turnFinishReason, assistantContent)) && !State.abortController?.signal?.aborted;
+      const currentFiltered = (parser ? parser.filteredText : assistantContent) || '';
+      const currentThought = (parser ? parser.fullThought : '') || assistantThought;
+      const isThinkingOnlyOrEmpty = Boolean((!currentFiltered || !currentFiltered.trim()) && (currentThought && currentThought.trim()));
+      const isTruncated = (isLengthTruncated || unclosedFences || isThinkingOnlyOrEmpty || isResponseTruncated(turnFinishReason, assistantContent)) && !State.abortController?.signal?.aborted;
 
       if (!isTruncated) {
         break;
@@ -10490,7 +10892,12 @@ async function generateAIResponse() {
     }
 
     const finalThought = (parser ? parser.fullThought : '') || assistantThought;
-    const finalAnswer = (parser ? parser.filteredText : '') || assistantContent;
+    const rawFiltered = parser ? parser.filteredText : '';
+    const cleanContent = assistantContent
+      .replace(/<(?:think|thought|scratchpad|reasoning|reflection)\b[^>]*>[\s\S]*?<\/(?:think|thought|scratchpad|reasoning|reflection)\s*>/gi, '')
+      .replace(/<(?:think|thought|scratchpad|reasoning|reflection)\b[^>]*>[\s\S]*$/gi, '')
+      .trim();
+    const finalAnswer = rawFiltered.trim() ? rawFiltered : (cleanContent || (parser ? '' : assistantContent));
 
     if (isStillActiveChat()) {
       removeAllTypingIndicators();
@@ -10499,7 +10906,7 @@ async function generateAIResponse() {
       }
       let finalDisplay = '';
       if (finalThought) {
-        finalDisplay = `<think>${finalThought}</think>\n${finalAnswer}`;
+        finalDisplay = finalAnswer ? `<think>${finalThought}</think>\n${finalAnswer}` : `<think>${finalThought}</think>`;
       } else {
         finalDisplay = finalAnswer;
       }
@@ -10797,6 +11204,7 @@ function toggleThinkingBlock(headerEl) {
   if (!headerEl) return;
   const wrapper = headerEl.closest('.thinking-block-wrapper');
   if (!wrapper) return;
+  const bubble = headerEl.closest('.message-bubble');
   
   const body = wrapper.querySelector('.thinking-body');
   const toggleIcon = wrapper.querySelector('.thinking-toggle-icon');
@@ -10805,6 +11213,8 @@ function toggleThinkingBlock(headerEl) {
   if (isCurrentlyOpen) {
     wrapper.classList.remove('is-open');
     wrapper.classList.add('is-collapsed');
+    if (wrapper.dataset) wrapper.dataset.userCollapsed = 'true';
+    if (bubble) bubble._userThinkingCollapsed = true;
     headerEl.setAttribute('aria-expanded', 'false');
     if (toggleIcon) toggleIcon.textContent = 'expand_more';
     if (body) {
@@ -10813,6 +11223,8 @@ function toggleThinkingBlock(headerEl) {
   } else {
     wrapper.classList.remove('is-collapsed');
     wrapper.classList.add('is-open');
+    if (wrapper.dataset) wrapper.dataset.userCollapsed = 'false';
+    if (bubble) bubble._userThinkingCollapsed = false;
     headerEl.setAttribute('aria-expanded', 'true');
     if (toggleIcon) toggleIcon.textContent = 'expand_less';
     if (body) {
@@ -11196,6 +11608,10 @@ function updateModelDisplay() {
 
 // ===== Event Listeners =====
 function initEvents() {
+  if (typeof initReasoningEffortUI === 'function') {
+    try { initReasoningEffortUI(); } catch (_) {}
+  }
+
   // Network Connection Status
   window.addEventListener('offline', () => {
     updateSyncIndicator('offline');
@@ -11302,6 +11718,12 @@ function initEvents() {
       e.stopPropagation();
       const userDropdown = document.getElementById('user-dropdown');
       if (userDropdown) userDropdown.classList.remove('active');
+      const reasoningDropdown = document.getElementById('reasoning-effort-dropdown');
+      if (reasoningDropdown) {
+        reasoningDropdown.classList.remove('active');
+        const effortDisplay = document.getElementById('reasoning-effort-display');
+        if (effortDisplay) effortDisplay.setAttribute('aria-expanded', 'false');
+      }
       mobileMoreMenu.classList.toggle('active');
     });
     document.addEventListener('click', (e) => {
@@ -11359,6 +11781,12 @@ function initEvents() {
       if (userDropdown) userDropdown.classList.remove('active');
       const mobileMoreMenu = document.getElementById('mobile-more-menu');
       if (mobileMoreMenu) mobileMoreMenu.classList.remove('active');
+      const reasoningDropdown = document.getElementById('reasoning-effort-dropdown');
+      if (reasoningDropdown) {
+        reasoningDropdown.classList.remove('active');
+        const effortDisplay = document.getElementById('reasoning-effort-display');
+        if (effortDisplay) effortDisplay.setAttribute('aria-expanded', 'false');
+      }
       const artifactsPanel = document.getElementById('artifacts-panel');
       if (artifactsPanel && artifactsPanel.classList.contains('active')) {
         if (typeof window.closeWorkspace === 'function') window.closeWorkspace();
@@ -11741,6 +12169,13 @@ function initEvents() {
   }
   const btnPersonality = $('#btn-personality'); if (btnPersonality) btnPersonality.addEventListener('click', () => openModal('personality-modal'));
   const btnFontSettings = $('#btn-font-settings'); if (btnFontSettings) btnFontSettings.addEventListener('click', () => openModal('font-modal'));
+  const toggleThinkingInput = $('#toggle-show-thinking');
+  if (toggleThinkingInput) {
+    toggleThinkingInput.addEventListener('change', (e) => {
+      State.settings.showThinkingUi = e.target.checked;
+      applyThinkingUiVisibility();
+    });
+  }
 
   $$('.btn-close-modal').forEach(btn => {
     btn.addEventListener('click', () => closeModal(btn.dataset.close));
@@ -11931,6 +12366,8 @@ export default {
     State.settings.userName = $('#user-name-input').value.trim() || 'Bạn';
     State.settings.systemPrompt = $('#system-prompt').value;
     State.settings.userPurpose = $('#user-purpose').value;
+    const toggleThinking = $('#toggle-show-thinking');
+    if (toggleThinking) State.settings.showThinkingUi = toggleThinking.checked;
     if ($('#flash-model-select')) State.settings.flashModel = $('#flash-model-select').value;
     if ($('#pro-model-select')) State.settings.proModel = $('#pro-model-select').value;
     
@@ -11939,6 +12376,7 @@ export default {
     safeSaveLocalStorage('suna_settings' + getStorageSuffix(), State.settings);
     saveState(true, 'settings');
     
+    applyThinkingUiVisibility();
     updateModelDisplay();
     renderMessages();
     closeModal('settings-modal');
@@ -12215,6 +12653,10 @@ function openModal(id) {
     }
     document.getElementById('system-prompt').value = State.settings.systemPrompt || '';
     document.getElementById('user-purpose').value = State.settings.userPurpose || '';
+    const toggleThinking = document.getElementById('toggle-show-thinking');
+    if (toggleThinking) {
+      toggleThinking.checked = State.settings.showThinkingUi !== false;
+    }
     populateModelSelects();
   } else if (id === 'api-modal') {
     document.getElementById('api-base-url').value = State.settings.baseUrl || '';

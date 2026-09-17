@@ -317,6 +317,101 @@
                         <span id="current-model-name">Chưa chọn model</span>
                         <div class="mode-badge" id="mode-badge">Flash</div>
                     </div>
+
+                    <!-- Reasoning Effort Controller -->
+                    <div class="reasoning-effort-container" id="reasoning-effort-container">
+                        <div class="reasoning-effort-display" id="reasoning-effort-display" title="Mức độ suy luận: X-High (Chuyên sâu mở rộng)" aria-label="Mức độ suy luận: X-High (Chuyên sâu mở rộng)" role="button" tabindex="0" aria-haspopup="true" aria-expanded="false" data-level="xhigh">
+                            <span class="reasoning-icon" id="reasoning-icon">⚡</span>
+                            <span class="reasoning-label" id="reasoning-label">X-High</span>
+                            <span class="material-icons-round reasoning-arrow">expand_more</span>
+                        </div>
+                        <div class="reasoning-effort-dropdown" id="reasoning-effort-dropdown" role="menu" aria-label="Chọn mức độ suy luận">
+                            <div class="reasoning-dropdown-header">
+                                <span class="material-icons-round">psychology</span>
+                                <span>Mức độ suy luận (Reasoning Effort)</span>
+                            </div>
+                            <div class="reasoning-options-list" role="none">
+                                <button type="button" class="reasoning-option-btn" data-level="low" role="menuitemradio" aria-checked="false" tabindex="-1">
+                                    <div class="reasoning-option-left">
+                                        <span class="reasoning-option-icon">🟢</span>
+                                        <div class="reasoning-option-info">
+                                            <div class="reasoning-option-header-row">
+                                                <span class="reasoning-option-name">Low</span>
+                                                <span class="reasoning-badge badge-low">Tối giản</span>
+                                            </div>
+                                            <span class="reasoning-option-desc">Tốc độ nhanh, chuỗi suy luận ngắn</span>
+                                        </div>
+                                    </div>
+                                    <span class="material-icons-round reasoning-check">check</span>
+                                </button>
+                                <button type="button" class="reasoning-option-btn" data-level="medium" role="menuitemradio" aria-checked="false" tabindex="-1">
+                                    <div class="reasoning-option-left">
+                                        <span class="reasoning-option-icon">🔵</span>
+                                        <div class="reasoning-option-info">
+                                            <div class="reasoning-option-header-row">
+                                                <span class="reasoning-option-name">Medium</span>
+                                                <span class="reasoning-badge badge-medium">Cân bằng</span>
+                                            </div>
+                                            <span class="reasoning-option-desc">Mức độ tiêu chuẩn</span>
+                                        </div>
+                                    </div>
+                                    <span class="material-icons-round reasoning-check">check</span>
+                                </button>
+                                <button type="button" class="reasoning-option-btn" data-level="high" role="menuitemradio" aria-checked="false" tabindex="-1">
+                                    <div class="reasoning-option-left">
+                                        <span class="reasoning-option-icon">🟣</span>
+                                        <div class="reasoning-option-info">
+                                            <div class="reasoning-option-header-row">
+                                                <span class="reasoning-option-name">High</span>
+                                                <span class="reasoning-badge badge-high">Nâng cao</span>
+                                            </div>
+                                            <span class="reasoning-option-desc">Suy luận chuyên sâu</span>
+                                        </div>
+                                    </div>
+                                    <span class="material-icons-round reasoning-check">check</span>
+                                </button>
+                                <button type="button" class="reasoning-option-btn active" data-level="xhigh" role="menuitemradio" aria-checked="true" tabindex="0">
+                                    <div class="reasoning-option-left">
+                                        <span class="reasoning-option-icon">⚡</span>
+                                        <div class="reasoning-option-info">
+                                            <div class="reasoning-option-header-row">
+                                                <span class="reasoning-option-name">X-High</span>
+                                                <span class="reasoning-badge badge-xhigh">Mặc định</span>
+                                            </div>
+                                            <span class="reasoning-option-desc">Chuyên sâu mở rộng: Tự kiểm tra giả định</span>
+                                        </div>
+                                    </div>
+                                    <span class="material-icons-round reasoning-check">check</span>
+                                </button>
+                                <button type="button" class="reasoning-option-btn" data-level="max" role="menuitemradio" aria-checked="false" tabindex="-1">
+                                    <div class="reasoning-option-left">
+                                        <span class="reasoning-option-icon">💎</span>
+                                        <div class="reasoning-option-info">
+                                            <div class="reasoning-option-header-row">
+                                                <span class="reasoning-option-name">Max</span>
+                                                <span class="reasoning-badge badge-max">Đỉnh cao</span>
+                                            </div>
+                                            <span class="reasoning-option-desc">Tree-of-Thought, phân tích song song, kiểm tra biên</span>
+                                        </div>
+                                    </div>
+                                    <span class="material-icons-round reasoning-check">check</span>
+                                </button>
+                                <button type="button" class="reasoning-option-btn" data-level="ultra" role="menuitemradio" aria-checked="false" tabindex="-1">
+                                    <div class="reasoning-option-left">
+                                        <span class="reasoning-option-icon">🔥</span>
+                                        <div class="reasoning-option-info">
+                                            <div class="reasoning-option-header-row">
+                                                <span class="reasoning-option-name">Ultra</span>
+                                                <span class="reasoning-badge badge-ultra">Tối thượng</span>
+                                            </div>
+                                            <span class="reasoning-option-desc">Kiến trúc 4 pha: Phân rã, bất biến, phản ví dụ, 100%</span>
+                                        </div>
+                                    </div>
+                                    <span class="material-icons-round reasoning-check">check</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
                 <div class="top-bar-right">
                     <!-- Suna Lofi Player -->
@@ -347,7 +442,7 @@
                     <!-- User & Sync Capsule Group -->
                     <div class="top-user-sync-group">
                         <div class="top-user-profile">
-                            <button id="btn-user-menu" class="btn-icon" title="Tài khoản" aria-label="Tài khoản" onclick="document.getElementById('user-dropdown').classList.toggle('active'); const mm = document.getElementById('mobile-more-menu'); if (mm) mm.classList.remove('active');">
+                            <button id="btn-user-menu" class="btn-icon" title="Tài khoản" aria-label="Tài khoản" onclick="document.getElementById('user-dropdown').classList.toggle('active'); const mm = document.getElementById('mobile-more-menu'); if (mm) mm.classList.remove('active'); const rd = document.getElementById('reasoning-effort-dropdown'); if (rd) rd.classList.remove('active');">
                                 <span class="material-icons-round">account_circle</span>
                             </button>
                             <div id="user-dropdown" class="user-dropdown">
@@ -533,6 +628,18 @@
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 10px;">
                         <h3 style="margin-bottom:0;"><span class="material-icons-round">text_fields</span> Hiển thị & Font chữ</h3>
                         <button id="btn-font-settings-in-modal" class="btn-secondary" style="padding: 5px 12px; font-size: 0.9rem;" title="Tùy chỉnh Font" aria-label="Tùy chỉnh Font">Tùy chỉnh Font</button>
+                    </div>
+                </div>
+                <div class="settings-section">
+                    <div class="settings-toggle-row">
+                        <div>
+                            <h3 style="margin-bottom: 4px;"><span class="material-icons-round">psychology</span> Hiển thị khối suy nghĩ (Thinking)</h3>
+                            <p class="settings-desc" style="margin-bottom: 0;">Bật hoặc tắt giao diện hiển thị quá trình suy nghĩ trên màn hình chat (tiến trình vẫn chạy ngầm đầy đủ)</p>
+                        </div>
+                        <label class="settings-switch" for="toggle-show-thinking" title="Bật/Tắt hiển thị khối suy nghĩ">
+                            <input type="checkbox" id="toggle-show-thinking" checked aria-label="Hiển thị khối suy nghĩ">
+                            <span class="settings-switch-slider"></span>
+                        </label>
                     </div>
                 </div>
                 <div class="settings-section">

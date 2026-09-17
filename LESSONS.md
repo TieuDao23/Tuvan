@@ -142,3 +142,15 @@
   - Aligned `<scratchpad>` tag support across both parser and UI tokenizer.
   - Delegated thought accumulation to `parser.pushReasoning` when parser is present, eliminating duplicate token concatenation.
   - Added `generativelanguage.googleapis.com` to `ALLOWED_TARGETS` in `cloudflare-worker-cors-proxy.js`.
+
+## 20. Thinking Stream Robustness, Answer Swallowing Protection & Thinking UI Toggle
+- **Problem**:
+  - In certain model configurations (e.g. models exhausting tokens mid-thought with `finish_reason === 'length'`, or closing thought with `finish_reason === 'stop'` without generating content tokens), the output displayed only the thinking block and completely omitted the official answer.
+  - When models transitioned from thought to answer without emitting closing `</think>` tags, or used closing tags with whitespace (`</ think>`) or non-standard tags (`<reasoning>`), `ExtendedThinkingStreamParser` and `formatMessage` swallowed the answer into the thinking block.
+  - Users lacked an option to hide verbose thinking blocks on screen while keeping thinking running in the background.
+- **Solution**:
+  - In `app.js`, detect `isThinkingOnlyOrEmpty` when content is empty while thoughts exist, activating the multi-turn continuation loop even when `finish_reason` is `stop` or `length`.
+  - Continuation prompt commands the model to produce the official answer immediately without repeating thoughts, providing non-empty fallback content in `continuationMsg` to prevent HTTP 400 rejection on gateways.
+  - Sanitized `finalAnswer` so unclosed thinking tags never leak into `assistantMsg.content`.
+  - In `suna_agent.js` and `app.js`, added answer transition marker detection (`/(?:\r?\n){2,}(?:(?:\*{1,2}|#{1,4})\s*(?:Trả lời|Kết luận|Đáp án|Answer|Solution|Phản hồi|Tóm lại)...)/i`) to automatically extract answers from unclosed thinking streams.
+  - Added `showThinkingUi` toggle in Settings modal (`index.html`), synchronized state in `State.settings.showThinkingUi` and `applyThinkingUiVisibility()`, hiding the UI block completely via CSS (`body.hide-thinking-ui .thinking-block-wrapper { display: none !important; }`) while preserving 100% background reasoning tokens and message schema persistence.

@@ -223,29 +223,50 @@
       let content = text;
       let thought = '';
 
-      // Match closed think/thought/scratchpad tags
-      const thinkRegex = /<(think|thought|scratchpad)>([\s\S]*?)<\/\1>/gi;
+      const answerMarkerRegex = /(?:(?:\r?\n)+(?:(?:\*{1,2}|#{1,4})\s*(?:Trả lời|Tra loi|Kết luận|Ket luan|Đáp án|Dap an|Lời giải|Loi giai|Giải thích|Giai thich|Tổng kết|Tong ket|Phản hồi|Phan hoi|Tóm lại|Tom lai|Answer|Final Answer|Solution|Conclusion|Summary|Response|Output)[\s\S]*?[:\r\n]|(?:Final Answer|Answer|Trả lời|Tra loi|Kết luận|Ket luan|Đáp án|Dap an|Lời giải|Loi giai)\s*[:：]|(?:---|___|\*\*\*)\s*(?:\r?\n)))/i;
+
+      // Match closed think/thought/scratchpad/reasoning/reflection tags
+      const thinkRegex = /<(?:think|thought|scratchpad|reasoning|reflection)\b[^>]*>([\s\S]*?)<\/\s*(?:think|thought|scratchpad|reasoning|reflection)\s*>/gi;
       let match;
       while ((match = thinkRegex.exec(content)) !== null) {
-        thought += (thought ? '\n' : '') + match[2].trim();
-        content = content.slice(0, match.index) + content.slice(match.index + match[0].length);
+        let insideThought = match[1].trim();
+        const marker = insideThought.match(answerMarkerRegex);
+        if (marker && marker.index !== undefined) {
+          const ans = insideThought.slice(marker.index).trim();
+          insideThought = insideThought.slice(0, marker.index).trim();
+          thought += (thought ? '\n' : '') + insideThought;
+          content = content.slice(0, match.index) + (ans ? '\n\n' + ans : '') + content.slice(match.index + match[0].length);
+        } else {
+          thought += (thought ? '\n' : '') + insideThought;
+          content = content.slice(0, match.index) + content.slice(match.index + match[0].length);
+        }
         thinkRegex.lastIndex = 0;
       }
 
       // Strip leftover orphan closing tags
-      content = content.replace(/<\/(think|thought|scratchpad)>/gi, '').trim();
+      content = content.replace(/<\/\s*(?:think|thought|scratchpad|reasoning|reflection)\s*>/gi, '').trim();
 
-      // Handle unclosed stream tag at end of string or before downstream tool calls
-      const unclosedMatch = content.match(/<(think|thought|scratchpad)>([\s\S]*)$/i);
+      // Handle unclosed stream tag at end of string or before downstream tool calls / answer markers
+      const unclosedMatch = content.match(/<(?:think|thought|scratchpad|reasoning|reflection)\b[^>]*>([\s\S]*)$/i);
       if (unclosedMatch) {
-        const tail = unclosedMatch[2];
+        const tail = unclosedMatch[1];
         const toolBoundaryRegex = /(<(?:suna_tool_call|tool_call)\b|```(?:json)?\s*\{)/i;
-        const boundaryMatch = tail.match(toolBoundaryRegex);
+        const toolMatch = tail.match(toolBoundaryRegex);
+        const answerMatch = tail.match(answerMarkerRegex);
 
-        if (boundaryMatch) {
-          const boundaryIndex = boundaryMatch.index;
-          thought += (thought ? '\n' : '') + tail.slice(0, boundaryIndex).trim();
-          content = (content.slice(0, unclosedMatch.index) + '\n' + tail.slice(boundaryIndex)).trim();
+        let splitIdx = -1;
+        if (toolMatch && toolMatch.index !== undefined) {
+          splitIdx = toolMatch.index;
+        }
+        if (answerMatch && answerMatch.index !== undefined) {
+          if (splitIdx === -1 || answerMatch.index < splitIdx) {
+            splitIdx = answerMatch.index;
+          }
+        }
+
+        if (splitIdx !== -1) {
+          thought += (thought ? '\n' : '') + tail.slice(0, splitIdx).trim();
+          content = (content.slice(0, unclosedMatch.index) + '\n' + tail.slice(splitIdx)).trim();
         } else {
           thought += (thought ? '\n' : '') + tail.trim();
           content = content.slice(0, unclosedMatch.index).trim();
@@ -253,7 +274,7 @@
       }
 
       // Clean any inner opening tags if nested (<think><think>nested</think></think>)
-      thought = thought.replace(/<(think|thought|scratchpad)>/gi, '').trim();
+      thought = thought.replace(/<(?:think|thought|scratchpad|reasoning|reflection)\b[^>]*>/gi, '').trim();
 
       return { thought, content };
     }
@@ -488,6 +509,21 @@
       return this.fullThought;
     }
 
+    closeThinking() {
+      if (this.isThinking) {
+        if (this._buffer) {
+          this.fullThought += this._buffer;
+          if (typeof this.onThoughtChunk === 'function') {
+            this.onThoughtChunk(this._buffer);
+          }
+          this._buffer = '';
+        }
+        this.isThinking = false;
+        this.isThinkingDone = true;
+        this._activeTag = null;
+      }
+    }
+
     push(chunk) {
       if (!chunk) return '';
       if (this.isThinking && this._activeTag === 'out_of_band') {
@@ -498,7 +534,8 @@
       this._buffer += chunk;
       let emitted = '';
 
-      const thinkTagNames = ['think', 'thought', 'scratchpad'];
+      const thinkTagNames = ['think', 'thought', 'scratchpad', 'reasoning', 'reflection'];
+      const answerMarkerRegex = /(?:(?:\r?\n)+(?:(?:\*{1,2}|#{1,4})\s*(?:Trả lời|Tra loi|Kết luận|Ket luan|Đáp án|Dap an|Lời giải|Loi giai|Giải thích|Giai thich|Tổng kết|Tong ket|Phản hồi|Phan hoi|Tóm lại|Tom lai|Answer|Final Answer|Solution|Conclusion|Summary|Response|Output)[\s\S]*?[:\r\n]|(?:Final Answer|Answer|Trả lời|Tra loi|Kết luận|Ket luan|Đáp án|Dap an|Lời giải|Loi giai)\s*[:：]|(?:---|___|\*\*\*)\s*(?:\r?\n)))/i;
 
       while (this._buffer.length > 0) {
         if (!this.isThinking) {
@@ -535,7 +572,13 @@
               candidate.startsWith(`<${tag}\n`) ||
               candidate.startsWith(`<${tag}\t`)
             );
-            if (isPotentialThinkTag) {
+            const isPotentialCloseTag = thinkTagNames.some(tag =>
+              (`</${tag}`).startsWith(candidate) ||
+              (`</ ${tag}`).startsWith(candidate) ||
+              candidate.startsWith(`</${tag}`) ||
+              candidate.startsWith(`</ ${tag}`)
+            );
+            if (isPotentialThinkTag || isPotentialCloseTag) {
               break; // Wait for '>' in subsequent chunks
             } else {
               const passed = super.push(this._buffer[0]);
@@ -547,10 +590,13 @@
             }
           } else {
             const tagStr = this._buffer.slice(0, closeAngle + 1);
-            const match = tagStr.match(/^<(think|thought|scratchpad)(\s[^>]*)?>/i);
+            const match = tagStr.match(/^<(think|thought|scratchpad|reasoning|reflection)(\s[^>]*)?>/i);
             if (match) {
               this._activeTag = match[1].toLowerCase();
               this.isThinking = true;
+              this._buffer = this._buffer.slice(closeAngle + 1);
+            } else if (/^<\/\s*(think|thought|scratchpad|reasoning|reflection)\s*>/i.test(tagStr)) {
+              // Consume and discard orphan closing think tags in text mode so they do not leak into content
               this._buffer = this._buffer.slice(closeAngle + 1);
             } else {
               const passed = super.push(tagStr);
@@ -563,8 +609,26 @@
           }
         } else {
           // THINKING mode
+          const markerMatch = this._buffer.match(answerMarkerRegex);
           const closeTagPrefix = '</';
           const closeIdx = this._buffer.indexOf(closeTagPrefix);
+
+          // If an explicit answer transition marker appears before any closing tag (or closing tag is missing), route to content
+          if (markerMatch && markerMatch.index !== undefined && (closeIdx === -1 || markerMatch.index < closeIdx)) {
+            const thoughtPart = this._buffer.slice(0, markerMatch.index);
+            if (thoughtPart) {
+              this.fullThought += thoughtPart;
+              if (typeof this.onThoughtChunk === 'function') {
+                this.onThoughtChunk(thoughtPart);
+              }
+            }
+            this._buffer = this._buffer.slice(markerMatch.index);
+            this.isThinking = false;
+            this.isThinkingDone = true;
+            this._activeTag = null;
+            continue;
+          }
+
           if (closeIdx === -1) {
             if (this._buffer.endsWith('<')) {
               const thoughtPart = this._buffer.slice(0, -1);
@@ -602,6 +666,9 @@
             const candidate = this._buffer.toLowerCase();
             const isPotentialClose = thinkTagNames.some(tag =>
               (`</${tag}`).startsWith(candidate) ||
+              (`</ ${tag}`).startsWith(candidate) ||
+              candidate.startsWith(`</${tag}`) ||
+              candidate.startsWith(`</ ${tag}`) ||
               candidate.startsWith(`</${tag} `) ||
               candidate.startsWith(`</${tag}\t`) ||
               candidate.startsWith(`</${tag}\n`) ||
@@ -619,7 +686,7 @@
             }
           } else {
             const tagStr = this._buffer.slice(0, closeAngle + 1);
-            const match = tagStr.match(/^<\/(think|thought|scratchpad)\s*>/i);
+            const match = tagStr.match(/^<\/\s*(think|thought|scratchpad|reasoning|reflection)\s*>/i);
             if (match) {
               this._buffer = this._buffer.slice(closeAngle + 1);
               this.isThinking = false;
@@ -651,20 +718,53 @@
 
     flush() {
       let emitted = '';
+      const answerMarkerRegex = /(?:(?:\r?\n)+(?:(?:\*{1,2}|#{1,4})\s*(?:Trả lời|Tra loi|Kết luận|Ket luan|Đáp án|Dap an|Lời giải|Loi giai|Giải thích|Giai thich|Tổng kết|Tong ket|Phản hồi|Phan hoi|Tóm lại|Tom lai|Answer|Final Answer|Solution|Conclusion|Summary|Response|Output)[\s\S]*?[:\r\n]|(?:Final Answer|Answer|Trả lời|Tra loi|Kết luận|Ket luan|Đáp án|Dap an|Lời giải|Loi giai)\s*[:：]|(?:---|___|\*\*\*)\s*(?:\r?\n)))/i;
       if (this._buffer) {
         if (this.isThinking) {
-          this.fullThought += this._buffer;
-          if (typeof this.onThoughtChunk === 'function') {
-            this.onThoughtChunk(this._buffer);
+          const markerMatch = this._buffer.match(answerMarkerRegex);
+          if (markerMatch && markerMatch.index !== undefined) {
+            const thoughtPart = this._buffer.slice(0, markerMatch.index);
+            let answerPart = this._buffer.slice(markerMatch.index);
+            answerPart = answerPart.replace(/<\/\s*(?:think|thought|scratchpad|reasoning|reflection)\s*>/gi, '');
+            if (thoughtPart) {
+              this.fullThought += thoughtPart;
+              if (typeof this.onThoughtChunk === 'function') {
+                this.onThoughtChunk(thoughtPart);
+              }
+            }
+            const passed = super.push(answerPart);
+            emitted += passed;
+            if (typeof this.onContentChunk === 'function' && passed) {
+              this.onContentChunk(passed);
+            }
+          } else {
+            this.fullThought += this._buffer;
+            if (typeof this.onThoughtChunk === 'function') {
+              this.onThoughtChunk(this._buffer);
+            }
           }
         } else {
-          const passed = super.push(this._buffer);
+          let text = this._buffer.replace(/<\/\s*(?:think|thought|scratchpad|reasoning|reflection)\s*>/gi, '');
+          const passed = super.push(text);
           emitted += passed;
           if (typeof this.onContentChunk === 'function' && passed) {
             this.onContentChunk(passed);
           }
         }
         this._buffer = '';
+      }
+      if (!this.filteredText && this.fullThought) {
+        const markerMatch = this.fullThought.match(answerMarkerRegex);
+        if (markerMatch && markerMatch.index !== undefined) {
+          let answerPart = this.fullThought.slice(markerMatch.index).trim();
+          answerPart = answerPart.replace(/<\/\s*(?:think|thought|scratchpad|reasoning|reflection)\s*>/gi, '');
+          this.fullThought = this.fullThought.slice(0, markerMatch.index).trim();
+          const passed = super.push(answerPart);
+          emitted += passed;
+          if (typeof this.onContentChunk === 'function' && passed) {
+            this.onContentChunk(passed);
+          }
+        }
       }
       this.isThinking = false;
       this.isThinkingDone = true;

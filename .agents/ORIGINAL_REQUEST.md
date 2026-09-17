@@ -193,3 +193,61 @@ Integrity mode: development
 - [ ] npm run check và node -c trên toàn bộ tệp đạt 0 lỗi cú pháp.
 - [ ] python run_verification.py hoàn thành 100% màu xanh qua cả 4 giai đoạn.
 
+## 2026-09-17T09:54:56Z
+
+Use a very large team of agents.
+
+Triển khai công cụ điều khiển mức độ suy luận (Reasoning Effort) 6 cấp độ (`low`, `medium`, `high`, `xhigh`, `max`, `ultra`) cho Suna Chat, tích hợp widget dropdown tinh tế cạnh tên model trên thanh Top Bar. Nâng tầm thực sự năng lực tư duy của mô hình ở các mức Max và Ultra bằng kiến trúc điều phối nhận thức sâu (Deep Cognitive Architecture), tự phản biện đa chiều và mở rộng quy mô suy luận thực chất có khác biệt rõ rệt trong mọi lĩnh vực.
+
+Working directory: `d:\Suna Chat`
+Integrity mode: development
+
+## Requirements
+
+### R1. Top Bar Reasoning Effort Dropdown Widget
+- Thiết kế và tích hợp một widget điều khiển Reasoning Effort dạng Dropdown Menu tinh tế đặt ngay cạnh pill `#current-model-display` trên thanh Top Bar header (`index.html`, `styles.css`, `app.js`).
+- Nút bấm chính (Pill) hiển thị icon, tên cấp độ hiện tại và màu sắc nhận diện đặc trưng:
+  - `low` 🟢 (Tối giản - Tốc độ nhanh, chuỗi suy luận ngắn)
+  - `medium` 🔵 (Cân bằng - Mức độ tiêu chuẩn)
+  - `high` 🟣 (Nâng cao - Suy luận chuyên sâu)
+  - `xhigh` ⚡ (Chuyên sâu mở rộng - Mặc định hiện tại của Suna: Tự kiểm tra giả định)
+  - `max` 💎 (Đỉnh cao - Tree-of-Thought, phân tích song song nhiều phương án, kiểm tra lỗi biên)
+  - `ultra` 🔥 (Siêu suy luận tối thượng - Kiến trúc nhận thức đa tầng: Phân rã bài toán, tìm phản ví dụ, chứng minh bất biến, code hoàn mỹ 100%)
+- Khi click vào pill, mở popup dropdown menu tuyệt đẹp hiển thị danh sách 6 mức độ kèm mô tả ngắn và trạng thái đang chọn (check mark). Hỗ trợ bấm ra ngoài để đóng menu (click outside dismissal) và điều hướng bàn phím (WAI-ARIA).
+- Thiết kế responsive chuẩn mực: Trên màn hình hẹp (<= 768px), pill tự động co gọn thành icon huy hiệu năng lượng mà không làm tràn hoặc vỡ bố cục top bar.
+- Lưu trữ trạng thái lựa chọn vào `State.settings.reasoningEffort` (mặc định khởi tạo là `xhigh` theo yêu cầu người dùng), đồng bộ vĩnh viễn vào `localStorage` và Firebase Cloud Sync.
+
+### R2. Động Cơ Điều Phối Nhận Thức Đa Tầng (Cognitive Orchestration Engine)
+- Tích hợp logic điều phối vào luồng gọi API và xây dựng system prompt trong `app.js`:
+  - **Tầng API Gateway Mapping**:
+    - Với các mức `low`, `medium`, `high`: Truyền trực tiếp giá trị vào tham số API chuẩn `reasoning_effort`.
+    - Với các mức `xhigh`, `max`, `ultra`: Truyền `reasoning_effort: 'high'` (mức kịch trần của các API provider) và kích hoạt `thinking_config: { include_thoughts: true }`.
+  - **Tầng Meta-Cognitive Prompting**:
+    - Khi người dùng chọn `xhigh`: Tự động chèn giao thức kiểm tra tính nhất quán và tự phản biện các giả định.
+    - Khi người dùng chọn `max`: Tự động kích hoạt cơ chế Tree-of-Thought, bắt buộc mô hình phải so sánh tối thiểu 2 phương án giải quyết bài toán và rà soát các trường hợp biên trước khi kết luận.
+    - Khi người dùng chọn `ultra`: Tự động chèn kiến trúc nhận thức 4 pha (Problem Decomposition $\rightarrow$ Mathematical/Logical Invariant Probing $\rightarrow$ Counter-example Adversarial Search $\rightarrow$ Synthesized Zero-Compromise Solution) nhằm bứt phá giới hạn tư duy tự nhiên của mô hình, áp dụng hiệu quả cho mọi lĩnh vực (Toán, Lập trình, Khoa học, Logic, Sáng tạo).
+  - **Tầng Token Scaling & Continuation Chaining**:
+    - Điều chỉnh trần `max_tokens` (65,536 tokens) và mở rộng hạn mức vòng lặp tiếp nối tự động (continuation loop) để bảo đảm chuỗi siêu suy luận ở mức `max` và `ultra` không bao giờ bị cắt ngắn.
+
+### R3. Khác Biệt Thực Nghiệm & Đo Lường Kết Quả Thực Tế
+- Đảm bảo có sự khác biệt rõ rệt, kiểm chứng được trong thực tế:
+  - Mức `low` cho ra kết quả nhanh chóng, súc tích.
+  - Mức `ultra` và `max` tạo ra chuỗi suy luận sâu sắc vượt trội, số bước tư duy (thinking steps / lines) tăng rõ rệt, giải quyết được các bài toán phức tạp và edge case mà các mức thấp hơn có thể bỏ sót.
+- Giữ nguyên sự tương thích, mượt mà và không làm ảnh hưởng đến các tính năng khác (Lofi player, Live Workspace, Media lightbox, chế độ chiều chuộng của Suna).
+
+## Acceptance Criteria
+
+### Top Bar UI & Responsive Layout
+- [ ] Widget `#reasoning-effort-display` xuất hiện ngay cạnh `#current-model-display` trên top bar, hiển thị đúng badge, icon và màu sắc cho từng cấp độ.
+- [ ] Bấm vào widget mở dropdown menu với 6 lựa chọn; bấm chọn mức độ lập tức cập nhật UI, đóng menu và lưu vào `State.settings.reasoningEffort`.
+- [ ] Layout responsive hiển thị chuẩn xác trên cả màn hình desktop lẫn mobile (<= 768px).
+
+### Functional & Cognitive Verification
+- [ ] Kiểm tra payload gửi qua `makeApiRequest`: Các mức `low`, `medium`, `high`, `xhigh`, `max`, `ultra` kích hoạt đúng tham số API và cấu trúc meta-prompt tương ứng.
+- [ ] Mức `xhigh`, `max`, `ultra` đưa ra chuỗi suy luận sâu sắc, có bằng chứng phân tích đa chiều và tự phản biện rõ ràng.
+
+### Regression & Code Integrity
+- [ ] Chạy `npm test`: Đảm bảo 100% test suite hiện tại (1,634+ tests) tiếp tục vượt qua thành công với 0 lỗi hồi quy.
+- [ ] Bổ sung bộ test tự động chuyên sâu kiểm chứng đầy đủ 6 cấp độ reasoning effort, cơ chế lưu trữ và luồng render UI.
+
+
