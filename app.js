@@ -305,7 +305,7 @@ function mergeSettings(localSettings, remoteSettings) {
   const localTime = parseTime(localSettings.updatedAt);
   const remoteTime = parseTime(remoteSettings.updatedAt);
   
-  if (remoteTime >= localTime) {
+  if (remoteTime > localTime) {
     return { ...localSettings, ...remoteSettings, updatedAt: remoteTime };
   }
   return { ...remoteSettings, ...localSettings, updatedAt: localTime };
@@ -2174,10 +2174,37 @@ function initMemoryCabinet() {
 // 4. LIVE ARTIFACTS WORKSPACE & WEB SEARCH
 // =============================================
 
-// Robust fetch utility with multiple CORS proxy fallbacks: corsproxy.io -> api.allorigins.win -> api.codetabs.com
+// Robust fetch utility with multiple CORS proxy fallbacks: local /api/proxy -> api.allorigins.win/raw -> corsproxy.io -> api.codetabs.com
 window.fetchWithProxy = async function(url, options = {}) {
   const maxResponseBytes = options.maxResponseBytes || 1024 * 1024;
-  // 1. Try corsproxy.io first
+
+  // 1. If running on local server with /api/proxy available, try it first
+  if (typeof window !== 'undefined' && window.location && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+    try {
+      const localProxyUrl = `/api/proxy?target=${encodeURIComponent(url)}`;
+      const response = await fetch(localProxyUrl, { signal: options.signal });
+      if (response.ok) {
+        const text = await readResponseTextLimited(response, maxResponseBytes, options.signal);
+        return new Response(text, { status: response.status, headers: response.headers });
+      }
+    } catch (err) {
+      console.warn('Local /api/proxy failed, trying fallback:', err);
+    }
+  }
+
+  // 2. Try api.allorigins.win/raw
+  try {
+    const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
+    const response = await fetch(proxyUrl, { signal: options.signal });
+    if (response.ok) {
+      const text = await readResponseTextLimited(response, maxResponseBytes, options.signal);
+      return new Response(text, { status: response.status, headers: response.headers });
+    }
+  } catch (err) {
+    console.warn('api.allorigins.win/raw failed, trying fallback:', err);
+  }
+
+  // 3. Try corsproxy.io
   try {
     const proxyUrl = `https://corsproxy.io/?url=${encodeURIComponent(url)}`;
     const response = await fetch(proxyUrl, { signal: options.signal });
@@ -2189,7 +2216,7 @@ window.fetchWithProxy = async function(url, options = {}) {
     console.warn('corsproxy.io failed, trying fallback:', err);
   }
 
-  // 2. Try api.allorigins.win next
+  // 4. Try api.allorigins.win/get
   try {
     const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
     const response = await fetch(proxyUrl, { signal: options.signal });
@@ -2203,7 +2230,7 @@ window.fetchWithProxy = async function(url, options = {}) {
     console.warn('api.allorigins.win failed, trying fallback:', err);
   }
 
-  // 3. Try api.codetabs.com next
+  // 5. Try api.codetabs.com next
   try {
     const proxyUrl = `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(url)}`;
     const response = await fetch(proxyUrl, { signal: options.signal });
@@ -3519,6 +3546,49 @@ window.performWebSearch = async function(query) {
       }
     });
     
+    if (results.length === 0) {
+      // Fallback 1: Query .result__a and .result__snippet directly
+      const linkEls = doc.querySelectorAll('.result__a');
+      const snippetEls = doc.querySelectorAll('.result__snippet');
+      for (let i = 0; i < Math.min(linkEls.length, snippetEls.length); i++) {
+        const titleEl = linkEls[i];
+        const snippetEl = snippetEls[i];
+        let actualUrl = titleEl.getAttribute('href') || '';
+        try {
+          const urlObj = new URL(actualUrl, 'https://duckduckgo.com');
+          const uddg = urlObj.searchParams.get('uddg');
+          if (uddg) actualUrl = decodeURIComponent(uddg);
+        } catch (_) {}
+        if (titleEl && snippetEl) {
+          results.push(`Tiêu đề: ${titleEl.textContent.trim()}\nURL: ${actualUrl}\nTrích dẫn: ${snippetEl.textContent.trim()}`);
+        }
+      }
+    }
+
+    if (results.length === 0) {
+      // Fallback 2: Regex extraction for environments where DOMParser is limited
+      const titleRegex = /<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi;
+      const snippetRegex = /<a[^>]*class="[^"]*result__snippet[^"]*"[^>]*>([\s\S]*?)<\/a>/gi;
+      const links = [];
+      let m;
+      while ((m = titleRegex.exec(htmlText)) !== null) {
+        let href = m[1];
+        try {
+          const urlObj = new URL(href, 'https://duckduckgo.com');
+          const uddg = urlObj.searchParams.get('uddg');
+          if (uddg) href = decodeURIComponent(uddg);
+        } catch (_) {}
+        links.push({ url: href, title: m[2].replace(/<[^>]+>/g, '').trim() });
+      }
+      const snippets = [];
+      while ((m = snippetRegex.exec(htmlText)) !== null) {
+        snippets.push(m[1].replace(/<[^>]+>/g, '').trim());
+      }
+      for (let i = 0; i < Math.min(links.length, snippets.length); i++) {
+        results.push(`Tiêu đề: ${links[i].title}\nURL: ${links[i].url}\nTrích dẫn: ${snippets[i]}`);
+      }
+    }
+
     if (results.length === 0) return null;
     return results.slice(0, 4).join('\n\n'); // Lấy top 4 kết quả
   } catch (err) {
@@ -3575,11 +3645,18 @@ function initExportChat() {
 
   function sanitizeTitle(t) { return (t || 'chat').replace(/[^a-zA-Z0-9\u00C0-\u024F\u1E00-\u1EFF _-]/g, '').slice(0, 50); }
 
+  function getCleanExportMessages(chat) {
+    return (chat && chat.messages ? chat.messages : []).filter(m => 
+      !m.isToolObservation && 
+      !(m.role === 'user' && typeof m.content === 'string' && m.content.trim().startsWith('[SUNA TOOL EXECUTION OBSERVATIONS]'))
+    );
+  }
+
   // Markdown
   document.getElementById('btn-export-md')?.addEventListener('click', () => {
     const chat = getChat(); if (!chat) return;
     let md = `# ${chat.title}\n_Xuất lúc: ${new Date().toLocaleString('vi-VN')}_\n\n---\n\n`;
-    chat.messages.forEach(m => {
+    getCleanExportMessages(chat).forEach(m => {
       const role = m.role === 'user' ? '**🧑 Bạn**' : '**🤖 Suna**';
       md += `${role}:\n\n${m.content || ''}\n\n---\n\n`;
     });
@@ -3590,7 +3667,7 @@ function initExportChat() {
   document.getElementById('btn-export-txt')?.addEventListener('click', () => {
     const chat = getChat(); if (!chat) return;
     let txt = `${chat.title}\nXuất lúc: ${new Date().toLocaleString('vi-VN')}\n${'='.repeat(40)}\n\n`;
-    chat.messages.forEach(m => {
+    getCleanExportMessages(chat).forEach(m => {
       txt += `[${m.role === 'user' ? 'Bạn' : 'Suna'}]:\n${m.content || ''}\n\n`;
     });
     download(txt, sanitizeTitle(chat.title) + '.txt', 'text/plain');
@@ -3600,7 +3677,7 @@ function initExportChat() {
   document.getElementById('btn-export-html')?.addEventListener('click', () => {
     const chat = getChat(); if (!chat) return;
     let body = '';
-    chat.messages.forEach(m => {
+    getCleanExportMessages(chat).forEach(m => {
       const cls = m.role === 'user' ? 'user' : 'ai';
       const label = m.role === 'user' ? 'Bạn' : 'Suna';
       const content = (m.content || '').replace(/</g, '&lt;').replace(/\n/g, '<br>');
@@ -3619,7 +3696,8 @@ b{display:block;margin-bottom:6px;font-size:0.85em;opacity:0.7}p{margin:0;white-
   // JSON
   document.getElementById('btn-export-json')?.addEventListener('click', () => {
     const chat = getChat(); if (!chat) return;
-    const data = { title: chat.title, exportedAt: new Date().toISOString(), messages: chat.messages.map(m => ({ role: m.role, content: m.content })) };
+    const cleanMessages = getCleanExportMessages(chat);
+    const data = { title: chat.title, exportedAt: new Date().toISOString(), messages: cleanMessages.map(m => ({ role: m.role, content: m.content })) };
     download(JSON.stringify(data, null, 2), sanitizeTitle(chat.title) + '.json', 'application/json');
   });
 }
@@ -4246,9 +4324,28 @@ const SunaAgent = {
             Math, JSON, Array, Object, String, Number, Boolean, Date, RegExp,
             parseInt, parseFloat, isNaN, isFinite
           };
-          const script = new nodeVm.Script(code);
-          const vmContext = nodeVm.createContext(isolatedSandbox);
-          const evalResult = script.runInContext(vmContext, { timeout: timeoutMs });
+          let evalResult;
+          const origFunction = Function.prototype.constructor;
+          const safeFunction = function() {
+            return function() { return 'safe'; };
+          };
+          safeFunction.prototype = origFunction.prototype;
+          try {
+            Object.defineProperty(Function.prototype, 'constructor', {
+              value: safeFunction,
+              writable: true,
+              configurable: true
+            });
+            const script = new nodeVm.Script(code);
+            const vmContext = nodeVm.createContext(isolatedSandbox);
+            evalResult = script.runInContext(vmContext, { timeout: timeoutMs });
+          } finally {
+            Object.defineProperty(Function.prototype, 'constructor', {
+              value: origFunction,
+              writable: true,
+              configurable: true
+            });
+          }
 
           let output;
           if (typeof evalResult === 'object' && evalResult !== null) {
@@ -4274,13 +4371,43 @@ const SunaAgent = {
           }, timeoutMs);
 
           try {
-            const safeEval = new Function(
-              'Math', 'JSON', 'Array', 'Object', 'String', 'Number', 'Boolean', 'Date', 'RegExp', 'parseInt', 'parseFloat', 'isNaN', 'isFinite', 'window', 'document', 'localStorage',
-              `"use strict";\nreturn (${code});`
-            );
-            const evalResult = safeEval(
-              Math, JSON, Array, Object, String, Number, Boolean, Date, RegExp, parseInt, parseFloat, isNaN, isFinite, undefined, undefined, undefined
-            );
+            let evalResult;
+            const origFunction = Function.prototype.constructor;
+            const origObject = Object.prototype.constructor;
+            const safeFunction = function() {
+              return function() { return 'safe'; };
+            };
+            safeFunction.prototype = origFunction.prototype;
+            try {
+              Object.defineProperty(Function.prototype, 'constructor', {
+                value: safeFunction,
+                writable: true,
+                configurable: true
+              });
+              Object.defineProperty(Object.prototype, 'constructor', {
+                value: safeFunction,
+                writable: true,
+                configurable: true
+              });
+              const safeEval = new Function(
+                'Math', 'JSON', 'Array', 'Object', 'String', 'Number', 'Boolean', 'Date', 'RegExp', 'parseInt', 'parseFloat', 'isNaN', 'isFinite', 'Function', 'window', 'document', 'localStorage', 'globalThis', 'self', 'top', 'parent', 'process',
+                `"use strict";\nreturn eval(${JSON.stringify(code)});`
+              );
+              evalResult = safeEval(
+                Math, JSON, Array, Object, String, Number, Boolean, Date, RegExp, parseInt, parseFloat, isNaN, isFinite, safeFunction, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined
+              );
+            } finally {
+              Object.defineProperty(Function.prototype, 'constructor', {
+                value: origFunction,
+                writable: true,
+                configurable: true
+              });
+              Object.defineProperty(Object.prototype, 'constructor', {
+                value: origObject,
+                writable: true,
+                configurable: true
+              });
+            }
             finished = true;
             clearTimeout(timer);
             let output;
@@ -4359,15 +4486,21 @@ const SunaAgent = {
       const maxLength = typeof args.maxLength === 'number' && args.maxLength > 0 ? args.maxLength : 4000;
 
       let rawHtml = args.mockHtml || '';
-      if (!rawHtml && typeof fetchLinkContext === 'function') {
+      const fetchFn = (context && typeof context.fetchLinkContext === 'function')
+        ? context.fetchLinkContext
+        : (typeof fetchLinkContext === 'function' ? fetchLinkContext : null);
+
+      if (!rawHtml && fetchFn) {
         try {
-          const linkTxt = await fetchLinkContext(url);
+          const linkTxt = await fetchFn(url);
           if (linkTxt) return { success: true, url, length: linkTxt.length, content: linkTxt.slice(0, maxLength) };
-        } catch (e) {}
+        } catch (e) {
+          return { success: false, error: 'Network error: ' + (e.message || String(e)) };
+        }
       }
 
       if (!rawHtml) {
-        rawHtml = `<html><head><script>alert('xss')<\/script><style>body{}<\/style></head><body><nav>Menu</nav><main><h1>Tiêu đề trang</h1><p>Nội dung văn bản chính được trích xuất an toàn từ trang web.</p></main><footer>Bản quyền 2026</footer></body></html>`;
+        return { success: false, error: 'Network error: Failed to fetch page content from ' + url };
       }
 
       let cleaned = rawHtml
@@ -4510,10 +4643,19 @@ const SunaAgent = {
         return { success: false, error: `Error: Ambiguous patch target. Search block matches ${occurrences} locations in "${path}". Must match exactly 1 location.` };
       }
 
-      const patched = original.replace(search, replace);
-      const byteLength = typeof Buffer !== 'undefined'
-        ? Buffer.byteLength(patched, 'utf8')
-        : (typeof TextEncoder !== 'undefined' ? new TextEncoder().encode(patched).length : content.length);
+      const patched = original.replace(search, () => replace);
+      let byteLength;
+      if (typeof Buffer !== 'undefined' && typeof Buffer.byteLength === 'function') {
+        byteLength = Buffer.byteLength(patched, 'utf8');
+      } else if (typeof TextEncoder !== 'undefined') {
+        byteLength = new TextEncoder().encode(patched).length;
+      } else {
+        try {
+          byteLength = encodeURIComponent(patched).replace(/%[A-F\d]{2}/gi, 'U').length;
+        } catch (_) {
+          byteLength = patched.length;
+        }
+      }
 
       targetVfs[path] = {
         content: patched,
@@ -4551,10 +4693,10 @@ const SunaAgent = {
 
       if (!Array.isArray(state.memory.facts)) state.memory.facts = [];
 
-      const normalizedFact = fact.toLowerCase();
+      const normalizedFact = fact.toLowerCase().trim();
       const exists = state.memory.facts.some(f => {
-        const existingText = typeof f === 'string' ? f : (f.fact || '');
-        return existingText.toLowerCase() === normalizedFact;
+        const existingText = typeof f === 'string' ? f : (f && f.fact ? f.fact : '');
+        return existingText.toLowerCase().trim() === normalizedFact;
       });
 
       if (exists) {
@@ -4563,15 +4705,29 @@ const SunaAgent = {
 
       const memoryEntry = {
         id: 'fact_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
-        fact,
+        fact: fact.trim(),
         category,
         timestamp: Date.now()
       };
 
-      state.memory.facts.push(memoryEntry);
-
       if (typeof addMemoryFact === 'function') {
-        try { addMemoryFact(fact, category); } catch (e) {}
+        try {
+          addMemoryFact(fact, category);
+        } catch (e) {}
+        if (!state.memory.facts.some(f => {
+          const existingText = typeof f === 'string' ? f : (f && f.fact ? f.fact : '');
+          return existingText.toLowerCase().trim() === normalizedFact;
+        })) {
+          state.memory.facts.push(memoryEntry);
+        }
+      } else {
+        state.memory.facts.push(memoryEntry);
+        const saveFn = (context && typeof context.saveMemory === 'function')
+          ? context.saveMemory
+          : (typeof saveMemory === 'function' ? saveMemory : null);
+        if (saveFn) {
+          try { await saveFn(true); } catch (e) {}
+        }
       }
 
       return { success: true, message: 'Fact stored successfully.', entry: memoryEntry };
@@ -4743,9 +4899,16 @@ const SunaAgent = {
     }
 
     try {
-      let sanitized = parsedArgs;
+      const H = (typeof getHarnessComponents === 'function' && getHarnessComponents()) || (typeof SunaHarness !== 'undefined' ? SunaHarness : (typeof window !== 'undefined' ? window.SunaHarness : null));
+      const validator = (H && H.AciSchemaValidator) || (typeof AciSchemaValidator !== 'undefined' ? AciSchemaValidator : (typeof window !== 'undefined' ? window.AciSchemaValidator : null));
+      let normalized = parsedArgs;
+      if (validator && typeof validator.normalizeArgs === 'function') {
+        normalized = validator.normalizeArgs(trimmedName, parsedArgs);
+      }
+
+      let sanitized = normalized;
       if (tool && tool.parameters) {
-        const validated = this.validateParameters(tool.parameters, parsedArgs);
+        const validated = this.validateParameters(tool.parameters, normalized);
         sanitized = validated.sanitized;
       }
 
@@ -4758,7 +4921,19 @@ const SunaAgent = {
 
       let serialized;
       if (typeof result === 'object' && result !== null) {
-        serialized = JSON.stringify(result);
+        try {
+          const seen = new WeakSet();
+          serialized = JSON.stringify(result, (k, v) => {
+            if (typeof v === 'object' && v !== null) {
+              if (seen.has(v)) return '[Circular Reference]';
+              seen.add(v);
+            }
+            if (typeof v === 'bigint') return v.toString() + 'n';
+            return v;
+          });
+        } catch (_) {
+          serialized = String(result);
+        }
       } else {
         serialized = String(result !== undefined ? result : '');
       }
@@ -4881,7 +5056,154 @@ const SunaAgent = {
     // Format tool results as a single observation block
     let observationBlock = `\n\n[SUNA TOOL EXECUTION OBSERVATIONS]:`;
     results.forEach((res) => {
-      observationBlock += `\n- Tool [${res.tool}]:\n  Result: ${res.observation}`;
+      let obs = res.observation;
+      // If observation is a JSON string from executeTool, parse it to extract rich structure if possible
+      if (typeof obs === 'string' && (obs.trim().startsWith('{') || obs.trim().startsWith('['))) {
+        try {
+          const parsed = JSON.parse(obs);
+          if (parsed && typeof parsed === 'object') {
+            obs = parsed;
+          }
+        } catch (_) {}
+      }
+
+      let formattedText = '';
+      if (typeof obs === 'object' && obs !== null) {
+        if (res.tool === 'web_search_context') {
+          if (obs.error) {
+            formattedText = `Lỗi tìm kiếm: ${obs.error}`;
+          } else if (Array.isArray(obs.results)) {
+            if (obs.results.length === 0) {
+              formattedText = `Không tìm thấy kết quả tìm kiếm nào cho "${obs.query || ''}".`;
+            } else {
+              formattedText = `Tìm thấy ${obs.count || obs.results.length} kết quả tìm kiếm cho "${obs.query || ''}":\n` +
+                obs.results.map((r, i) => `[${i + 1}] Tiêu đề: ${r.title || ''}\n    URL: ${r.url || ''}\n    Trích dẫn: ${r.snippet || ''}`).join('\n\n');
+            }
+          }
+        } else if (res.tool === 'memory_query') {
+          if (obs.error) {
+            formattedText = `Lỗi truy vấn ký ức: ${obs.error}`;
+          } else if (Array.isArray(obs.results)) {
+            if (obs.results.length === 0) {
+              formattedText = `Không tìm thấy ký ức nào phù hợp với truy vấn.`;
+            } else {
+              formattedText = `Tìm thấy ${obs.count || obs.results.length} ký ức phù hợp:\n` +
+                obs.results.map((m, i) => {
+                  const factText = typeof m === 'string' ? m : (m.fact || JSON.stringify(m));
+                  const catText = (typeof m === 'object' && m.category) ? ` [${m.category}]` : '';
+                  return `[${i + 1}]${catText} ${factText}`;
+                }).join('\n');
+            }
+          }
+        } else if (res.tool === 'memory_store') {
+          if (obs.error) {
+            formattedText = `Lỗi lưu ký ức: ${obs.error}`;
+          } else {
+            formattedText = obs.message || (obs.success ? 'Ký ức đã được lưu thành công.' : 'Lưu ký ức thất bại.');
+          }
+        } else if (res.tool === 'sandbox_exec') {
+          if (obs.error) {
+            formattedText = `Lỗi thực thi mã: ${obs.error}`;
+          } else if (obs.result !== undefined) {
+            formattedText = `Kết quả thực thi:\n${typeof obs.result === 'object' ? JSON.stringify(obs.result, null, 2) : String(obs.result)}`;
+          }
+        } else if (res.tool === 'visualize_diagram') {
+          if (obs.fence) formattedText = obs.fence;
+          else if (obs.svg) formattedText = obs.svg;
+          else formattedText = JSON.stringify(obs, null, 2);
+        } else if (res.tool === 'analyze_tabular') {
+          if (obs.error) {
+            formattedText = `Lỗi phân tích bảng: ${obs.error}`;
+          } else if (obs.markdownTable) {
+            formattedText = `Thống kê và bảng dữ liệu:\n${obs.markdownTable}`;
+          }
+        } else if (res.tool === 'fs_write') {
+          if (obs.error) {
+            formattedText = `Lỗi ghi tệp: ${obs.error}`;
+          } else if (obs.success) {
+            formattedText = obs.path ? `Đã ghi tệp "${obs.path}" thành công (${obs.lines || 0} dòng, ${obs.size || 0} bytes).` : 'Ghi tệp thành công.';
+          }
+        } else if (res.tool === 'fs_patch') {
+          if (obs.error) {
+            formattedText = `Lỗi vá tệp: ${obs.error}`;
+          } else if (obs.success) {
+            formattedText = obs.path ? `Đã vá tệp "${obs.path}" thành công.` : 'Vá tệp thành công.';
+          }
+        } else if (res.tool === 'fs_read') {
+          if (obs.error) {
+            formattedText = `Lỗi đọc tệp: ${obs.error}`;
+          } else {
+            formattedText = `Nội dung tệp "${obs.path || ''}" (${obs.lines || 0} dòng, ${obs.size || 0} bytes):\n${obs.content !== undefined ? obs.content : ''}`;
+          }
+        } else if (res.tool === 'fs_list' && Array.isArray(obs.files)) {
+          formattedText = `Danh sách tệp trong không gian làm việc (${obs.files.length} tệp):\n` +
+            obs.files.map(f => `- ${f.path} (${f.lines || 0} dòng, ${f.size || 0} bytes)`).join('\n');
+        } else if (res.tool === 'fetch_page_summary') {
+          if (obs.error) {
+            formattedText = `Lỗi tải trang: ${obs.error}`;
+          } else {
+            formattedText = `Nội dung tóm tắt từ "${obs.url || ''}" (${obs.length || (obs.content ? obs.content.length : 0)} ký tự):\n${obs.content || '(Trang không có nội dung văn bản)'}`;
+          }
+        } else if (res.tool === 'replace_file_content') {
+          if (obs.error) {
+            formattedText = `Lỗi thay thế tệp: ${obs.error}`;
+          } else if (obs.diff) {
+            formattedText = `Đã cập nhật tệp "${obs.path || ''}". Diff:\n${obs.diff}`;
+          } else {
+            formattedText = `Đã cập nhật tệp "${obs.path || ''}" thành công.`;
+          }
+        } else if (res.tool === 'grep_search' && Array.isArray(obs)) {
+          if (obs.length === 0) {
+            formattedText = 'Không tìm thấy kết quả nào phù hợp.';
+          } else if (typeof obs[0] === 'object' && obs[0] !== null && 'file' in obs[0]) {
+            formattedText = `Tìm thấy ${obs.length} kết quả:\n` + obs.map(m => `${m.file}:${m.lineNumber}: ${m.lineContent}`).join('\n');
+          } else {
+            formattedText = `Tìm thấy ${obs.length} kết quả:\n` + obs.map(String).join('\n');
+          }
+        } else if (res.tool === 'find_by_name' && Array.isArray(obs)) {
+          formattedText = obs.length === 0 ? 'Không tìm thấy tệp nào phù hợp.' : `Tìm thấy ${obs.length} tệp:\n` + obs.map(f => typeof f === 'object' && f.path ? f.path : String(f)).join('\n');
+        } else if (res.tool === 'list_dir' && Array.isArray(obs)) {
+          formattedText = obs.length === 0 ? 'Thư mục rỗng.' : `Danh sách thư mục (${obs.length} mục):\n` + obs.map(item => {
+            if (typeof item === 'object' && item !== null) {
+              const typeTag = item.type === 'directory' ? '[DIR]' : '[FILE]';
+              return `${typeTag} ${item.path || item.name} (${item.size || 0} bytes)`;
+            }
+            return String(item);
+          }).join('\n');
+        } else if (res.tool === 'run_sandboxed_command') {
+          if (obs.error) {
+            formattedText = `Lỗi thực thi lệnh: ${obs.error}`;
+          } else {
+            const out = obs.stdout ? `STDOUT:\n${obs.stdout}` : '';
+            const err = obs.stderr ? `STDERR:\n${obs.stderr}` : '';
+            formattedText = [out, err, `Exit code: ${obs.exitCode !== undefined ? obs.exitCode : 0}`].filter(Boolean).join('\n') || 'Lệnh thực thi thành công (không có đầu ra).';
+          }
+        } else if (obs.error) {
+          formattedText = `Lỗi thực thi: ${obs.error}`;
+        } else if (obs.content !== undefined && typeof obs.content === 'string') {
+          formattedText = obs.content;
+        } else {
+          try {
+            const seen = new WeakSet();
+            formattedText = JSON.stringify(obs, (key, value) => {
+              if (typeof value === 'object' && value !== null) {
+                if (seen.has(value)) return '[Circular Reference]';
+                seen.add(value);
+              }
+              if (typeof value === 'bigint') return value.toString() + 'n';
+              return value;
+            }, 2);
+          } catch (_) {
+            formattedText = String(obs);
+          }
+        }
+      } else {
+        formattedText = String(obs !== undefined ? obs : '');
+      }
+      if (formattedText === '[object Object]') {
+        formattedText = `Kết quả thực thi công cụ [${res.tool}] đã hoàn tất.`;
+      }
+      observationBlock += `\n- Tool [${res.tool}]:\n  Result:\n${formattedText}`;
     });
     return observationBlock;
   },
@@ -5234,10 +5556,12 @@ async function saveMemory(immediate = false) {
 }
 
 function addMemoryFact(fact, category = 'context') {
+  if (!State || !State.memory || !Array.isArray(State.memory.facts)) return false;
   // Tránh trùng lặp (so sánh nội dung tương tự)
-  const isDuplicate = State.memory.facts.some(f => 
-    f.fact.toLowerCase().trim() === fact.toLowerCase().trim()
-  );
+  const isDuplicate = State.memory.facts.some(f => {
+    const existing = typeof f === 'string' ? f : (f && f.fact ? f.fact : '');
+    return existing.toLowerCase().trim() === fact.toLowerCase().trim();
+  });
   if (isDuplicate) return false;
   
   // Giới hạn tối đa 50 fact để không phình prompt
@@ -5249,7 +5573,9 @@ function addMemoryFact(fact, category = 'context') {
     category,
     timestamp: Date.now()
   });
-  saveMemory(true);
+  if (typeof saveMemory === 'function') {
+    saveMemory(true);
+  }
   return true;
 }
 
@@ -6126,6 +6452,10 @@ function renderMessages() {
   if (container) container.style.display = 'flex';
 
   let htmlContent = chat.messages.map((m, idx) => {
+    // An hoan toan cac tin nhan quan sat cong cu noi bo khoi giao dien chat nguoi dung
+    if (m.isToolObservation || (m.role === 'user' && typeof m.content === 'string' && m.content.trim().startsWith('[SUNA TOOL EXECUTION OBSERVATIONS]'))) {
+      return '';
+    }
     const isUser = m.role === 'user';
     // Chi cho phep http(s) va data:image, dong thoi escape de khong thoat attribute.
     const rawAvatar = State.settings.userAvatar || '';
@@ -6177,12 +6507,6 @@ function renderMessages() {
           const sizeStr = f.size < 1024 ? f.size + 'B' : f.size < 1024 * 1024 ? (f.size / 1024).toFixed(1) + 'KB' : (f.size / (1024*1024)).toFixed(1) + 'MB';
           return `<div class="msg-file-card"><div class="msg-file-icon">${icon}</div><div class="msg-file-info"><div class="msg-file-name">${escHtml(f.name)}</div><div class="msg-file-meta">${sizeStr} • ${f.lang || f.ext.toUpperCase() || 'FILE'}</div></div></div>`;
         }).join('') + '</div>';
-        
-        // Feature: Interactive Document Analyzer & Doc-to-Mindmap
-        if (isUser) {
-          filesHtml += `<button class="btn-analyze-doc" onclick="analyzeDocumentMessage(${idx})" title="Phân tích tài liệu" aria-label="Phân tích tài liệu"><span class="material-icons-round">analytics</span> Phân tích tài liệu</button>`;
-          filesHtml += `<button class="btn-analyze-doc doc-to-mindmap" onclick="summarizeDocumentToMindmapFromMessage(${idx})" title="Tạo sơ đồ tư duy từ tài liệu này" aria-label="Tạo sơ đồ tư duy" style="margin-left:6px;"><span class="material-icons-round">account_tree</span> Sơ đồ tư duy</button>`;
-        }
       }
 
       let renderContent = m.content || '';
@@ -6204,7 +6528,8 @@ function renderMessages() {
       <div class="message-actions">
         <button class="action-btn" onclick="copyMessage(${idx})" title="Sao chép" aria-label="Sao chép tin nhắn"><span class="material-icons-round">content_copy</span></button>
         ${isUser 
-          ? `<button class="action-btn" onclick="editMessage(${idx})" title="Chỉnh sửa" aria-label="Chỉnh sửa tin nhắn"><span class="material-icons-round">edit</span></button>` 
+          ? `<button class="action-btn" onclick="editMessage(${idx})" title="Chỉnh sửa" aria-label="Chỉnh sửa tin nhắn"><span class="material-icons-round">edit</span></button>
+             ${m.files && m.files.length ? `<button class="action-btn doc-to-mindmap" onclick="summarizeDocumentToMindmapFromMessage(${idx})" title="Tạo sơ đồ tư duy từ tài liệu" aria-label="Tạo sơ đồ tư duy"><span class="material-icons-round">account_tree</span></button>` : ''}` 
           : `<button class="action-btn" onclick="visualizeMessageAsDiagram(${idx})" title="Tạo sơ đồ trực quan từ câu trả lời này" aria-label="Tạo sơ đồ trực quan"><span class="material-icons-round">schema</span></button>
              <button class="action-btn" onclick="quoteMessage(${idx})" title="Trích dẫn/Trả lời" aria-label="Trích dẫn tin nhắn"><span class="material-icons-round">reply</span></button>
              <button class="action-btn" onclick="readAloudMessage(${idx})" title="Đọc văn bản" aria-label="Đọc văn bản"><span class="material-icons-round">volume_up</span></button>
@@ -7578,7 +7903,7 @@ function formatMessage(text, isStreaming = false) {
       if (isStreaming) {
         renderedHtml = `<div class="mermaid-wrapper skeleton-loading">
                   <span class="material-icons-round rotate-anim">psychology</span>
-                  <span>Suna đang phác thảo sơ đồ tư duy...</span>
+                  <span>Suna đang kết xuất sơ đồ...</span>
                 </div>`;
       } else {
         // Lưu trữ mã nguồn gốc vào data-content để re-render không bị lỗi cú pháp trên SVG
@@ -8182,9 +8507,15 @@ const MAX_IMAGE_SIZE = 100 * 1024 * 1024;
 const MAX_PENDING_IMAGES = 5;
 
 const TEXT_EXTENSIONS = new Set([
-  'txt','md','html','htm','css','js','jsx','ts','tsx','json','xml',
-  'yaml','yml','toml','ini','cfg','log','py','java','cpp','c','cs',
-  'rb','php','swift','kt','go','rs','sh','bat','sql','csv','env'
+  'txt','md','markdown','mdown','mkd','html','htm','xhtml','css','scss','sass','less',
+  'js','jsx','mjs','cjs','ts','tsx','mts','cts','json','jsonl','json5','xml','yaml','yml',
+  'toml','ini','cfg','conf','config','log','py','pyw','ipynb','java','cpp','c','cc','cxx',
+  'h','hpp','hxx','hh','cs','rb','php','swift','kt','kts','go','rs','sh','bash','zsh','fish',
+  'bat','cmd','ps1','psm1','sql','csv','tsv','env','gitignore','dockerfile','containerfile',
+  'makefile','r','rmd','lua','dart','scala','pl','pm','asm','s','vb','vbs','clj','ex','exs',
+  'erl','hs','lhs','jl','nim','zig','v','proto','sol','graphql','gql','prisma','tex','latex',
+  'bib','rst','adoc','diff','patch','srt','vtt','rtf','properties','gradle','cmake','svg',
+  'vue','svelte','astro'
 ]);
 
 function getFileExtension(filename) {
@@ -8224,15 +8555,23 @@ async function readPdfFile(file) {
     return '[PDF: ' + file.name + ' - Thư viện PDF.js chưa tải xong. Vui lòng thử lại.]';
   }
   try {
+    if (pdfjsLib && pdfjsLib.GlobalWorkerOptions && !pdfjsLib.GlobalWorkerOptions.workerSrc) {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    }
     const arrayBuffer = await file.arrayBuffer();
-    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    const loadingTask = pdfjsLib.getDocument({
+      data: arrayBuffer,
+      isEvalSupported: false,
+      useSystemFonts: true
+    });
+    const pdf = await loadingTask.promise;
     const totalPages = pdf.numPages;
     let fullText = '';
     const maxPages = Math.min(totalPages, 100); // Giới hạn 100 trang
     for (let i = 1; i <= maxPages; i++) {
       const page = await pdf.getPage(i);
       const textContent = await page.getTextContent();
-      const pageText = textContent.items.map(item => item.str).join(' ');
+      const pageText = textContent.items.map(item => item.str + (item.hasEOL ? '\n' : ' ')).join('');
       if (pageText.trim()) {
         fullText += '--- Trang ' + i + ' ---\n' + pageText.trim() + '\n\n';
       }
@@ -8250,38 +8589,650 @@ async function readPdfFile(file) {
   }
 }
 
-// Read binary doc/docx (limited in browser)
+// Helper for decoding XML entities safely (ampersand decoded last)
+function decodeXmlEntities(str) {
+  if (!str) return '';
+  return str
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n, 10)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCharCode(parseInt(n, 16)))
+    .replace(/&amp;/g, '&');
+}
+
+// Enhanced ZIP parser supporting both Local File Headers and Central Directory
+async function extractFileFromZip(arrayBuffer, targetPath) {
+  if (!arrayBuffer || arrayBuffer.byteLength < 22) return null;
+  const bytes = new Uint8Array(arrayBuffer);
+  const view = new DataView(arrayBuffer);
+  const targetLower = targetPath.replace(/\\/g, '/').toLowerCase();
+
+  async function decompress(compressedData, compression) {
+    if (compression === 0) {
+      return new TextDecoder('utf-8').decode(compressedData);
+    }
+    if (compression === 8) {
+      if (!compressedData || compressedData.length === 0) return '';
+      if (typeof DecompressionStream !== 'undefined') {
+        try {
+          const ds = new DecompressionStream('deflate-raw');
+          const writer = ds.writable.getWriter();
+          writer.write(compressedData);
+          writer.close();
+          const response = new Response(ds.readable);
+          const decompressed = await response.arrayBuffer();
+          return new TextDecoder('utf-8').decode(decompressed);
+        } catch (_) {}
+      }
+      if (typeof require === 'function') {
+        try {
+          const zlib = require('zlib');
+          if (zlib && typeof zlib.inflateRawSync === 'function') {
+            const buf = zlib.inflateRawSync(Buffer.from(compressedData));
+            return buf.toString('utf8');
+          }
+        } catch (_) {}
+      }
+    }
+    return null;
+  }
+
+  // Strategy 1: Search Central Directory from End of Central Directory (EOCD)
+  const minEocdOffset = Math.max(0, bytes.length - 65557);
+  let eocdOffset = -1;
+  for (let i = bytes.length - 22; i >= minEocdOffset; i--) {
+    if (view.getUint32(i, true) === 0x06054b50) {
+      eocdOffset = i;
+      break;
+    }
+  }
+
+  if (eocdOffset !== -1) {
+    const cdOffset = view.getUint32(eocdOffset + 16, true);
+    const cdTotal = view.getUint16(eocdOffset + 10, true);
+    let curCd = cdOffset;
+
+    for (let i = 0; i < cdTotal && curCd + 46 <= bytes.length; i++) {
+      if (view.getUint32(curCd, true) !== 0x02014b50) break;
+      const compression = view.getUint16(curCd + 10, true);
+      const compSize = view.getUint32(curCd + 20, true);
+      const fnLen = view.getUint16(curCd + 28, true);
+      const extraLen = view.getUint16(curCd + 30, true);
+      const commentLen = view.getUint16(curCd + 32, true);
+      const localHdrOffset = view.getUint32(curCd + 42, true);
+
+      const fnBytes = bytes.subarray(curCd + 46, curCd + 46 + fnLen);
+      const fn = new TextDecoder('utf-8').decode(fnBytes);
+      const normFn = fn.replace(/\\/g, '/').toLowerCase();
+
+      if (normFn.endsWith(targetLower) || normFn === targetLower) {
+        if (localHdrOffset + 30 <= bytes.length && view.getUint32(localHdrOffset, true) === 0x04034b50) {
+          const locFnLen = view.getUint16(localHdrOffset + 26, true);
+          const locExtraLen = view.getUint16(localHdrOffset + 28, true);
+          const dataStart = localHdrOffset + 30 + locFnLen + locExtraLen;
+          const compData = bytes.subarray(dataStart, dataStart + compSize);
+          const result = await decompress(compData, compression);
+          if (result !== null) return result;
+        }
+      }
+
+      curCd += 46 + fnLen + extraLen + commentLen;
+    }
+  }
+
+  // Strategy 2: Fallback scanning Local File Headers
+  let offset = 0;
+  while (offset + 30 <= bytes.length) {
+    const sig = view.getUint32(offset, true);
+    if (sig !== 0x04034b50) break;
+
+    const compression = view.getUint16(offset + 8, true);
+    const flags = view.getUint16(offset + 6, true);
+    let compressedSize = view.getUint32(offset + 18, true);
+    const fileNameLen = view.getUint16(offset + 26, true);
+    const extraLen = view.getUint16(offset + 28, true);
+
+    const fileNameStart = offset + 30;
+    const fileNameBytes = bytes.subarray(fileNameStart, fileNameStart + fileNameLen);
+    const fileName = new TextDecoder('utf-8').decode(fileNameBytes);
+    const normFileName = fileName.replace(/\\/g, '/').toLowerCase();
+    const dataStart = fileNameStart + fileNameLen + extraLen;
+
+    if (normFileName.endsWith(targetLower) || normFileName === targetLower) {
+      const compData = bytes.subarray(dataStart, dataStart + compressedSize);
+      const result = await decompress(compData, compression);
+      if (result !== null) return result;
+    }
+
+    offset = dataStart + compressedSize;
+    if (flags & 0x08) {
+      if (offset + 4 <= bytes.length && view.getUint32(offset, true) === 0x08074b50) offset += 16;
+      else offset += 12;
+    }
+  }
+
+  return null;
+}
+
+function parseDocxXml(xml) {
+  if (!xml) return '';
+  return xml
+    .replace(/<w:br[^>]*\/>/gi, '\n')
+    .replace(/<w:cr[^>]*\/>/gi, '\n')
+    .replace(/<w:tab[^>]*\/>/gi, '\t')
+    .replace(/<\/w:p>/gi, '\n')
+    .replace(/<\/w:tr>/gi, '\n')
+    .replace(/<\/w:tc>/gi, ' ')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n, 10)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCharCode(parseInt(n, 16)))
+    .replace(/&amp;/g, '&')
+    .replace(/\r\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function parseXlsxXml(sheetXml, sharedStringsXml) {
+  if (!sheetXml) return '';
+  function decodeEntities(str) {
+    if (!str) return '';
+    return str
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&apos;/g, "'")
+      .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n, 10)))
+      .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCharCode(parseInt(n, 16)))
+      .replace(/&amp;/g, '&');
+  }
+  const sharedStrings = [];
+  if (sharedStringsXml) {
+    const siMatches = sharedStringsXml.match(/<si\b[\s\S]*?<\/si>/gi) || [];
+    siMatches.forEach(si => {
+      const textMatches = si.match(/<t\b[^>]*>([\s\S]*?)<\/t>/gi) || [];
+      const val = textMatches.map(t => t.replace(/<[^>]+>/g, '')).join('');
+      sharedStrings.push(decodeEntities(val));
+    });
+  }
+
+  const rows = [];
+  const rowMatches = sheetXml.match(/<row\b[\s\S]*?<\/row>/gi) || [];
+  rowMatches.forEach(r => {
+    const row = [];
+    const cellMatches = r.match(/<c\b[\s\S]*?<\/c>|<c\b[^>]*\/>/gi) || [];
+    cellMatches.forEach(c => {
+      const isShared = /\bt="s"(?:[\s>]|$)/i.test(c) || /\bt='s'(?:[\s>]|$)/i.test(c);
+      const isInline = /\bt="inlineStr"/i.test(c) || /\bt='inlineStr'/i.test(c);
+      const isBool = /\bt="b"/i.test(c) || /\bt='b'/i.test(c);
+      let val = '';
+      if (isShared) {
+        const vMatch = c.match(/<v>(\d+)<\/v>/i);
+        if (vMatch) {
+          const idx = parseInt(vMatch[1], 10);
+          val = sharedStrings[idx] || '';
+        }
+      } else if (isInline) {
+        const tMatch = c.match(/<t[^>]*>([\s\S]*?)<\/t>/i);
+        if (tMatch) val = decodeEntities(tMatch[1].replace(/<[^>]+>/g, ''));
+      } else if (isBool) {
+        const vMatch = c.match(/<v>([01])<\/v>/i);
+        if (vMatch) val = vMatch[1] === '1' ? 'TRUE' : 'FALSE';
+      } else {
+        const vMatch = c.match(/<v>([\s\S]*?)<\/v>/i);
+        if (vMatch) val = decodeEntities(vMatch[1].replace(/<[^>]+>/g, ''));
+      }
+      row.push(val.trim());
+    });
+    if (row.some(cell => cell.length > 0)) {
+      rows.push(row);
+    }
+  });
+
+  if (rows.length === 0) return '';
+  return rows.map(r => r.join('\t')).join('\n');
+}
+
+function parsePptxXml(xml) {
+  if (!xml) return '';
+  return xml
+    .replace(/<a:br[^>]*\/>/gi, '\n')
+    .replace(/<a:tab[^>]*\/>/gi, '\t')
+    .replace(/<\/a:p>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n, 10)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCharCode(parseInt(n, 16)))
+    .replace(/&amp;/g, '&')
+    .replace(/\r\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+// Parse OpenDocument XML (ODT, ODS, ODP)
+function parseOdfXml(xml) {
+  if (!xml) return '';
+  return xml
+    .replace(/>\s+</g, '><')
+    .replace(/<text:line-break[^>]*\/>/gi, '\n')
+    .replace(/<text:tab[^>]*\/>/gi, '\t')
+    .replace(/<\/text:p>(?=\s*<\/table:table-cell>)/gi, '')
+    .replace(/<\/table:table-cell>/gi, '\t')
+    .replace(/<\/table:table-row>/gi, '\n')
+    .replace(/<\/text:p>/gi, '\n')
+    .replace(/<\/text:h>/gi, '\n\n')
+    .replace(/<text:s\s+text:c="(\d+)"[^>]*\/>/gi, (_, c) => ' '.repeat(parseInt(c, 10) || 1))
+    .replace(/<text:s[^>]*\/>/gi, ' ')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n, 10)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCharCode(parseInt(n, 16)))
+    .replace(/&amp;/g, '&')
+    .replace(/\r\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+// Parse RTF text
+function parseRtfText(rtf) {
+  if (!rtf) return '';
+  let text = rtf.replace(/\{\\pict[\s\S]*?\}/g, '');
+  text = text.replace(/\{\\(?:fonttbl|colortbl|stylesheet)[\s\S]*?\}/g, '');
+  text = text.replace(/\\u(-?\d+)\??/g, (_, n) => {
+    const code = parseInt(n, 10);
+    return String.fromCharCode(code < 0 ? code + 65536 : code);
+  });
+  text = text.replace(/\\'([0-9a-fA-F]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
+  text = text.replace(/\\par\b/g, '\n').replace(/\\line\b/g, '\n').replace(/\\tab\b/g, '\t');
+  text = text.replace(/\\[a-zA-Z]+(-?\d+)?\s?/g, '');
+  text = text.replace(/[{}]/g, '');
+  return text.replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+// Extract printable strings from legacy binary DOC / OLE2 files
+function extractTextFromBinaryDoc(arrayBuffer) {
+  if (!arrayBuffer || arrayBuffer.byteLength < 4) return '';
+  const bytes = new Uint8Array(arrayBuffer);
+
+  // Helper 1: Scan UTF-16LE text runs at a given starting offset (0 for even, 1 for odd)
+  function scanUtf16(startOffset) {
+    const chunks = [];
+    let cur = '';
+    for (let i = startOffset; i < bytes.length - 1; i += 2) {
+      const code = bytes[i] | (bytes[i + 1] << 8);
+      // Printable ASCII, whitespace (tab, LF, CR, FF), Latin-1, Latin Extended-A/B (Đ, đ, ơ, ư),
+      // IPA, combining marks, Vietnamese precomposed characters (0x1EA0-0x1EF9),
+      // punctuation (quotes, en-dash, em-dash, bullets), currency (₫), letterlike symbols, CJK
+      const isChar = (code >= 32 && code <= 126) || code === 10 || code === 13 || code === 9 || code === 12 ||
+                     (code >= 160 && code <= 0x052F) || (code >= 0x1EA0 && code <= 0x1EF9) ||
+                     (code >= 0x2000 && code <= 0x214F) || (code >= 0x4E00 && code <= 0x9FFF);
+      if (isChar) {
+        cur += String.fromCharCode(code);
+      } else {
+        if (cur.trim().length >= 3) chunks.push(cur.trim());
+        cur = '';
+      }
+    }
+    if (cur.trim().length >= 3) chunks.push(cur.trim());
+    return chunks;
+  }
+
+  const utf16Even = scanUtf16(0);
+  const utf16Odd = scanUtf16(1);
+  const lenEven = utf16Even.reduce((acc, c) => acc + c.length, 0);
+  const lenOdd = utf16Odd.reduce((acc, c) => acc + c.length, 0);
+  const bestUtf16 = lenOdd > lenEven ? utf16Odd : utf16Even;
+
+  if (bestUtf16.length > 0 && bestUtf16.join('\n').length >= 20) {
+    return bestUtf16.join('\n');
+  }
+
+  // Helper 2: Scan 8-bit text runs (ASCII, CP1252, Windows-1258, UTF-8)
+  const chunks8 = [];
+  let cur8Bytes = [];
+  for (let i = 0; i < bytes.length; i++) {
+    const b = bytes[i];
+    // Printable ASCII, tab, LF, CR, or high-byte characters (128-255 for CP1252/1258/UTF-8)
+    if ((b >= 32 && b <= 126) || b === 10 || b === 13 || b === 9 || (b >= 128 && b <= 255)) {
+      cur8Bytes.push(b);
+    } else {
+      if (cur8Bytes.length >= 3) {
+        chunks8.push(new Uint8Array(cur8Bytes));
+      }
+      cur8Bytes = [];
+    }
+  }
+  if (cur8Bytes.length >= 3) {
+    chunks8.push(new Uint8Array(cur8Bytes));
+  }
+
+  if (chunks8.length > 0) {
+    const decodedChunks = [];
+    for (const chunk of chunks8) {
+      let decoded = '';
+      try {
+        decoded = new TextDecoder('utf-8', { fatal: false }).decode(chunk);
+      } catch (_) {
+        decoded = '';
+      }
+      if (!decoded || decoded.includes('\uFFFD')) {
+        let fallback = '';
+        for (let j = 0; j < chunk.length; j++) {
+          fallback += String.fromCharCode(chunk[j]);
+        }
+        decoded = fallback;
+      }
+      const trimmed = decoded.trim();
+      if (trimmed.length >= 3) {
+        decodedChunks.push(trimmed);
+      }
+    }
+    if (decodedChunks.length > 0 && decodedChunks.join('\n').length >= 10) {
+      return decodedChunks.join('\n');
+    }
+  }
+
+  // Fallback: Return bestUtf16 if it has any text at all
+  if (bestUtf16.length > 0) {
+    return bestUtf16.join('\n');
+  }
+
+  return '';
+}
+
+// Read binary doc/docx/xlsx/pptx/pdf/odt/ods/odp/rtf
 async function readBinaryDoc(file) {
   const ext = getFileExtension(file.name);
   if (ext === 'pdf') {
     return await readPdfFile(file);
   }
-  // For doc/docx: try to extract as XML/text (docx is actually a zip)
-  if (ext === 'docx') {
+  if (ext === 'docx' || ext === 'doc') {
     try {
       const arrayBuffer = await file.arrayBuffer();
-      const blob = new Blob([arrayBuffer]);
-      // docx contains word/document.xml - try basic extraction
-      const text = await new Response(blob).text();
-      // Extract text between XML tags
-      const cleaned = text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-      if (cleaned.length > 50 && !/[\x00-\x08]/.test(cleaned.substring(0, 500))) {
-        const MAX_CHARS = 50000;
-        if (cleaned.length > MAX_CHARS) {
-          return cleaned.substring(0, MAX_CHARS) + '\n\n... [File quá dài, chỉ lấy ' + MAX_CHARS + ' ký tự đầu]';
+      const bytes = new Uint8Array(arrayBuffer);
+      // Check if it's an OpenXML ZIP package (starts with PK\x03\x04)
+      if (bytes.length >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4B && bytes[2] === 0x03 && bytes[3] === 0x04) {
+        const xml = await extractFileFromZip(arrayBuffer, 'word/document.xml');
+        if (xml) {
+          const text = parseDocxXml(xml);
+          if (text && text.trim().length > 0) {
+            const MAX_CHARS = 50000;
+            return text.length > MAX_CHARS ? text.substring(0, MAX_CHARS) + '\n\n... [File quá dài, chỉ lấy ' + MAX_CHARS + ' ký tự đầu]' : text;
+          }
         }
-        return cleaned;
       }
-    } catch(e) { /* fall through */ }
+      // Check if it's RTF
+      const headAscii = new TextDecoder('ascii', { fatal: false }).decode(bytes.subarray(0, 100));
+      if (/^\s*\{\\rtf/i.test(headAscii) || (bytes.length >= 5 && bytes[0] === 0x7B && bytes[1] === 0x5C && bytes[2] === 0x72 && bytes[3] === 0x74 && bytes[4] === 0x66)) {
+        const rtfStr = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+        const text = parseRtfText(rtfStr);
+        if (text && text.trim().length > 0) {
+          const MAX_CHARS = 50000;
+          return text.length > MAX_CHARS ? text.substring(0, MAX_CHARS) + '\n\n... [File quá dài, chỉ lấy ' + MAX_CHARS + ' ký tự đầu]' : text;
+        }
+      }
+      // Check if it's HTML or XML exported as .doc (common in Vietnamese university/school web portals)
+      if (/^\s*<(!DOCTYPE\s+html|html|\?xml|<w:wordDocument|table|body|div)/i.test(headAscii)) {
+        try {
+          const rawHtml = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+          const text = parseHtmlOrXmlToText(rawHtml);
+          if (text && text.trim().length > 0) {
+            const MAX_CHARS = 50000;
+            return text.length > MAX_CHARS ? text.substring(0, MAX_CHARS) + '\n\n... [File quá dài, chỉ lấy ' + MAX_CHARS + ' ký tự đầu]' : text;
+          }
+        } catch (_) {}
+      }
+      // Check if it's legacy binary Word 97-2003 (.doc) OLE2
+      if (ext === 'doc' && bytes.length >= 8 && bytes[0] === 0xD0 && bytes[1] === 0xCF && bytes[2] === 0x11 && bytes[3] === 0xE0) {
+        const wordDocBuf = extractStreamFromOle2(arrayBuffer, 'WordDocument');
+        const targetBuf = wordDocBuf || arrayBuffer;
+        const text = extractTextFromBinaryDoc(targetBuf);
+        if (text && text.trim().length > 0) {
+          const MAX_CHARS = 50000;
+          return text.length > MAX_CHARS ? text.substring(0, MAX_CHARS) + '\n\n... [File quá dài, chỉ lấy ' + MAX_CHARS + ' ký tự đầu]' : text;
+        }
+      }
+      // Fallback for any DOC/DOCX: try extractTextFromBinaryDoc directly
+      const fallbackText = extractTextFromBinaryDoc(arrayBuffer);
+      if (fallbackText && fallbackText.trim().length > 0) {
+        const MAX_CHARS = 50000;
+        return fallbackText.length > MAX_CHARS ? fallbackText.substring(0, MAX_CHARS) + '\n\n... [File quá dài, chỉ lấy ' + MAX_CHARS + ' ký tự đầu]' : fallbackText;
+      }
+    } catch (e) {
+      console.error('DOC/DOCX read error:', e);
+    }
   }
-    return '[File ' + ext.toUpperCase() + ': ' + file.name + ' - ' + (file.size/1024).toFixed(1) + 'KB - Định dạng .' + ext + ' hỗ trợ hạn chế trong trình duyệt. Hãy copy nội dung và paste vào chat, hoặc xuất ra .txt/.pdf]';
+  if (ext === 'xlsx' || ext === 'xls') {
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const bytes = new Uint8Array(arrayBuffer);
+      if (bytes.length >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4B && bytes[2] === 0x03 && bytes[3] === 0x04) {
+        const sharedStringsXml = await extractFileFromZip(arrayBuffer, 'xl/sharedStrings.xml');
+        let allSheetsText = '';
+        for (let sheetIdx = 1; sheetIdx <= 10; sheetIdx++) {
+          const sheetXml = await extractFileFromZip(arrayBuffer, `xl/worksheets/sheet${sheetIdx}.xml`);
+          if (!sheetXml) {
+            if (sheetIdx === 1) {
+              const fallbackSheetXml = await extractFileFromZip(arrayBuffer, 'xl/worksheets/sheet.xml');
+              if (fallbackSheetXml) {
+                const text = parseXlsxXml(fallbackSheetXml, sharedStringsXml);
+                if (text && text.trim().length > 0) allSheetsText += text + '\n\n';
+              }
+            }
+            continue;
+          }
+          const text = parseXlsxXml(sheetXml, sharedStringsXml);
+          if (text && text.trim().length > 0) {
+            allSheetsText += (sheetIdx > 1 ? `\n--- Sheet ${sheetIdx} ---\n` : '') + text + '\n';
+          }
+        }
+        if (allSheetsText.trim().length > 0) {
+          const MAX_CHARS = 50000;
+          const trimmed = allSheetsText.trim();
+          return trimmed.length > MAX_CHARS ? trimmed.substring(0, MAX_CHARS) + '\n\n... [File quá dài, chỉ lấy ' + MAX_CHARS + ' ký tự đầu]' : trimmed;
+        }
+      }
+      // Check if .xls is HTML table
+      const headAscii = new TextDecoder('ascii', { fatal: false }).decode(bytes.subarray(0, 100));
+      if (/^\s*<(!DOCTYPE\s+html|html|\?xml|table|body)/i.test(headAscii)) {
+        const rawHtml = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+        const text = parseHtmlOrXmlToText(rawHtml);
+        if (text && text.trim().length > 0) {
+          const MAX_CHARS = 50000;
+          return text.length > MAX_CHARS ? text.substring(0, MAX_CHARS) + '\n\n... [File quá dài, chỉ lấy ' + MAX_CHARS + ' ký tự đầu]' : text;
+        }
+      }
+      const fallbackText = extractTextFromBinaryDoc(arrayBuffer);
+      if (fallbackText && fallbackText.trim().length > 0) {
+        const MAX_CHARS = 50000;
+        return fallbackText.length > MAX_CHARS ? fallbackText.substring(0, MAX_CHARS) + '\n\n... [File quá dài, chỉ lấy ' + MAX_CHARS + ' ký tự đầu]' : fallbackText;
+      }
+    } catch (e) {
+      console.error('XLS/XLSX read error:', e);
+    }
+  }
+  if (ext === 'pptx' || ext === 'ppt') {
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const bytes = new Uint8Array(arrayBuffer);
+      if (bytes.length >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4B && bytes[2] === 0x03 && bytes[3] === 0x04) {
+        let allText = '';
+        for (let slideNum = 1; slideNum <= 50; slideNum++) {
+          const slideXml = await extractFileFromZip(arrayBuffer, `ppt/slides/slide${slideNum}.xml`);
+          if (!slideXml) break;
+          const slideText = parsePptxXml(slideXml);
+          if (slideText.trim()) {
+            allText += `--- Slide ${slideNum} ---\n${slideText}\n\n`;
+          }
+        }
+        if (allText.trim()) {
+          const MAX_CHARS = 50000;
+          return allText.length > MAX_CHARS ? allText.substring(0, MAX_CHARS) + '\n\n... [File quá dài, chỉ lấy ' + MAX_CHARS + ' ký tự đầu]' : allText.trim();
+        }
+      }
+      const fallbackText = extractTextFromBinaryDoc(arrayBuffer);
+      if (fallbackText && fallbackText.trim().length > 0) {
+        const MAX_CHARS = 50000;
+        return fallbackText.length > MAX_CHARS ? fallbackText.substring(0, MAX_CHARS) + '\n\n... [File quá dài, chỉ lấy ' + MAX_CHARS + ' ký tự đầu]' : fallbackText;
+      }
+    } catch (e) {
+      console.error('PPT/PPTX read error:', e);
+    }
+  }
+  if (ext === 'odt' || ext === 'ods' || ext === 'odp') {
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const contentXml = await extractFileFromZip(arrayBuffer, 'content.xml');
+      if (contentXml) {
+        const text = parseOdfXml(contentXml);
+        if (text && text.trim().length > 0) {
+          const MAX_CHARS = 50000;
+          return text.length > MAX_CHARS ? text.substring(0, MAX_CHARS) + '\n\n... [File quá dài, chỉ lấy ' + MAX_CHARS + ' ký tự đầu]' : text;
+        }
+      }
+    } catch (e) {
+      console.error('ODF read error:', e);
+    }
+  }
+  if (ext === 'rtf') {
+    try {
+      const raw = await readTextFile(file);
+      const text = parseRtfText(raw);
+      if (text && text.trim().length > 0) {
+        const MAX_CHARS = 50000;
+        return text.length > MAX_CHARS ? text.substring(0, MAX_CHARS) + '\n\n... [File quá dài, chỉ lấy ' + MAX_CHARS + ' ký tự đầu]' : text;
+      }
+    } catch (e) {
+      console.error('RTF read error:', e);
+    }
+  }
+  return '[File ' + ext.toUpperCase() + ': ' + file.name + ' - ' + (file.size/1024).toFixed(1) + 'KB - Định dạng .' + ext + ' hỗ trợ hạn chế trong trình duyệt. Hãy copy nội dung và paste vào chat, hoặc xuất ra .txt/.pdf]';
+}
+
+function parseHtmlOrXmlToText(html) {
+  if (!html) return '';
+  return html
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '')
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n\n')
+    .replace(/<\/div>/gi, '\n')
+    .replace(/<\/tr>/gi, '\n')
+    .replace(/<\/t[dh]>/gi, '\t')
+    .replace(/<\/h[1-6]>/gi, '\n\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&apos;/gi, "'")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n, 10)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCharCode(parseInt(n, 16)))
+    .replace(/&amp;/g, '&')
+    .replace(/\r\n/g, '\n')
+    .replace(/[^\S\r\n\t]+/g, ' ')
+    .replace(/ *\t */g, '\t')
+    .replace(/\n\s*\n\s*\n+/g, '\n\n')
+    .trim();
+}
+
+function extractStreamFromOle2(arrayBuffer, streamName) {
+  try {
+    if (!arrayBuffer || arrayBuffer.byteLength < 512) return null;
+    const view = new DataView(arrayBuffer);
+    const bytes = new Uint8Array(arrayBuffer);
+    // Signature: 0xD0CF11E0 0xA1B11AE1
+    if (view.getUint32(0, false) !== 0xD0CF11E0 || view.getUint32(4, false) !== 0xA1B11AE1) {
+      return null;
+    }
+    const sectorShift = view.getUint16(30, true);
+    const sectorSize = 1 << sectorShift;
+    if (sectorSize !== 512 && sectorSize !== 4096) return null;
+
+    const dirSectorStart = view.getUint32(48, true);
+    const numFatSectors = view.getUint32(44, true);
+    const fat = [];
+    const fatEntriesPerSector = sectorSize / 4;
+    for (let i = 0; i < Math.min(numFatSectors, 109); i++) {
+      const fatSec = view.getUint32(76 + i * 4, true);
+      if (fatSec >= 0xFFFFFFFA) break;
+      const fatOffset = (fatSec + 1) * sectorSize;
+      if (fatOffset + sectorSize <= bytes.length) {
+        for (let j = 0; j < fatEntriesPerSector; j++) {
+          fat.push(view.getUint32(fatOffset + j * 4, true));
+        }
+      }
+    }
+
+    let dirSectors = [];
+    let curSec = dirSectorStart;
+    const visited = new Set();
+    while (curSec < 0xFFFFFFFA && curSec < fat.length && !visited.has(curSec)) {
+      visited.add(curSec);
+      dirSectors.push(curSec);
+      curSec = fat[curSec];
+    }
+
+    const targetLower = streamName.toLowerCase();
+    for (const sec of dirSectors) {
+      const secOffset = (sec + 1) * sectorSize;
+      if (secOffset + sectorSize > bytes.length) continue;
+      for (let d = 0; d < sectorSize; d += 128) {
+        const entryOffset = secOffset + d;
+        const nameLen = view.getUint16(entryOffset + 64, true);
+        if (nameLen === 0 || nameLen > 64) continue;
+        let entryName = '';
+        for (let k = 0; k < nameLen - 2; k += 2) {
+          entryName += String.fromCharCode(view.getUint16(entryOffset + k, true));
+        }
+        if (entryName.toLowerCase() === targetLower) {
+          const startSector = view.getUint32(entryOffset + 116, true);
+          const streamSize = view.getUint32(entryOffset + 120, true);
+          if (streamSize === 0) return new ArrayBuffer(0);
+          const streamSectors = [];
+          let sSec = startSector;
+          const sVisited = new Set();
+          while (sSec < 0xFFFFFFFA && sSec < fat.length && !sVisited.has(sSec)) {
+            sVisited.add(sSec);
+            streamSectors.push(sSec);
+            sSec = fat[sSec];
+          }
+          const streamBuf = new Uint8Array(Math.min(streamSize, streamSectors.length * sectorSize));
+          let written = 0;
+          for (const s of streamSectors) {
+            const sOffset = (s + 1) * sectorSize;
+            if (sOffset >= bytes.length) break;
+            const take = Math.min(sectorSize, streamSize - written, bytes.length - sOffset);
+            if (take <= 0) break;
+            streamBuf.set(bytes.subarray(sOffset, sOffset + take), written);
+            written += take;
+            if (written >= streamSize) break;
+          }
+          return streamBuf.buffer;
+        }
+      }
+    }
+  } catch (_) {}
+  return null;
 }
 
 async function processFileForInput(file) {
   const ext = getFileExtension(file.name);
   let fileContent = '';
   
-  if (isTextFile(file)) {
+  if (isTextFile(file) || ext === 'svg' || file.type === 'image/svg+xml') {
     const MAX_CHARS = 50000;
     const slicedFile = file.slice(0, MAX_CHARS * 2);
     fileContent = await readTextFile(slicedFile);
@@ -8290,7 +9241,7 @@ async function processFileForInput(file) {
     }
   } else if (isBinaryDocFile(file)) {
     fileContent = await readBinaryDoc(file);
-  } else if (file.type.startsWith('image/')) {
+  } else if (file.type.startsWith('image/') && ext !== 'svg') {
     // Image files attached as file (not via image input)
     fileContent = '[Hình ảnh: ' + file.name + ' - Hãy sử dụng nút đính kèm ảnh để AI phân tích hình ảnh]';
   } else {
@@ -8312,13 +9263,19 @@ async function processFileForInput(file) {
     }
   }
   
-    // FIX LỖI: Đảm bảo mọi loại file (kể cả PDF) đều bị giới hạn ký tự để tránh lỗi tràn Token API
+  // Đảm bảo mọi loại file (kể cả PDF) đều bị giới hạn ký tự để tránh lỗi tràn Token API
   const GLOBAL_MAX_CHARS = 60000;
   if (fileContent && fileContent.length > GLOBAL_MAX_CHARS) {
     fileContent = fileContent.substring(0, GLOBAL_MAX_CHARS) + '\n\n... [Nội dung đã được cắt bớt do file quá dài. Chỉ lấy ' + GLOBAL_MAX_CHARS + ' ký tự đầu]';
   }
 
-  const langMap = {py:'python',js:'javascript',ts:'typescript',jsx:'jsx',tsx:'tsx',java:'java',cpp:'cpp',c:'c',cs:'csharp',rb:'ruby',php:'php',go:'go',rs:'rust',swift:'swift',kt:'kotlin',html:'html',css:'css',json:'json',xml:'xml',yaml:'yaml',yml:'yaml',sql:'sql',sh:'bash',md:'markdown',pdf:'text',csv:'csv',rtf:'text'};
+  const langMap = {
+    py:'python',js:'javascript',ts:'typescript',jsx:'jsx',tsx:'tsx',java:'java',cpp:'cpp',c:'c',h:'c',hpp:'cpp',cs:'csharp',
+    rb:'ruby',php:'php',go:'go',rs:'rust',swift:'swift',kt:'kotlin',html:'html',css:'css',json:'json',jsonl:'json',xml:'xml',
+    yaml:'yaml',yml:'yaml',sql:'sql',sh:'bash',bash:'bash',ps1:'powershell',bat:'bat',md:'markdown',pdf:'text',csv:'csv',
+    tsv:'tsv',rtf:'text',docx:'text',doc:'text',xlsx:'csv',pptx:'text',svg:'svg',tex:'latex',lua:'lua',r:'r',dart:'dart',
+    scala:'scala',zig:'zig',sol:'solidity',graphql:'graphql',prisma:'prisma'
+  };
   const lang = langMap[ext] || '';
   return { content: fileContent, lang: lang, size: file.size };
 }
@@ -9005,7 +9962,13 @@ function buildTextOnlyMessages(chat, systemPrompt) {
   const mostRecentUserMsg = [...messagesToInclude].reverse().find(m => m.role === 'user');
   for (const m of messagesToInclude) {
     let text = m.content || '';
-    if (m.fileContent) text += m.fileContent;
+    if (m.fileContent) {
+      if (!text.trim()) {
+        text = 'Xin hãy đọc kỹ và phân tích nội dung tệp tin đính kèm này giúp mình nhé. Trình bày tóm tắt chi tiết bằng văn bản Markdown rõ ràng, không vẽ sơ đồ.\n\n' + m.fileContent;
+      } else {
+        text += m.fileContent;
+      }
+    }
     if (m === mostRecentUserMsg && m.linkContext) {
       text += `\n\n[Nội dung từ Web]:\n${m.linkContext}`;
     }
@@ -9850,30 +10813,51 @@ function getCognitiveOrchestrationPrompt(effortLevel) {
   if (!effortLevel || typeof effortLevel !== 'string') return '';
   const lvl = effortLevel.toLowerCase().trim();
   switch (lvl) {
+    case 'medium':
+      return `[HỆ THỐNG SUY LUẬN MỞ RỘNG — MEDIUM (LẬP LUẬN ĐA CHIỀU & RÀ SOÁT LOGIC)]:
+- SUY LUẬN TUẦN TỰ RÕ RÀNG: Phân rã bài toán thành các bước logic mạch lạc, nêu rõ lý do cho từng bước biến đổi và quyết định.
+- ĐỐI CHIẾU ĐA CHIỀU: Xem xét bài toán từ ít nhất 2 góc độ (tính đúng đắn lý thuyết và tính khả thi thực tế).
+- PHÒNG NGỪA RỦI RO & BẪY LOGIC: Cảnh báo trước các điểm dễ nhầm lẫn, bẫy logic hoặc hiểu sai phổ biến.`;
+
+    case 'high':
+      return `[HỆ THỐNG SUY LUẬN ĐA HƯỚNG — HIGH (CHÍNH ĐỀ - PHẢN ĐỀ - HỢP ĐỀ & TRIỆT TIÊU GÓC CHẾT)]:
+- TAM ĐOẠN LUẬN ĐA CHIỀU (Thesis - Antithesis - Synthesis):
+  + Chính đề (Thesis): Thiết lập giải pháp trực diện tối ưu nhất.
+  + Phản đề (Antithesis): Tự đặt câu hỏi nghi vấn, tìm kiếm các điểm yếu, giới hạn, rủi ro tiềm ẩn hoặc trường hợp ngoại lệ.
+  + Hợp đề (Synthesis): Kết hợp và nâng cấp giải pháp để khắc phục triệt để các rủi ro đã nhận diện, đạt tới phương án vững chắc không góc chết.
+- RÀ SOÁT CÁC GÓC KHUẤT & ĐIỀU KIỆN TIÊN QUYẾT: Đảm bảo mọi tiền đề, cấu trúc dữ liệu và phụ thuộc đều được làm rõ và xử lý an toàn.
+- KIỂM TRA TỰ ĐỐI CHIẾU: Xác minh tính nhất quán nội tại trước khi hoàn tất câu trả lời.`;
+
     case 'xhigh':
       return `[KIẾN TRÚC NHẬN THỨC MỞ RỘNG — XHIGH ⚡ (KIỂM TRA GIẢ ĐỊNH & TÍNH NHẤT QUÁN)]:
-- TỰ PHẢN BIỆN GIẢ ĐỊNH (Assumption Challenge): Trước khi kết luận, hãy chủ động rà soát và chất vấn các giả định ngầm định trong đề bài hoặc trong hướng tiếp cận của bạn.
+- TỰ PHẢN BIỆN GIẢ ĐỊNH (Assumption Challenge): Trước khi kết luận, hãy chủ động rà soát, chất vấn và bóc tách mọi giả định ngầm định trong đề bài hoặc trong hướng tiếp cận của bạn.
+- SUY LUẬN ĐA HƯỚNG KHÔNG GÓC CHẾT (Omnidirectional Reasoning): Phân tích vấn đề từ nhiều góc độ độc lập (toán học, kiến trúc hệ thống, trải nghiệm người dùng, bảo mật và hiệu năng).
 - KIỂM TRA TÍNH NHẤT QUÁN (Consistency Verification): Đối chiếu logic từ đầu đến cuối, đảm bảo không có mâu thuẫn giữa các bước giải thích và kết quả cuối cùng.
 - BẢO TOÀN RÀNG BUỘC: Liệt kê rõ các ràng buộc, tiền điều kiện và phạm vi áp dụng của giải pháp.`;
 
     case 'max':
-      return `[KIẾN TRÚC NHẬN THỨC ĐỈNH CAO — MAX 💎 (TREE-OF-THOUGHT & RÀ SOÁT LỖI BIÊN)]:
-- CÂY SUY LUẬN ĐA NHÁNH (Tree-of-Thought): BẮT BUỘC phân tích và so sánh tối thiểu 2 phương án giải quyết khả dĩ khác nhau (Phương án A vs Phương án B) trước khi chọn phương án tối ưu.
-- PHÂN TÍCH ƯU - NHƯỢC ĐIỂM ĐỐI CHIẾU: Đánh giá tường minh độ phức tạp thời gian/không gian, tính dễ bảo trì, khả năng mở rộng và rủi ro của từng phương án.
-- RÀ SOÁT ĐIỀU KIỆN BIÊN CỰC HẠN (Boundary & Edge-Case Analysis): Chủ động kiểm thử các trường hợp biên: tập rỗng, số âm, giá trị cực đại/cực tiểu, tràn số, bất đồng bộ, race conditions, lỗi định dạng dữ liệu.
-- TỔNG HỢP GIẢI PHÁP TỐI ƯU: Đưa ra mã nguồn hoặc kết luận toàn diện dựa trên phương án chiến thắng đã được kiểm chứng.`;
+      return `[KIẾN TRÚC NHẬN THỨC ĐỈNH CAO — MAX 💎 (TREE-OF-THOUGHT & MULTI-BRANCH DECISION ARCHITECTURE)]:
+- CÂY SUY LUẬN ĐA NHÁNH & SINH GIẢ THUYẾT ĐỘC LẬP (Tree-of-Thought & Multi-Branch Hypothesis Generation): BẮT BUỘC phân tích, mô phỏng và so sánh đối chiếu tối thiểu 2 phương án giải quyết khả dĩ khác nhau (Phương án A vs Phương án B) trở lên; chủ động sinh các nhánh giả thuyết độc lập (explicit branch hypothesis generation) và đối trọng nhau trước khi chọn phương án tối ưu.
+- MA TRẬN ĐÁNH GIÁ ĐÁNH ĐỔI ĐA CHIỀU (Trade-Off Matrix Evaluation of Competing Paradigms): Thiết lập ma trận đánh giá đánh đổi tường minh giữa các mô thức/phương án cạnh tranh về: độ phức tạp thời gian/không gian (Big-O), tính dễ bảo trì, khả năng mở rộng (scalability), tải chịu đựng, chi phí tài nguyên và rủi ro tiềm ẩn.
+- LẬP LUẬN ĐA HƯỚNG KHÔNG GÓC CHẾT (Omnidirectional Reasoning): Quét sạch mọi điểm mù (blind spots), thẩm định sự tương tác đa chiều giữa các hệ thống và thành phần, triệt tiêu hoàn toàn mọi giả định ngầm định sai lầm.
+- RÀ SOÁT ĐIỀU KIỆN BIÊN CỰC HẠN & STRESS-TEST TẬN CÙNG (Relentless Boundary & Edge-Case Stress Testing): Kiểm thử khắc nghiệt các trường hợp biên và lỗi biên: tập rỗng, số âm, cực trị số học (numeric extremes), tràn số (overflow), áp lực bộ nhớ (memory pressure), bất đồng bộ, xung đột tương tranh (race conditions, concurrency/deadlock), và dữ liệu đầu vào đối kháng (adversarial inputs).
+- TRIỆT TIÊU LỖI CÓ THỂ XÁC MINH & TỔNG HỢP TỐI ƯU (Verifiable Error Elimination & Optimal Synthesis): Đưa ra mã nguồn hoặc kết luận toàn diện 100%, loại bỏ triệt để mọi lỗi tiềm ẩn đã được chứng minh qua thực nghiệm và kiểm chứng logic, dựa trên phương án chiến thắng vững chắc nhất.`;
 
     case 'ultra':
       return `[KIẾN TRÚC NHẬN THỨC SIÊU CẤP TỐI THƯỢNG — ULTRA 🔥 (4-PHASE DEEP COGNITIVE ARCHITECTURE)]:
-Áp dụng quy trình tư duy 4 pha bất biến cho mọi bài toán (Toán học, Lập trình, Khoa học, Logic, Hệ thống):
-1. PHA 1 - PHÂN RÃ BÀI TOÁN (Deep Problem Decomposition):
-   - Tách nhỏ bài toán thành các thành phần nguyên tử (atomic sub-problems), xác định rõ đầu vào, đầu ra, ràng buộc ẩn và mục tiêu tối thượng.
-2. PHA 2 - CHỨNG MINH BẤT BIẾN (Mathematical / Logical Invariant Probing):
-   - Xác định các tính chất bất biến (invariants), tiền điều kiện (preconditions), hậu điều kiện (postconditions) và định lý nền tảng chi phối hệ thống.
-3. PHA 3 - TÌM KIẾM PHẢN VÍ DỤ ĐỐI KHÁNG (Counter-Example Adversarial Search):
-   - Đóng vai trò kẻ tấn công đối kháng (Adversarial Critic): Chủ động tìm kiếm các trường hợp đặc biệt, kịch bản edge case cực đoan, lỗi bế tắc có thể làm sụp đổ giải pháp. Tự chứng minh và bẻ gãy mọi lỗ hổng trước khi người dùng phát hiện.
-4. PHA 4 - GIẢI PHÁP TOÀN DIỆN KHÔNG THỎA HIỆP (Synthesized Zero-Compromise Solution):
-   - Xây dựng giải pháp hoàn mỹ 100%, kết hợp trọn vẹn sự chính xác logic, hiệu năng tối ưu, tính thẩm mỹ cấu trúc và khả năng phục hồi lỗi bền bỉ. Mã nguồn phải đầy đủ 100%, không rút gọn.`;
+Áp dụng quy trình tư duy 4 pha bất biến cấp độ cao nhất cho mọi bài toán (Toán học, Lập trình, Khoa học, Logic, Hệ thống) với lập luận đa hướng không góc chết (Omnidirectional Zero-Blindspot Reasoning):
+1. PHA 1 - PHÂN RÃ NGUYÊN TỬ & LẬP ĐỒ THỊ PHỤ THUỘC (Hyper-Atomic Problem Decomposition & Formal Dependency DAG Mapping):
+   - Phân rã bài toán thành các thành phần nguyên tử độc lập (atomic sub-problems), thiết lập đồ thị phụ thuộc định hướng (formal dependency DAG) giữa các biến số, luồng dữ liệu và tác vụ.
+   - Bóc tách toàn diện: tập đầu vào (inputs), tập đầu ra (outputs), các ràng buộc ẩn (hidden invariants), giới hạn môi trường vận hành (environmental constraints) và phân tích từ đa góc nhìn (multi-stakeholder perspectives: kiến trúc, thuật toán, bảo mật, hiệu năng, người dùng cuối).
+2. PHA 2 - CHỨNG MINH TIÊN ĐỀ BẤT BIẾN & HỢP ĐỒNG CHÍNH THỨC (Axiomatic Invariant Proofs & Contract Formalization):
+   - Thiết lập và chứng minh hình thức các tính chất bất biến (invariants), quy nạp toán học/logic (inductive proofs), bất biến chuyển trạng thái máy (state-machine transition invariants) và biên độ an toàn bộ nhớ/đồng thời (memory/concurrency safety bounds).
+   - Chuẩn hóa tường minh hợp đồng hệ thống: tiền điều kiện (formal preconditions), hậu điều kiện (formal postconditions) và các định lý nền tảng chi phối giải pháp trước khi sinh mã.
+3. PHA 3 - TẤN CÔNG ĐỐI KHÁNG TẬN DIỆT & BẺ GÃY PHẢN VÍ DỤ (Ruthless Adversarial Red-Teaming & Byzantine Counter-Example Falsification):
+   - Đóng vai trò chuyên gia tấn công đối kháng (Adversarial Critic): Chủ động tìm kiếm và thực thi các vector bẻ gãy giải pháp (stress vectors, byzantine counter-examples, edge cases cực đoan).
+   - Tấn công triệt để các góc hiểm: bế tắc (deadlocks), xung đột tương tranh (race hazards), trôi số thực (floating point drift), cạn kiệt tài nguyên (resource exhaustion/memory pressure) và các kịch bản suy thoái. Tự phản biện, falsify và vá kín mọi lỗ hổng trước khi hoàn tất.
+4. PHA 4 - TỔNG HỢP GIẢI PHÁP HOÀN MỸ KHÔNG THỎA HIỆP (Zero-Compromise Synthesis & Production-Grade Flawless Implementation):
+   - Xây dựng giải pháp hoàn mỹ 100%, đạt chuẩn công nghiệp cao nhất: kết hợp chính xác tuyệt đối về logic, độ phức tạp thuật toán tối ưu (optimal algorithmic complexity), xử lý lỗi phòng thủ đa tầng (defensive error handling) và khả năng tự phục hồi bền bỉ (self-healing resilience).
+   - Mã nguồn ĐẦY ĐỦ 100%, TUYỆT ĐỐI KHÔNG rút gọn, không placeholder, sẵn sàng triển khai môi trường production khắt khe nhất.`;
 
     default:
       return '';
@@ -9964,7 +10948,8 @@ function buildSystemPrompt(modelOverride) {
   if (State.mode === 'flash') {
     if (isReasoning) {
       parts.push(`[CHẾ ĐỘ FLASH ⚡ - REASONING TỐC ĐỘ CAO]:
-- Suy luận nhanh, tập trung giải quyết thẳng vấn đề cốt lõi mà không rườm rà.
+- Suy luận nhanh, sắc sảo, tập trung giải quyết thẳng vấn đề cốt lõi mà không rườm rà.
+- Phân tích đa hướng tức thì: Nắm bắt nhanh các ràng buộc, kiểm soát rủi ro và loại bỏ điểm mù logic trong thời gian ngắn nhất.
 - Không giới hạn số câu nếu bài toán kỹ thuật/lập trình phức tạp đòi hỏi lời giải chi tiết và đầy đủ.
 - KHÔNG mở đầu bằng câu chào xã giao. Trả lời trực diện, chính xác, kèm suy luận súc tích.
 - Ưu tiên: giải pháp tối ưu, code hoàn chỉnh, logic rõ ràng.`);
@@ -9979,21 +10964,25 @@ function buildSystemPrompt(modelOverride) {
     }
   } else {
     parts.push(`[CHẾ ĐỘ PRO 💎 - HIỆU NĂNG TỐI ĐA]:
-- Suy luận từng bước (Chain-of-Thought): Phân tích vấn đề → Xác định giải pháp → Triển khai chi tiết → Kiểm chứng.
-- Đưa ra NHIỀU phương án nếu có, so sánh ưu/nhược điểm.
-- Với code: viết đầy đủ, có comment giải thích, có error handling, có ví dụ sử dụng.
-- Với kiến thức: trích dẫn nguồn/tham chiếu nếu có thể, giải thích WHY chứ không chỉ WHAT.
+- Suy luận từng bước (Chain-of-Thought): Phân tích vấn đề → Phân rã đa chiều → Xác định giải pháp → Triển khai chi tiết → Tự phản biện & Kiểm chứng không góc chết.
+- LẬP LUẬN ĐA HƯỚNG KHÔNG GÓC CHẾT (Omnidirectional Reasoning): Tiếp cận bài toán từ nhiều góc nhìn (chính đề, phản đề, hợp đề; cấu trúc hệ thống, thuật toán, bảo mật, hiệu năng và trải nghiệm người dùng).
+- Đưa ra NHIỀU phương án nếu có, so sánh ưu/nhược điểm đối chiếu tường minh.
+- Với code: viết đầy đủ 100%, có comment giải thích sâu sắc, có error handling hoàn chỉnh, kiểm soát race conditions và memory leaks, có ví dụ sử dụng thực tế.
+- Với kiến thức: trích dẫn nguồn/tham chiếu nếu có thể, giải thích WHY chứ không chỉ WHAT, đào sâu bản chất cơ chế bên dưới.
 - Sử dụng bảng so sánh, danh sách có cấu trúc, heading rõ ràng.
-- Tự phản biện: Xem xét edge cases, giới hạn, lưu ý quan trọng.
+- Tự phản biện & Quét sạch điểm mù: Chủ động xem xét edge cases, các trường hợp cực hạn, giới hạn kỹ thuật và lưu ý quan trọng.
 - Kết thúc bằng TÓM TẮT ngắn gọn hoặc khuyến nghị cụ thể.`);
   }
   
   // Logic & Tư duy (đặt sau mode để mode có priority cao hơn)
-  parts.push(`[TƯ DUY]: Đọc kỹ lịch sử hội thoại. Hiểu ngữ cảnh và ý định thực sự. Nếu câu hỏi mơ hồ, suy luận từ ngữ cảnh. Ưu tiên: chính xác, hữu ích. Không từ chối giúp đỡ khi có thể.`);
+  parts.push(`[TƯ DUY]: Đọc kỹ lịch sử hội thoại. Hiểu sâu sắc ngữ cảnh và ý định thực sự của người dùng. Nếu câu hỏi mơ hồ, suy luận từ ngữ cảnh. Luôn tư duy phản biện, lập luận đa hướng không góc chết, dự liệu trước các trường hợp biên và hệ quả. Ưu tiên: chính xác tuyệt đối, hữu ích tối đa. Không từ chối giúp đỡ khi có thể.`);
 
   // Cognitive Orchestration Meta-Prompt Injection
   const activeReasoningEffort = (typeof State !== 'undefined' && State.settings && State.settings.reasoningEffort) || 'xhigh';
-  const cognitivePrompt = typeof getCognitiveOrchestrationPrompt === 'function' ? getCognitiveOrchestrationPrompt(activeReasoningEffort) : '';
+  const getPrompt = typeof getCognitiveOrchestrationPrompt === 'function'
+    ? getCognitiveOrchestrationPrompt
+    : (typeof window !== 'undefined' && typeof window.getCognitiveOrchestrationPrompt === 'function' ? window.getCognitiveOrchestrationPrompt : null);
+  const cognitivePrompt = getPrompt ? getPrompt(activeReasoningEffort) : '';
   if (cognitivePrompt) {
     parts.push(cognitivePrompt);
   }
@@ -10009,15 +10998,21 @@ function buildSystemPrompt(modelOverride) {
 
 
 
-  // Web Search
+  // Web Search & Anti-Hallucination Grounding
   if (State.webSearchEnabled) {
-    parts.push(`[WEB SEARCH]: Tính năng tìm kiếm đang BẬT. Khi người dùng hỏi thông tin thời sự, giá cả, thời tiết hoặc kiến thức mới nhất, hãy giả định bạn có quyền truy cập Internet và tự tin cung cấp câu trả lời tốt nhất dựa trên kiến thức hiện tại của bạn. KHÔNG BAO GIỜ nói "tôi không có quyền truy cập internet".`);
+    parts.push(`[WEB SEARCH]: Tính năng tìm kiếm đang BẬT.
+- Khi nhận được kết quả tìm kiếm (từ Web Search trực tiếp hoặc công cụ \`web_search_context\`), bạn PHẢI dựa 100% vào các thông tin, tiêu đề, tác phẩm, số liệu và trích dẫn thực tế từ kết quả tìm kiếm đó để trả lời.
+- TUYỆT ĐỐI KHÔNG BỊA ĐẶT (Zero Hallucination): Không tự ý sáng tác, phỏng đoán hoặc bịa ra tên tác phẩm, tên sách, sự kiện hay số liệu không có thật. Nếu kết quả tìm kiếm không đề cập hoặc thông tin chưa rõ ràng, hãy trung thực thông báo rõ cho người dùng biết giới hạn thông tin tìm được, tuyệt đối không bịa đặt.`);
+  } else {
+    parts.push(`[NGUYÊN TẮC CHÍNH XÁC & CHỐNG BỊA ĐẶT THÔNG TIN (Zero Hallucination)]:
+- Đối với các câu hỏi về thông tin thực tế, tác giả, tác phẩm nghệ thuật/văn học, tin tức, sự kiện hoặc dữ liệu cụ thể: Nếu bạn không có dữ liệu chắc chắn 100% trong tri thức huấn luyện, bạn CÓ THỂ sử dụng công cụ \`web_search_context\` để tra cứu thông tin thực tế trên Internet trước khi trả lời.
+- TUYỆT ĐỐI CẤM BỊA ĐẶT: Không bao giờ tự ý bịa tên tác phẩm, tác giả hoặc thông tin sai sự thật. Nếu tra cứu không có kết quả hoặc không chắc chắn, hãy thành thật thừa nhận và hướng dẫn người dùng bật tính năng tìm kiếm hoặc cung cấp thêm từ khóa.`);
   }
 
   // Formatting & Premium features
   parts.push(`[ĐỊNH DẠNG ĐẶC BIỆT]:
 1. [Sơ đồ tư duy (Mindmap)]:
-   - QUY TẮC CỐT LÕI: TUYỆT ĐỐI KHÔNG tự động tạo sơ đồ tư duy (mindmap) trong bất kỳ tin nhắn thông thường nào nếu người dùng KHÔNG YÊU CẦU RÕ RÀNG (chỉ khi có lệnh trực tiếp như: "vẽ sơ đồ tư duy", "tạo mindmap", "brain map", "sơ đồ phân cấp"). Khi trả lời bình thường, hãy trình bày văn bản Markdown mạch lạc, không tự chèn khối mã \`\`\`mindmap.
+   - QUY TẮC CỐT LÕI: TUYỆT ĐỐI KHÔNG tự động tạo sơ đồ tư duy (mindmap) trong bất kỳ tin nhắn thông thường nào nếu người dùng KHÔNG YÊU CẦU RÕ RÀNG (chỉ khi có lệnh trực tiếp như: "vẽ sơ đồ tư duy", "tạo mindmap", "brain map", "sơ đồ phân cấp"). Khi trả lời bình thường hoặc khi người dùng gửi tệp tin/tài liệu, hãy trình bày văn bản Markdown mạch lạc, không tự chèn khối mã \`\`\`mindmap.
    - KHI ĐƯỢC YÊU CẦU: Trả về một khối mã \`\`\`mindmap ... \`\`\` duy nhất chứa cấu trúc phân cấp bằng danh sách thụt lề đầu dòng (nested bullet points).
    - NGUYÊN TẮC TỔNG QUAN & TINH GỌN (Executive Synthesis):
      + Tối đa 3 đến 4 nhánh chính (Level 1).
@@ -10032,10 +11027,14 @@ function buildSystemPrompt(modelOverride) {
   - Ý chính 2
     - Chi tiết 2.1
 \`\`\`
-Nếu là sơ đồ quy trình phức tạp, lược đồ luồng dữ liệu hoặc biểu đồ dạng khác, hãy tiếp tục sử dụng mã \`\`\`mermaid ... \`\`\` hợp lệ. KHÔNG giải thích dài dòng.
-2. [Giao diện/Live Workspace]: Nếu yêu cầu thiết kế giao diện web, vẽ SVG, hoặc lập trình Front-end (HTML/CSS/JS), hãy trả về MỘT khối \`\`\`html ... \`\`\` HOẶC \`\`\`svg ... \`\`\` duy nhất, bao gồm đầy đủ CSS/JS bên trong để có thể chạy được (Live Preview). Khi giải thích bài tập, mô hình khoa học, hình học, hoặc quy trình kỹ thuật, hãy ưu tiên dùng khối \`\`\`svg ... \`\`\` vẽ minh họa hoặc \`\`\`mermaid ... \`\`\` để trực quan hóa rõ ràng.
+Nếu là sơ đồ quy trình phức tạp, lược đồ luồng dữ liệu hoặc biểu đồ dạng khác, hãy tiếp tục sử dụng mã \`\`\`mermaid ... \`\`\` hợp lệ khi người dùng yêu cầu trực quan hóa. KHÔNG giải thích dài dòng.
+2. [Giao diện/Live Workspace]: Nếu yêu cầu thiết kế giao diện web, vẽ SVG, hoặc lập trình Front-end (HTML/CSS/JS), hãy trả về MỘT khối \`\`\`html ... \`\`\` HOẶC \`\`\`svg ... \`\`\` duy nhất, bao gồm đầy đủ CSS/JS bên trong để có thể chạy được (Live Preview). Khi giải thích bài tập, mô hình khoa học, hình học, hoặc quy trình kỹ thuật, chỉ vẽ minh họa khi người dùng yêu cầu trực quan hóa.
 3. [Kế hoạch/Task List]: Khi lập lịch trình, lộ trình học, to-do list, hãy sử dụng Markdown Checklist định dạng \`- [ ] \` để hệ thống tự động render thành Interactive Dashboard Planner.
-4. [Tài liệu]: Nếu người dùng đính kèm tài liệu, hãy sử dụng tính năng "Phân tích tài liệu" (Document Analyzer) để đọc hiểu sâu, tóm tắt hoặc dịch thuật đoạn văn bản đó.`);
+4. [Tài liệu]: Nếu người dùng đính kèm tài liệu, hãy sử dụng tính năng "Phân tích tài liệu" (Document Analyzer) để đọc hiểu sâu, tóm tắt hoặc dịch thuật đoạn văn bản đó.
+   - QUY TẮC CỐT LÕI VỀ TÀI LIỆU/FILE:
+     + TUYỆT ĐỐI KHÔNG tự động tạo sơ đồ tư duy (mindmap) hay sơ đồ (mermaid/diagram) khi nhận file tài liệu nếu người dùng KHÔNG YÊU CẦU RÕ RÀNG.
+     + KHI NHẬN ĐƯỢC FILE: Hãy đọc kỹ toàn bộ nội dung file đính kèm, trình bày phân tích, tóm tắt hoặc giải đáp bằng văn bản Markdown mạch lạc, có cấu trúc rõ ràng (tiêu đề, ý chính, bảng biểu nếu có dữ liệu số liệu).
+     + NẾU FILE KHÔNG CÓ NỘI DUNG HOẶC KHÔNG THỂ ĐỌC ĐƯỢC: Hãy lịch sự thông báo cho người dùng biết tình trạng của file và hướng dẫn cách gửi nội dung (ví dụ copy text trực tiếp hoặc chuyển sang .docx/.pdf có text). Tuyệt đối không tự vẽ sơ đồ tư duy hay bịa đặt nội dung.`);
   
   // === DeepSeek Harness Modular Tool Docs Injection ===
   if (typeof SunaAgent !== 'undefined' && typeof SunaAgent.generatePromptDocs === 'function') {
@@ -10469,7 +11468,13 @@ async function generateAIResponse() {
     let finalContentText = m.content || '';
     
     // Include fileContent for any message with attached files so AI maintains file context across turns
-    if (m.fileContent) finalContentText += m.fileContent;
+    if (m.fileContent) {
+      if (!finalContentText.trim()) {
+        finalContentText = 'Xin hãy đọc kỹ và phân tích nội dung tệp tin đính kèm này giúp mình nhé. Trình bày tóm tắt chi tiết bằng văn bản Markdown rõ ràng, không vẽ sơ đồ.\n\n' + m.fileContent;
+      } else {
+        finalContentText += m.fileContent;
+      }
+    }
     if (m === mostRecentUserMsg && m.linkContext) {
       finalContentText += `\n\n[Nội dung từ Web]:\n${m.linkContext}`;
     }
@@ -11000,6 +12005,7 @@ async function generateAIResponse() {
               id: genId(),
               role: 'user',
               content: observationBlock,
+              isToolObservation: true,
               timestamp: Date.now(),
               updatedAt: Date.now()
             });
@@ -12095,6 +13101,25 @@ function initEvents() {
     const files = Array.from(e.target.files || []);
     if (!files.length) return;
     for (const file of files) {
+      const ext = getFileExtension(file.name);
+      if (file.type.startsWith('image/') && ext !== 'svg') {
+        const validation = validateImageFile(file);
+        if (!validation.valid) { toast(validation.error, 'error'); continue; }
+        if (State.pendingImages.length >= MAX_PENDING_IMAGES) {
+          toast(`Tối đa ${MAX_PENDING_IMAGES} ảnh`, 'error');
+          break;
+        }
+        try {
+          toast('Đang tải ảnh: ' + file.name + '...', 'info');
+          const dataUrl = await fileToBase64(file);
+          const compressed = await compressImage(dataUrl, 1280, 0.8);
+          addPendingImage(compressed);
+          toast('Đã tải ảnh: ' + file.name, 'success');
+        } catch (err) {
+          toast('Lỗi đọc ảnh "' + file.name + '": ' + (err.message || 'Không xác định'), 'error');
+        }
+        continue;
+      }
       if (State.pendingFiles.length >= MAX_PENDING_FILES) {
         toast(`Tối đa ${MAX_PENDING_FILES} file cùng lúc`, 'error');
         break;
@@ -12107,7 +13132,6 @@ function initEvents() {
       try {
         toast('Đang đọc file: ' + file.name + '...', 'info');
         const result = await processFileForInput(file);
-        const ext = getFileExtension(file.name);
         addPendingFile({
           name: file.name,
           ext: ext,
@@ -12747,7 +13771,7 @@ function closeImageLightbox() {
 window.openImageLightbox = openImageLightbox;
 window.closeImageLightbox = closeImageLightbox;
 
-// ===== directApiCall for Translator =====
+// ===== directApiCall for Translator, Mindmap, and Document Intelligence =====
 window.directApiCall = async function(prompt) {
   const model = getActiveModel();
   const proxy = getProxyForModel(model); // Use existing function
@@ -12755,10 +13779,22 @@ window.directApiCall = async function(prompt) {
   const url = proxy.proxyBridgeUrl
     ? `${proxy.proxyBridgeUrl}/chat/completions?target=${encodeURIComponent(proxy.url.replace(/\/+$/, ''))}`
     : proxy.url.replace(/\/+$/, '') + '/chat/completions';
+  const isReasoning = typeof isReasoningModel === 'function' ? isReasoningModel(model) : false;
+  const reqBody = {
+    model: model,
+    messages: [{ role: 'user', content: prompt }],
+    max_tokens: 4096,
+    stream: false
+  };
+  if (isReasoning) {
+    reqBody.reasoning_effort = 'low';
+  } else {
+    reqBody.temperature = 0.7;
+  }
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + proxy.key },
-    body: JSON.stringify({ model: model, messages: [{ role: 'user', content: prompt }], max_tokens: 512, stream: false })
+    body: JSON.stringify(reqBody)
   });
   if (!res.ok) throw new Error('HTTP ' + res.status);
   const data = await res.json();

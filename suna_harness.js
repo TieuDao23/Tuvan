@@ -829,7 +829,7 @@
         const after = allLines.slice(endLine);
         const combined = [];
         if (before.length > 0) combined.push(before.join('\n'));
-        combined.push(replacedSlice);
+        if (replacedSlice && replacedSlice.length > 0) combined.push(replacedSlice);
         if (after.length > 0) combined.push(after.join('\n'));
         newContent = combined.join('\n');
       } else {
@@ -1813,7 +1813,8 @@
           const replacedChunk = options.allowMultiple
             ? targetChunk.split(targetStr).join(rep)
             : targetChunk.replace(targetStr, rep);
-          newContent = lines.slice(0, start - 1).concat(replacedChunk.split('\n')).concat(lines.slice(end)).join('\n');
+          const middle = replacedChunk && replacedChunk.length > 0 ? replacedChunk.split('\n') : [];
+          newContent = lines.slice(0, start - 1).concat(middle).concat(lines.slice(end)).join('\n');
         } else {
           const matches = findValidMatchIndices(oldContent, targetStr);
           if (matches.length === 0) {
@@ -2938,12 +2939,12 @@
       if (cmdLine.includes('>>')) {
         const parts = cmdLine.split('>>');
         coreCmd = parts[0].trim();
-        redirectFile = parts[1].trim();
+        redirectFile = parts[1].trim().replace(/^['"]|['"]$/g, '').trim();
         redirectAppend = true;
       } else if (cmdLine.includes('>')) {
         const parts = cmdLine.split('>');
         coreCmd = parts[0].trim();
-        redirectFile = parts[1].trim();
+        redirectFile = parts[1].trim().replace(/^['"]|['"]$/g, '').trim();
         redirectAppend = false;
       }
 
@@ -3200,7 +3201,8 @@
       }
 
       if (redirectFile && res.exitCode === 0) {
-        const fullRedir = cwd ? `${cwd}/${redirectFile}` : redirectFile;
+        const cleanFile = redirectFile.replace(/^['"]|['"]$/g, '').trim();
+        const fullRedir = cwd ? `${cwd}/${cleanFile}` : cleanFile;
         try {
           if (redirectAppend && this.vfs.exists(fullRedir)) {
             const old = this.vfs.readFile(fullRedir);
@@ -3247,7 +3249,7 @@
             throw vmErr;
           }
         } else {
-          const fn = new Function('sandbox', `with(sandbox) { return (${code}); }`);
+          const fn = new Function('sandbox', `with(sandbox) { return eval(${JSON.stringify(code)}); }`);
           result = fn(sandbox);
         }
 
@@ -3698,7 +3700,7 @@
       }
 
       if (this.readOnly) {
-        const mutatingTools = ['replace_file_content', 'fs_write', 'fs_patch'];
+        const mutatingTools = ['replace_file_content', 'fs_write', 'fs_patch', 'write_to_file'];
         if (mutatingTools.includes(toolName)) {
           return {
             allowed: false,
@@ -3706,9 +3708,23 @@
             code: 'PERMISSION_DENIED'
           };
         }
+        if (toolName === 'run_sandboxed_command') {
+          const cmd = (args && (args.CommandLine || args.commandLine || args.command || args.cmd)) || '';
+          if (cmd.includes('>') || /(?:^|[;&|]\s*)(touch|rm|mkdir|mv|cp)\b/i.test(cmd.trim())) {
+            return {
+              allowed: false,
+              reason: `Permission denied: Command in "${cmd}" mutates filesystem and is prohibited in read-only mode.`,
+              code: 'PERMISSION_DENIED'
+            };
+          }
+        }
       }
 
       return { allowed: true };
+    }
+
+    checkGuardrails(toolName, args) {
+      return this.canExecute(toolName, args);
     }
 
     async executeAction(toolName, args, executionOptions = {}) {
@@ -3739,12 +3755,13 @@
       }
 
       if (this.readOnly) {
-        const mutatingTools = ['replace_file_content', 'fs_write', 'fs_patch'];
-        if (mutatingTools.includes(toolName)) {
+        const guard = this.checkGuardrails(toolName, args);
+        if (!guard.allowed) {
           return {
             success: false,
             status: 'error',
-            error: `Permission denied: Tool "${toolName}" prohibited in read-only mode.`
+            code: guard.code,
+            error: guard.reason
           };
         }
       }

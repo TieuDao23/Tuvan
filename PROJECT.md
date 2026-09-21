@@ -38,7 +38,9 @@
 - `window.setReasoningEffort(level)`: Validates `level` in `['low', 'medium', 'high', 'xhigh', 'max', 'ultra']`, updates `State.settings.reasoningEffort = level`, calls `updateReasoningEffortDisplay(level)`, and invokes `saveState(true, 'settings')`.
 
 ### Cognitive Engine ↔ API Pipeline
-- `getCognitiveOrchestrationPrompt(effortLevel)`: Returns meta-prompt strings for `xhigh`, `max`, `ultra` or empty string for `low`, `medium`, `high`.
+- `getCognitiveOrchestrationPrompt(effortLevel)`: Returns meta-prompt strings for `medium`, `high`, `xhigh`, `max`, `ultra` or empty string for `low`.
+  - `max`: Elite Multi-Branch Decision Architecture (explicit branch hypothesis generation, trade-off matrix evaluation of competing paradigms, relentless boundary & edge-case stress testing, verifiable error elimination, omnidirectional reasoning).
+  - `ultra`: Supreme 4-Phase Deep Cognitive Architecture (Phase 1: Hyper-Atomic Problem Decomposition & Formal Dependency DAG mapping, Phase 2: Axiomatic Invariant Proofs & Contract Formalization, Phase 3: Ruthless Adversarial Red-Teaming & Byzantine Counter-Example Falsification, Phase 4: Zero-Compromise Synthesis & Production-Grade Flawless Implementation).
 - `reqBody.reasoning_effort`:
   - Retain verbatim line `reqBody.reasoning_effort = State.mode === 'flash' ? 'low' : 'high';`
   - Immediately refine:

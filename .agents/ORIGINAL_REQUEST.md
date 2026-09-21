@@ -250,4 +250,50 @@ Integrity mode: development
 - [ ] Chạy `npm test`: Đảm bảo 100% test suite hiện tại (1,634+ tests) tiếp tục vượt qua thành công với 0 lỗi hồi quy.
 - [ ] Bổ sung bộ test tự động chuyên sâu kiểm chứng đầy đủ 6 cấp độ reasoning effort, cơ chế lưu trữ và luồng render UI.
 
+## Follow-up — 2026-09-20T14:39:06Z
 
+Khắc phục triệt để các lỗi lõi và rủi ro chức năng đã được phát hiện trong hệ thống Suna Agent, Harness và 22 Tools, đồng thời thực hiện kiểm thử chức năng thực tế (end-to-end functional verification) đảm bảo toàn bộ hệ thống vận hành chính xác và ổn định theo đúng kỳ vọng.
+
+Working directory: d:\Suna Chat
+Integrity mode: development
+
+## Requirements
+
+### R1. Khắc phục triệt để các lỗi vòng đời & Lõi của Suna Agent
+- Đảm bảo SunaAgent.run() và constructor tự động nạp đầy đủ tool registry và gắn kết Virtual File System (VFS) mặc định để có thể thực thi độc lập.
+- Khắc phục vòng lặp ReAct trong _runLegacy: duy trì con trỏ chỉ số bước (currentStepIndex), loại bỏ lỗi ngắt sớm sau bước đầu tiên để hoàn thành toàn bộ kế hoạch đa bước.
+- Đảm bảo lệnh can thiệp agent.steer() khôi phục đầy đủ trạng thái hoạt động (status = 'idle', isAgentAborted = false) sau khi agent bị ngắt bởi Circuit Breaker.
+- Tinh chỉnh MultiSyntaxParser để phân biệt rõ giữa tool call thực sự và các khối JSON cấu hình/dữ liệu thông thường (như package.json).
+- Đảm bảo _boundObservation bảo toàn cờ lỗi isError kể cả khi nội dung lỗi hoặc stack trace vượt quá 1500 ký tự.
+
+### R2. Khắc phục các lỗi chức năng trong 22 Công cụ (Tools)
+- memory_store: Sửa lỗi tự phát hiện trùng lặp trong app.js để đảm bảo saveMemory(true) luôn được gọi khi lưu fact mới, bảo toàn ký ức bền vững qua các lần reload.
+- fs_patch: Khắc phục lỗi ReferenceError khi tính độ dài byte trong môi trường thiếu Buffer/TextEncoder.
+- replace_file_content: Khắc phục lỗi chèn dòng trống thừa (\n\n) khi thực hiện thao tác xóa dòng trong tệp.
+- fetch_page_summary: Loại bỏ đoạn mock HTML giả lập khi lỗi mạng/proxy, trả về lỗi rõ ràng để ngăn AI sinh ảo giác.
+- run_sandboxed_command & sandbox_exec: Khắc phục lỗi cú pháp khi thực thi mã có khai báo const/let, ngăn chặn nguy cơ thoát sandbox qua Object.constructor, và đảm bảo tôn trọng cờ readOnly.
+- Parameter Aliases: Tích hợp chuẩn hóa AciSchemaValidator.normalizeArgs trước khi gọi validateParameters trong executeTool, chấp nhận đầy đủ các tên tham số tương đương (path / TargetFile, query / Query, command / CommandLine).
+- vfs_change Event: Bóc tách chính xác đường dẫn tệp từ lệnh shell redirection > để phát sự kiện đồng bộ hóa sang Live Workspace.
+
+### R3. Kiểm chứng chức năng thực tế chuyên sâu (End-to-End Functional Verification)
+- Không chỉ dừng lại ở việc kiểm tra cú pháp mã nguồn; phải kiểm thử chức năng thực tế của từng công cụ (tạo file, đọc file, vá file, lưu/truy vấn ký ức, tìm kiếm web, thực thi sandbox).
+- Kiểm thử luồng ReAct thực tế với tác vụ đa bước (multi-step workflow) chứng minh Agent thực thi tuần tự từ đầu đến cuối không bị dừng dở chừng.
+- Đảm bảo toàn bộ 1,768+ bài test tự động hiện có (npm test) tiếp tục vượt qua 100% với thời gian tối ưu và không bị treo.
+
+## Acceptance Criteria
+
+### Tính toàn vẹn chức năng công cụ (Tool Functional Integrity)
+- [ ] memory_store lưu fact thành công vào bộ nhớ bền vững và memory_query truy vấn lại chính xác fact sau khi tải lại trạng thái.
+- [ ] replace_file_content khi xóa dòng không để lại dòng trống thừa trong tệp tin.
+- [ ] fs_patch thực thi trơn tru trong mọi môi trường mà không ném ReferenceError.
+- [ ] run_sandboxed_command và sandbox_exec thực thi an toàn các đoạn mã có const/let và không cho phép truy cập đối tượng window thực tế.
+- [ ] Các công cụ chấp nhận cả tham số gốc lẫn alias mà không bị từ chối bởi bộ kiểm tra tham số (validateParameters).
+
+### Tính toàn vẹn vòng lặp Agent (Agent Lifecycle & ReAct)
+- [ ] SunaAgent.run() thực thi trơn tru mà không bị lỗi Harness VFS not attached.
+- [ ] Vòng lặp _runLegacy thực thi tuần tự tất cả các bước trong kế hoạch nhiều bước và chỉ hoàn thành khi toàn bộ các bước đã đạt kết quả.
+- [ ] Sự kiện vfs_change được phát ra chính xác khi tệp tin được tạo hoặc sửa qua lệnh shell redirection >.
+
+### Kiểm thử hồi quy & Xác thực hệ thống (Regression & Suite Pass)
+- [ ] Tất cả các bài test tự động (npm test) vượt qua 100% (1,768+ tests PASS, exit code 0).
+- [ ] Bộ kiểm thử chức năng mới xác thực trực tiếp và khách quan tất cả các trường hợp sửa lỗi trên.

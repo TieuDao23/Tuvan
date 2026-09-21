@@ -280,6 +280,51 @@
     }
 
     /**
+     * Helper to discriminate authentic tool invocations from configuration files,
+     * package manifests (e.g. package.json), and generic structured data objects.
+     * @param {any} parsed 
+     * @returns {boolean}
+     */
+    static _isGenuineToolCall(parsed) {
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false;
+
+      // Package manifest / project configuration / build config exclusion guard
+      const manifestKeys = [
+        'version', 'dependencies', 'devDependencies', 'peerDependencies',
+        'optionalDependencies', 'scripts', 'main', 'module', 'browser',
+        'repository', 'author', 'contributors', 'license', 'keywords',
+        'engines', 'publishConfig', 'workspaces'
+      ];
+      for (const key of manifestKeys) {
+        if (parsed[key] !== undefined) return false;
+      }
+
+      // 1. Explicit tool property
+      if (typeof parsed.tool === 'string' && parsed.tool.trim()) return true;
+      if (typeof parsed.tool_name === 'string' && parsed.tool_name.trim()) return true;
+
+      // 2. OpenAI / Hermes Function Call format: requires valid identifier name AND arguments/parameters/type
+      if (typeof parsed.name === 'string' && parsed.name.trim()) {
+        const name = parsed.name.trim();
+
+        // Reject names with spaces, slashes, or scoped package markers like @org/pkg
+        if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
+          return false;
+        }
+
+        const hasArgs = parsed.arguments !== undefined ||
+                        parsed.parameters !== undefined ||
+                        parsed.args !== undefined ||
+                        parsed.params !== undefined;
+        const isFunctionType = parsed.type === 'function';
+
+        return Boolean(hasArgs || isFunctionType);
+      }
+
+      return false;
+    }
+
+    /**
      * Parses tool calls across XML, Markdown code blocks, and Native JSON formats.
      * @param {string} text 
      * @returns {Array<{ tool: string, args: Record<string, any>, raw: string }>}
@@ -331,10 +376,14 @@
       while ((m = mdPattern.exec(text)) !== null) {
         try {
           const parsed = JsonAutoRepair.safeParse(m[1].trim());
-          if (parsed && (parsed.tool || parsed.name)) {
+          if (this._isGenuineToolCall(parsed)) {
+            let args = parsed.args || parsed.parameters || parsed.params || parsed.arguments || {};
+            if (typeof args === 'string') {
+              try { args = JsonAutoRepair.safeParse(args); } catch (_) {}
+            }
             calls.push({
-              tool: parsed.tool || parsed.name,
-              args: parsed.args || parsed.parameters || parsed.params || parsed.arguments || {},
+              tool: parsed.tool || parsed.tool_name || parsed.name,
+              args: args,
               raw: m[0],
               startIndex: m.index
             });
@@ -346,13 +395,13 @@
       if (calls.length === 0) {
         try {
           const parsed = JsonAutoRepair.safeParse(text.trim());
-          if (parsed && (parsed.name || parsed.tool)) {
-            let args = parsed.arguments || parsed.args || parsed.parameters || {};
+          if (this._isGenuineToolCall(parsed)) {
+            let args = parsed.arguments || parsed.args || parsed.parameters || parsed.params || {};
             if (typeof args === 'string') {
-              args = JsonAutoRepair.safeParse(args);
+              try { args = JsonAutoRepair.safeParse(args); } catch (_) {}
             }
             calls.push({
-              tool: parsed.name || parsed.tool,
+              tool: parsed.name || parsed.tool || parsed.tool_name,
               args: args,
               raw: text
             });
@@ -1051,16 +1100,21 @@
     thinkExtended(step, context) {
       const stepName = (step && step.name) || 'step';
       const toolName = (step && step.tool) || 'tool';
-      return `Extended Thinking: Deliberating step "${stepName}". Tool: ${toolName}. Checking pre-conditions and schema bounds.`;
+      let text = `Extended Thinking: Deliberating step "${stepName}". Tool: ${toolName}. Checking pre-conditions and schema bounds.`;
+      if (step && step.thought) {
+        text += ` ${step.thought}`;
+      }
+      return text;
     }
 
     reflectObservation(step, observation, context) {
       const stepName = (step && step.name) || 'step';
       const isError = observation && (
+        observation.isError === true ||
         observation.status === 'error' ||
         observation.status === 'ERROR' ||
         observation.status === 'failed' ||
-        observation.error ||
+        Boolean(observation.error) ||
         observation.success === false
       );
       if (!isError && (Array.isArray(observation) || typeof observation === 'string' || typeof observation === 'number' || typeof observation === 'boolean' || (observation && (observation.status === 'success' || typeof observation === 'object')))) {
@@ -1104,7 +1158,10 @@
       this.memory = new SmartMemory(options);
       this.brain = new OodaBrain(options);
       this.harness = null;
-      this.vfs = null;
+
+      const H = (typeof getHarnessComponents === 'function' && getHarnessComponents()) || null;
+      this.vfs = options.vfs || (H && H.VfsSandbox ? new H.VfsSandbox() : null);
+      this._harnessVfs = this.vfs;
       this.controller = null;
       this.trajectory = null;
       this.checkpoints = null;
@@ -1120,7 +1177,6 @@
       this.maxConsecutiveFailures = (options && options.maxConsecutiveFailures) || 3;
       this.haltReason = null;
 
-      const H = getHarnessComponents();
       const GuardrailsClass = (H && (H.RunawayGuardrails || H.GuardrailSentinel)) || (typeof RunawayGuardrails !== 'undefined' ? RunawayGuardrails : null);
       this.guardrails = options.guardrails || (GuardrailsClass ? new GuardrailsClass({
         vfs: this.vfs,
@@ -1129,6 +1185,19 @@
 
       this.StreamParser = StreamParser;
       this._initLegacyTools();
+
+      // Register standard ACI tools onto the instance if harness is available
+      if (H && typeof H.registerAciTools === 'function') {
+        H.registerAciTools(this);
+      } else if (H && H.localHarness && typeof H.localHarness.registerAciTools === 'function') {
+        H.localHarness.registerAciTools(this);
+      }
+      if (!this.vfs && this._harnessVfs) {
+        this.vfs = this._harnessVfs;
+      }
+      if (this.guardrails && this.vfs && !this.guardrails.vfs) {
+        this.guardrails.vfs = this.vfs;
+      }
     }
 
     get StreamParser() {
@@ -1408,7 +1477,19 @@
         name: toolName || 'unknown',
         content: content !== undefined ? content : null
       };
-      return `<tool_response>\n${JSON.stringify(envelope, null, 2)}\n</tool_response>`;
+      try {
+        const seen = new WeakSet();
+        return `<tool_response>\n${JSON.stringify(envelope, (k, v) => {
+          if (typeof v === 'object' && v !== null) {
+            if (seen.has(v)) return '[Circular Reference]';
+            seen.add(v);
+          }
+          if (typeof v === 'bigint') return v.toString() + 'n';
+          return v;
+        }, 2)}\n</tool_response>`;
+      } catch (_) {
+        return `<tool_response>\n{\n  "name": "${toolName || 'unknown'}",\n  "content": ${JSON.stringify(String(content))}\n}\n</tool_response>`;
+      }
     }
 
     /**
@@ -1431,17 +1512,61 @@
     _boundObservation(value, maxChars) {
       const limit = Math.max(256, Number(maxChars) || this.MAX_RESULT_LENGTH || 1500);
       let serialized;
-      if (typeof value === 'string') {
-        serialized = value;
+      if (typeof value === 'string' || value instanceof String) {
+        serialized = String(value);
       } else {
         try { serialized = JSON.stringify(value); } catch (_) { serialized = String(value); }
       }
+
+      const isError = value && typeof value === 'object' && !(value instanceof String) && (
+        value.isError === true ||
+        value.status === 'error' ||
+        value.status === 'ERROR' ||
+        value.status === 'failed' ||
+        Boolean(value.error) ||
+        value.success === false
+      );
+
       if (serialized.length <= limit) {
-        return { value, text: serialized, truncated: false, originalLength: serialized.length };
+        const res = { value, text: serialized, truncated: false, originalLength: serialized.length };
+        if (isError) {
+          res.isError = true;
+          res.status = 'error';
+        }
+        return res;
       }
+
       const marker = `\n…[truncated ${serialized.length - limit} chars; use a narrower tool query]`;
       const text = serialized.slice(0, Math.max(0, limit - marker.length)) + marker;
-      return { value: text, text, truncated: true, originalLength: serialized.length };
+
+      let boundedValue;
+      if (typeof value === 'object' && value !== null) {
+        if (isError) {
+          boundedValue = Object.assign({}, value, {
+            text,
+            error: typeof value.error === 'string'
+              ? value.error.slice(0, Math.max(0, limit - marker.length)) + marker
+              : text,
+            truncated: true,
+            isError: true,
+            status: 'error'
+          });
+        } else {
+          boundedValue = Object.assign({}, value, {
+            text,
+            truncated: true
+          });
+        }
+      } else {
+        boundedValue = text;
+      }
+
+      const res = { value: boundedValue, text, truncated: true, originalLength: serialized.length };
+      if (isError) {
+        res.isError = true;
+        res.status = 'error';
+      }
+      return res;
     }
 
     _normalizeDecision(rawDecision) {
@@ -1563,6 +1688,16 @@
     }
 
     async invokeAciTool(toolName, rawArgs, executionOptions = {}) {
+      if (!this.vfs && this._harnessVfs) {
+        this.vfs = this._harnessVfs;
+      }
+      if (!this.vfs) {
+        const H = (typeof getHarnessComponents === 'function' && getHarnessComponents()) || null;
+        if (H && H.VfsSandbox) {
+          this.vfs = new H.VfsSandbox();
+          this._harnessVfs = this.vfs;
+        }
+      }
       if (!this.vfs) throw new Error('Harness VFS not attached');
 
       const H = getHarnessComponents();
@@ -1576,6 +1711,18 @@
       const normalized = (AciSchemaValidatorClass && typeof AciSchemaValidatorClass.normalizeArgs === 'function')
         ? AciSchemaValidatorClass.normalizeArgs(toolName, rawArgs)
         : (rawArgs || {});
+
+      // Fallback: If replace_file_content is called with TargetFile but missing TargetContent/ReplacementContent (e.g. from planHierarchy default step)
+      if (toolName === 'replace_file_content' && (normalized.TargetContent === undefined || normalized.TargetContent === null)) {
+        const targetPath = normalized.TargetFile || normalized.path;
+        if (targetPath && this.vfs && typeof this.vfs.exists === 'function' && this.vfs.exists(targetPath)) {
+          const existing = this.vfs.readFile(targetPath);
+          normalized.TargetContent = existing || '\n';
+          if (normalized.ReplacementContent === undefined) {
+            normalized.ReplacementContent = existing || '\n';
+          }
+        }
+      }
 
       // Pre-flight Diff Preview for code surgery
       if (toolName === 'replace_file_content' && normalized.preview !== false && VfsDiffEngineClass) {
@@ -1621,12 +1768,41 @@
       }
 
       // If file modified, emit vfs_change for Live Workspace synchronization
-      if (toolName === 'replace_file_content' || (toolName === 'run_sandboxed_command' && rawArgs && rawArgs.CommandLine && rawArgs.CommandLine.includes('>'))) {
-        const targetPath = normalized.TargetFile || normalized.path;
+      if (toolName === 'replace_file_content' || (toolName === 'run_sandboxed_command' && rawArgs)) {
+        let targetPath = normalized.TargetFile || normalized.path;
+        if (!targetPath && toolName === 'run_sandboxed_command') {
+          const cmd = (rawArgs && (rawArgs.CommandLine || rawArgs.commandLine || rawArgs.command || rawArgs.cmd || '')) || '';
+          if (cmd.includes('>')) {
+            const parts = cmd.includes('>>') ? cmd.split('>>') : cmd.split('>');
+            if (parts.length > 1) {
+              let candidate = parts[parts.length - 1].trim().replace(/^['"]|['"]$/g, '').trim();
+              const cwd = (rawArgs && (rawArgs.Cwd || rawArgs.cwd)) || (normalized && (normalized.Cwd || normalized.cwd)) || '';
+              const resolved = cwd ? (cwd.replace(/\/$/, '') + '/' + candidate.replace(/^\//, '')) : candidate;
+              if (this.vfs && typeof this.vfs.exists === 'function') {
+                if (this.vfs.exists(resolved)) {
+                  targetPath = resolved;
+                } else if (this.vfs.exists(candidate)) {
+                  targetPath = candidate;
+                } else {
+                  targetPath = resolved;
+                }
+              } else {
+                targetPath = resolved;
+              }
+            }
+          }
+        }
         if (targetPath && this.vfs && typeof this.vfs.exists === 'function' && this.vfs.exists(targetPath)) {
           const fileContent = this.vfs.readFile(targetPath);
           this.emit('vfs_change', { path: targetPath, content: fileContent });
         }
+      }
+
+      if (typeof result === 'string') {
+        const wrapped = new String(result);
+        wrapped.content = result;
+        wrapped.text = result;
+        result = wrapped;
       }
 
       return result;
@@ -1685,9 +1861,31 @@
       const trimmed = instruction.trim();
       this.steerInstructions.push(trimmed);
       this.memory.setFact('latest_steer', trimmed);
-      // Reset failure counter when human operator provides new direction
+
+      // Fully unabort and restore operational state from halted / circuit breaker trip
       this.consecutiveFailures = 0;
       this.haltReason = null;
+      this.isAgentAborted = false;
+
+      if (typeof window !== 'undefined') {
+        window.isAgentAborted = false;
+      }
+      if (typeof global !== 'undefined' && global.window) {
+        global.window.isAgentAborted = false;
+      }
+      if (typeof globalThis !== 'undefined' && globalThis.window) {
+        globalThis.window.isAgentAborted = false;
+      }
+
+      if (this.guardrails && typeof this.guardrails.reset === 'function') {
+        this.guardrails.reset();
+      }
+
+      if (this.status === 'halted' || this.status === 'aborted') {
+        this.status = 'idle';
+        this.emit('status_change', { status: 'idle' });
+      }
+
       this.emit('steer_applied', { instruction: trimmed });
       return true;
     }
@@ -1735,6 +1933,9 @@
           tool: toolName,
           params: rawParams
         };
+        if (stepSource.thought || promptOrStep.thought) {
+          activeStep.thought = stepSource.thought || promptOrStep.thought;
+        }
 
         const thoughtHint = stepSource.thought || promptOrStep.thought || stepName;
         intent = this.brain.analyzeIntent(thoughtHint);
@@ -1923,8 +2124,20 @@
       if (!tool) {
         throw new Error(`Tool "${name}" not found in SunaAgent registry.`);
       }
-      const { sanitized } = this.validateParameters(tool.parameters, args);
-      return await tool.execute(sanitized, context);
+      const H = getHarnessComponents();
+      const validator = (H && H.AciSchemaValidator) || (typeof AciSchemaValidator !== 'undefined' ? AciSchemaValidator : null);
+      const normalized = (validator && typeof validator.normalizeArgs === 'function')
+        ? validator.normalizeArgs(name, args)
+        : (args || {});
+      const { sanitized } = this.validateParameters(tool.parameters, normalized);
+      let result = await tool.execute(sanitized, context);
+      if (typeof result === 'string') {
+        const wrapped = new String(result);
+        wrapped.content = result;
+        wrapped.text = result;
+        result = wrapped;
+      }
+      return result;
     }
 
     /**
@@ -1933,6 +2146,22 @@
      * plans are also supported for low-resource, reproducible execution.
      */
     async run(prompt, options = {}) {
+      // Lazy-init fallback for VFS and ACI tools
+      const H = (typeof getHarnessComponents === 'function' && getHarnessComponents()) || null;
+      if (!this.vfs) {
+        this.vfs = this._harnessVfs || (H && H.VfsSandbox ? new H.VfsSandbox() : null);
+        this._harnessVfs = this.vfs;
+      }
+      if (H && (typeof H.registerAciTools === 'function' || (H.localHarness && typeof H.localHarness.registerAciTools === 'function'))) {
+        if (!this.tools || !this.tools.list_dir || !this.tools.view_file || (this._registry && this._registry.size <= 6)) {
+          if (typeof H.registerAciTools === 'function') {
+            H.registerAciTools(this);
+          } else {
+            H.localHarness.registerAciTools(this);
+          }
+        }
+      }
+
       const maxTurns = Math.max(1, Number(options.maxTurns || (this.controller && this.controller.maxTurns) || 10));
       const decisionProvider = options.decideNextAction || options.decisionProvider || null;
       const explicitPlan = Array.isArray(options.plan) ? options.plan.slice() : null;
@@ -2120,7 +2349,30 @@
       let turn = 0;
       let finalStatus = 'completed';
       const turnResults = [];
-      while (turn < maxTurns) {
+
+      if (!this.vfs) {
+        const H = (typeof getHarnessComponents === 'function' && getHarnessComponents()) || null;
+        this.vfs = this._harnessVfs || (H && H.VfsSandbox ? new H.VfsSandbox() : null);
+        this._harnessVfs = this.vfs;
+      }
+
+      // Decompose prompt into plan once
+      let currentPrompt = prompt;
+      const initialSteer = this.memory && typeof this.memory.getFact === 'function' && this.memory.getFact('latest_steer');
+      if (initialSteer) currentPrompt = `${prompt}\n[User Steer Guidance]: ${initialSteer}`;
+
+      let plan = Array.isArray(options.plan) && options.plan.length > 0 ? options.plan.slice() : null;
+      if (!plan) {
+        const intent = this.brain.analyzeIntent(currentPrompt);
+        plan = this.brain.planHierarchy(intent, currentPrompt);
+      }
+      if (!Array.isArray(plan) || plan.length === 0) {
+        plan = [{ id: 1, name: 'default_step', tool: 'view_file', params: { path: 'index.html' } }];
+      }
+
+      let currentStepIndex = 0;
+
+      while (turn < maxTurns && currentStepIndex < plan.length) {
         turn++;
         if (this.isAgentAborted || this.status === 'halted') {
           finalStatus = 'halted';
@@ -2129,26 +2381,55 @@
         if (typeof options.onTurnStart === 'function') {
           try { options.onTurnStart(turn); } catch (_) {}
         }
-        let currentPrompt = prompt;
-        const latestSteer = this.memory && typeof this.memory.getFact === 'function' && this.memory.getFact('latest_steer');
-        if (latestSteer) currentPrompt = `${prompt}\n[User Steer Guidance]: ${latestSteer}`;
-        const stepResult = await this.executeStep(currentPrompt, { maxObservationChars: options.maxObservationChars });
+        if (this.isAgentAborted || this.status === 'halted') {
+          finalStatus = 'halted';
+          break;
+        }
+
+        const activeSteer = this.memory && typeof this.memory.getFact === 'function' && this.memory.getFact('latest_steer');
+        const activeStep = Object.assign({}, plan[currentStepIndex]);
+        if (activeSteer) {
+          activeStep.thought = (activeStep.thought || activeStep.name) + ` [Steer: ${activeSteer}]`;
+        }
+
+        const stepResult = await this.executeStep(activeStep, { maxObservationChars: options.maxObservationChars });
         turnResults.push(stepResult);
+
         if (typeof options.onStep === 'function') {
           try { options.onStep(stepResult, turn); } catch (_) {}
         }
+
         if (stepResult.halted || this.status === 'halted' || this.isAgentAborted) {
           finalStatus = 'halted';
           break;
         }
+
         const reflection = stepResult.reflection;
         if (reflection && reflection.satisfied === false && reflection.replanNeeded) {
-          if (turn >= maxTurns) finalStatus = 'max_turns_exceeded';
+          if (turn >= maxTurns) {
+            finalStatus = 'max_turns_exceeded';
+            break;
+          }
+          // Replan: recalculate plan from failure reflection
+          const remediatedIntent = this.brain.analyzeIntent(`${currentPrompt} (Remediating: ${reflection.reflectionText || reflection.reflection})`);
+          const newSteps = this.brain.planHierarchy(remediatedIntent, currentPrompt);
+          if (newSteps && newSteps.length > 0) {
+            plan = newSteps;
+            currentStepIndex = 0;
+          }
           continue;
         }
-        finalStatus = 'completed';
-        break;
+
+        // Step satisfied cleanly -> advance step pointer
+        currentStepIndex++;
       }
+
+      if (currentStepIndex >= plan.length) {
+        finalStatus = 'completed';
+      } else if (finalStatus !== 'halted') {
+        finalStatus = turn >= maxTurns ? 'max_turns_exceeded' : 'halted';
+      }
+
       const result = {
         status: finalStatus,
         turnsExecuted: turn,
