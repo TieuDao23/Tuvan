@@ -10161,6 +10161,35 @@ Dọn dẹp và tối ưu hóa hệ thống mã nguồn:
 2. LOẠI BỎ BOILERPLATE: Rút gọn các đoạn logic rườm rà thành code súc tích, tái sử dụng các hàm nền tảng sẵn có.
 3. DỌN DẸP LOGS & TẠM THỜI: Xóa bỏ các lệnh console.log thử nghiệm tạm bợ, file cache rác hoặc comment debug không còn giá trị.
 4. BẢO TỒN TÍNH TOÀN VẸN: Kiểm tra kỹ lưỡng để việc dọn dẹp không làm mất bất kỳ logic nghiệp vụ hoặc comment tài liệu quan trọng nào.`
+    },
+    {
+      id: 'humanizer',
+      name: 'Humanizer (Văn Phong Tự Nhiên)',
+      command: 'humanize',
+      aliases: ['humanizer', 'anti-ai', 'natural-writing', 'de-ai'],
+      icon: '✍️',
+      category: 'workflow',
+      isBuiltIn: true,
+      desc: 'Viết lại văn phong AI gượng gạo thành giọng điệu tự nhiên, chân thực như người thật theo Wikipedia Signs of AI writing, loại bỏ mẫu câu sáo rỗng, cấu trúc tương phản Not-X-but-Y, triad và cliches.',
+      prompt: `[QUY CHUẨN KỸ NĂNG: HUMANIZER - LOẠI BỎ DẤU VẾT VĂN PHONG AI]
+Biên tập và viết lại các văn bản có dấu hiệu AI (AI-sounding text) thành giọng văn tự nhiên, chân thực như người thật viết, tuyệt đối bảo toàn sự thật và ý nghĩa cốt lõi:
+
+1. NGUYÊN TẮC BẢO TOÀN THÔNG TIN:
+   - Giữ nguyên toàn bộ sự thật, số liệu, tên riêng, ngày tháng, trích dẫn. Không bịa đặt thêm thông tin mới.
+   - Viết tự nhiên với nhịp điệu phong phú: xen kẽ linh hoạt giữa câu ngắn dứt khoát và câu dài diễn giải.
+   - Nếu có mẫu văn phong (voice sample), ưu tiên mô phỏng theo mẫu đó.
+
+2. LOẠI BỎ TRIỆT ĐỂ CÁC DẤU VẾT AI (AI TELLS):
+   - CẤM cấu trúc tương phản giả tạo "Không chỉ X mà còn Y", "Không phải X, mà là Y", "Không còn là X, đây là Y" (Not X but Y). Thay vào đó, hãy phát biểu thẳng vào trọng tâm.
+   - CẤM câu kết một dòng tỏ ra sâu sắc (One-line closers) như: "Đó mới là điều cốt lõi.", "Hãy ngẫm lại điều này.", "Và đó là lúc mọi thứ thay đổi."
+   - CẤM bộ ba từ/cụm từ gượng ép (Forced Triads) lặp đi lặp lại nhịp 3 liên tiếp.
+   - CẤM lạm dụng dấu gạch ngang (em-dash —) ở mọi câu.
+   - CẤM từ ngữ sáo rỗng, phóng đại (delve, testament, pivotal, cornerstone, tapestry, beacon, groundbreaking, seamless...).
+   - CẤM bôi đậm (bold) tiêu đề hoặc nhãn một cách máy móc không cần thiết.
+
+3. QUY TRÌNH BIÊN TẬP:
+   - Phát hiện các mẫu câu rập khuôn của AI.
+   - Biên tập trực diện: diễn đạt gãy gọn, cụ thể, loại bỏ văn phong quảng cáo hoặc chatbot thuyết trình.`
     }
   ],
 

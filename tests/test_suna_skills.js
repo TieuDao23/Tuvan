@@ -170,9 +170,9 @@ describe('Antigravity Skills & Skills Management Center Suite', function() {
       assert.strictEqual(typeof sandbox.SkillsManager.parseSlashCommand, 'function');
     });
 
-    it('should contain exactly 10 built-in Antigravity core skills', () => {
+    it('should contain exactly 11 built-in Antigravity core skills', () => {
       const builtIns = sandbox.SkillsManager.builtInSkills;
-      assert.strictEqual(builtIns.length, 10, 'Must have exactly 10 built-in skills');
+      assert.strictEqual(builtIns.length, 11, 'Must have exactly 11 built-in skills');
 
       const expectedSkills = [
         'design-taste-frontend',
@@ -184,7 +184,8 @@ describe('Antigravity Skills & Skills Management Center Suite', function() {
         'brandkit',
         'high-end-visual-design',
         'spec-kit-sdd',
-        'disk-cleanup'
+        'disk-cleanup',
+        'humanizer'
       ];
 
       for (const id of expectedSkills) {
@@ -216,6 +217,10 @@ describe('Antigravity Skills & Skills Management Center Suite', function() {
       assert.ok(pony);
       assert.strictEqual(pony.id, 'ponytail');
 
+      const human = sandbox.SkillsManager.getSkillByCommand('/humanize');
+      assert.ok(human);
+      assert.strictEqual(human.id, 'humanizer');
+
       // Aliases
       const antiSlop = sandbox.SkillsManager.getSkillByCommand('/anti-slop');
       assert.ok(antiSlop);
@@ -224,6 +229,10 @@ describe('Antigravity Skills & Skills Management Center Suite', function() {
       const lazyDev = sandbox.SkillsManager.getSkillByCommand('lazy-dev');
       assert.ok(lazyDev);
       assert.strictEqual(lazyDev.id, 'ponytail');
+
+      const antiAi = sandbox.SkillsManager.getSkillByCommand('anti-ai');
+      assert.ok(antiAi);
+      assert.strictEqual(antiAi.id, 'humanizer');
 
       // Case-insensitivity
       const upper = sandbox.SkillsManager.getSkillByCommand('/TASTE');
